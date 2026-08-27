@@ -60,6 +60,10 @@ set(PROJECT_SOURCES
     src/AppSettings.cpp
     src/ExtremeDatabase.h
     src/ExtremeDatabase.cpp
+    src/Logger.h
+    src/Logger.cpp
+    src/CrashHandler.h
+    src/CrashHandler.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}
@@ -83,6 +87,7 @@ if(WIN32)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
+    target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp)
 endif()
 
 include(GNUInstallDirs)

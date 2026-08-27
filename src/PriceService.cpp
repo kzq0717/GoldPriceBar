@@ -1,6 +1,7 @@
 #include "PriceService.h"
 #include "AppSettings.h"
 #include "HistoryCache.h"
+#include "Logger.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -275,6 +276,7 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
     if (reply->error() != QNetworkReply::NoError) {
         if (reply->error() != QNetworkReply::OperationCanceledError) {
             ++m_consecutiveFail;
+            Logger::warn(QStringLiteral("Price fetch error: %1").arg(reply->errorString()));
             qWarning() << "Price fetch error:" << reply->errorString();
             if (m_consecutiveFail >= 5) {
                 recreateNetworkManager();

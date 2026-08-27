@@ -1,5 +1,6 @@
 #include "ChartWindow.h"
 #include "AppSettings.h"
+#include "Logger.h"
 #include "HistoryCache.h"
 
 
