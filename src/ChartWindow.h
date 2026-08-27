@@ -85,6 +85,7 @@ private:
     QLabel* m_sideHighLabel = nullptr;
     QLabel* m_sideLowLabel = nullptr;
     QLabel* m_sideModeLabel = nullptr;
+    QLabel* m_sideHitRateLabel = nullptr;
 
     QNetworkAccessManager* m_network = nullptr;
     QPointer<QNetworkReply> m_pendingChart;

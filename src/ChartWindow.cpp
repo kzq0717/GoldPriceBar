@@ -1,6 +1,7 @@
 #include "ChartWindow.h"
 #include "AppSettings.h"
 #include "Logger.h"
+#include "ForecastTracker.h"
 #include "HistoryCache.h"
 
 
@@ -181,6 +182,11 @@ void ChartWindow::setupChart() {
   m_sideModeLabel->setWordWrap(true);
   sideLay->addWidget(m_sideModeLabel);
 
+  sideLay->addWidget(mkTitle(tr("预测命中率")));
+  m_sideHitRateLabel = mkValue(tr("--%"), "#0052d9");
+  m_sideHitRateLabel->setStyleSheet("color:#0052d9;font-size:14px;font-weight:bold;");
+  sideLay->addWidget(m_sideHitRateLabel);
+
   sideLay->addSpacing(6);
   sideLay->addWidget(mkTitle(tr("今日最高")));
   m_sideHighLabel = mkValue(tr("--.--"), "#e74c3c");
@@ -211,6 +217,9 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
   double high = 0.0, low = 0.0;
   HistoryCache::instance().todayHigh(high);
   HistoryCache::instance().todayLow(low);
+  if (price > 0.0)
+    ForecastTracker::instance().evaluateWithActual(price);
+
   updateSidePanelValues(
       price > 0 ? price
                 : (m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second),
@@ -312,61 +321,59 @@ void ChartWindow::hideCrosshair() {
  * 仅供参考，不构成投资建议
  */
 QVector<QPair<QDateTime, double>>
-ChartWindow::computeForecastLocal(int horizonSec) const {
-  QVector<QPair<QDateTime, double>> out;
-  if (m_plotPoints.size() < 2)
-    return out;
+ChartWindow::computeForecastLocal(int horizonSec) const
+{
+    QVector<QPair<QDateTime, double>> out;
+    if (m_plotPoints.size() < 3)
+        return out;
 
-  const int nAll = m_plotPoints.size();
-  const double lastPrice = m_plotPoints.last().second;
-  const QDateTime lastT = m_plotPoints.last().first;
-  if (lastPrice <= 0.0)
-    return out;
+    const int n = m_plotPoints.size();
+    const double lastPrice = m_plotPoints.last().second;
+    const QDateTime lastT = m_plotPoints.last().first;
+    if (lastPrice <= 0.0)
+        return out;
 
-  // -------- 保守短时模型（锚定现价，抑制乱飘）--------
-  // 1) 用最近最多 12 个点估计平均回报（每秒），再大幅衰减
-  // 2) 2 分钟内相对现价的最大偏离限制在约 ±0.08%（积存金短时波动量级）
-  // 3) 路径以现价为起点平滑过渡，终点接近「现价 + 衰减趋势」
-  const int window = qMin(12, nAll);
-  const int startIdx = nAll - window;
-  const qint64 tFirst = m_plotPoints.at(startIdx).first.toSecsSinceEpoch();
-  const qint64 tLast = lastT.toSecsSinceEpoch();
-  const double dt = static_cast<double>(tLast - tFirst);
+    // ---- 改进本地模型：指数平滑 + 弱动量 + 均值回归 ----
+    // 对积存金 2 分钟尺度，大幅外推很容易错；以「贴近现价」为主。
+    const int w = qMin(20, n);
+    double ema = m_plotPoints.at(n - w).second;
+    const double alpha = 0.35;
+    for (int i = n - w + 1; i < n; ++i)
+        ema = alpha * m_plotPoints.at(i).second + (1.0 - alpha) * ema;
 
-  double slopePerSec = 0.0;
-  if (dt > 1.0) {
-    const double p0 = m_plotPoints.at(startIdx).second;
-    slopePerSec = (lastPrice - p0) / dt;
-  }
-
-  // 再与更短窗（3 点）动量混合，但整体衰减
-  if (nAll >= 3) {
-    const auto &a = m_plotPoints.at(nAll - 3);
+    // 最近段动量（约 1～3 分钟内，若点够）
+    double momPerSec = 0.0;
+    const int back = qMin(8, n - 1);
+    const auto& a = m_plotPoints.at(n - 1 - back);
     const double dts = static_cast<double>(a.first.secsTo(lastT));
-    if (dts > 0.5) {
-      const double mom = (lastPrice - a.second) / dts;
-      slopePerSec = 0.4 * slopePerSec + 0.6 * mom;
+    if (dts > 1.0)
+        momPerSec = (lastPrice - a.second) / dts;
+
+    // 均值回归：拉向 EMA
+    const double reversion = (ema - lastPrice) / 120.0; // 约 2 分钟内靠拢一部分
+
+    // 合成：弱动量 + 回归，再强阻尼
+    double slope = 0.35 * momPerSec + 0.65 * reversion;
+    slope *= 0.35;
+
+    // 2 分钟最大偏离：约 0.06% 或至少 0.15 元
+    const double maxMove = qMax(0.15, lastPrice * 0.0006);
+    double totalMove = slope * horizonSec;
+    totalMove = qBound(-maxMove, totalMove, maxMove);
+
+    // 若近期几乎横盘，预测保持现价附近
+    if (qAbs(momPerSec) * 120.0 < 0.05 && qAbs(lastPrice - ema) < 0.1)
+        totalMove *= 0.25;
+
+    out.append({lastT, lastPrice});
+    const int step = 10;
+    for (int s = step; s <= horizonSec; s += step) {
+        const double frac = static_cast<double>(s) / static_cast<double>(horizonSec);
+        // 平滑曲线，略带一点向 EMA 的弯曲
+        const double y = lastPrice + totalMove * frac;
+        out.append({lastT.addSecs(s), y});
     }
-  }
-
-  // 强阻尼：只保留约 25% 趋势，避免预测发散
-  slopePerSec *= 0.25;
-
-  // 2 分钟最大变动幅度（相对现价）
-  const double maxAbsMove = lastPrice * 0.0008; // 0.08%
-  const double rawMove = slopePerSec * horizonSec;
-  const double limitedMove = qBound(-maxAbsMove, rawMove, maxAbsMove);
-
-  out.append({lastT, lastPrice});
-  const int step = 10;
-  for (int s = step; s <= horizonSec; s += step) {
-    // 线性走到终点（平滑，不做二次发散）
-    const double frac =
-        static_cast<double>(s) / static_cast<double>(horizonSec);
-    const double y = lastPrice + limitedMove * frac;
-    out.append({lastT.addSecs(s), y});
-  }
-  return out;
+    return out;
 }
 
 void ChartWindow::updateForecast() {
@@ -413,6 +420,11 @@ void ChartWindow::applyForecastPoints(
 
   m_hasPredict = true;
   m_lastPredictPrice = forecast.last().second;
+
+  // 登记预测，供 2 分钟后统计命中率
+  ForecastTracker::instance().recordPrediction(
+      forecast.first().first, 120, m_lastPredictPrice,
+      forecast.first().second, modeTag);
 
   // 确保横轴右端覆盖预测终点（当前时间 + 3 分钟）
   if (m_axisX) {
@@ -463,6 +475,21 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
   if (m_sideModeLabel)
     m_sideModeLabel->setText(
         tr("模式: %1").arg(modeTag.isEmpty() ? tr("本地") : modeTag));
+
+  if (m_sideHitRateLabel) {
+    auto& ft = ForecastTracker::instance();
+    const int n = ft.totalEvaluated();
+    if (n <= 0) {
+      m_sideHitRateLabel->setText(tr("--%"));
+    } else {
+      m_sideHitRateLabel->setText(
+          tr("%1% (%2/%3)")
+              .arg(ft.hitRatePercent(), 0, 'f', 1)
+              .arg(ft.hits())
+              .arg(n));
+    }
+  }
+
 }
 
 void ChartWindow::requestOnlineForecast() {

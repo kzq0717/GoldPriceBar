@@ -64,6 +64,8 @@ set(PROJECT_SOURCES
     src/Logger.cpp
     src/CrashHandler.h
     src/CrashHandler.cpp
+    src/ForecastTracker.h
+    src/ForecastTracker.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}
