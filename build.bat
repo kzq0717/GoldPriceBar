@@ -16,7 +16,7 @@ REM ---------- 可按本机环境修改 ----------
 set "QT6_ROOT=D:\InstallDir\Qt6.7\6.7.3\msvc2022_64"
 set "BUILD_DIR=build"
 set "CONFIG=Release"
-set "GENERATOR=Visual Studio 17 2022"
+set "GENERATOR=Visual Studio 18 2026"
 set "ARCH=x64"
 REM ------------------------------------
 
