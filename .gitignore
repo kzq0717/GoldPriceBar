@@ -1,0 +1,44 @@
+# Build
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.user
+*.autosave
+.qt/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.ncb
+
+# Binaries
+*.exe
+*.dll
+*.pdb
+*.obj
+*.o
+*.a
+*.lib
+*.so
+*.dylib
+
+# Qt generated
+*_autogen/
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Local / secrets
+*.db
+*.db-journal
+*.ini
+.DS_Store
+Thumbs.db
