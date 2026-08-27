@@ -66,11 +66,16 @@ void PriceService::stop()
     m_timer->stop();
     m_watchdog->stop();
     m_chartSeedTimer->stop();
+    // 仅断开并清空指针；不在此 deleteLater reply（与 NAM 生命周期绑定）
     abortPending();
     if (m_pendingChart) {
-        m_pendingChart->abort();
-        m_pendingChart->deleteLater();
+        QNetworkReply* r = m_pendingChart.data();
         m_pendingChart.clear();
+        if (r) {
+            QObject::disconnect(r, nullptr, this, nullptr);
+            r->abort();
+            r->deleteLater();
+        }
     }
 }
 
@@ -115,8 +120,10 @@ void PriceService::onWatchdog()
 
     const qint64 staleMs = qMax(static_cast<qint64>(m_intervalMs) * 5, 30000LL);
     if (m_lastSuccessMs > 0 && (now - m_lastSuccessMs) > staleMs) {
+        Logger::warn(QStringLiteral("PriceService watchdog: no success for %1 ms")
+                         .arg(now - m_lastSuccessMs));
         qWarning() << "PriceService watchdog: no success for" << (now - m_lastSuccessMs) << "ms";
-        abortPending();
+        // 只 recreate：内部会安全断开 pending，勿先 abortPending 再毁 NAM
         recreateNetworkManager();
         requestPrice();
     }
@@ -124,15 +131,31 @@ void PriceService::onWatchdog()
 
 void PriceService::recreateNetworkManager()
 {
-    abortPending();
-    if (m_pendingChart) {
-        m_pendingChart->abort();
-        m_pendingChart->deleteLater();
-        m_pendingChart.clear();
+    // 崩溃根因：reply 是 NAM 的子对象。对 reply abort/deleteLater 后再
+    // deleteLater NAM，会二次销毁，QPointer::clear 前后都可能踩内存。
+    // 正确做法：先断开信号并清空 QPointer，再只销毁 NAM（子 reply 随父销毁）。
+
+    Logger::warn(QStringLiteral("PriceService: recreating QNetworkAccessManager"));
+
+    if (m_pendingReply) {
+        QNetworkReply* r = m_pendingReply.data();
+        m_pendingReply.clear();
+        m_requestStartMs = 0;
+        if (r)
+            QObject::disconnect(r, nullptr, this, nullptr);
     }
+    if (m_pendingChart) {
+        QNetworkReply* r = m_pendingChart.data();
+        m_pendingChart.clear();
+        if (r)
+            QObject::disconnect(r, nullptr, this, nullptr);
+    }
+
     if (m_network) {
-        m_network->deleteLater();
+        QNetworkAccessManager* old = m_network;
         m_network = nullptr;
+        // 不再对旧 reply 调用 deleteLater
+        old->deleteLater();
     }
     m_network = new QNetworkAccessManager(this);
 }
@@ -146,8 +169,8 @@ void PriceService::abortPending()
     m_requestStartMs = 0;
     if (!r)
         return;
-    r->disconnect(this);
-    // abort 会触发 finished，需已 clear pending，回调中忽略
+    // 先断开，避免 abort 同步触发 finished 时重入
+    QObject::disconnect(r, nullptr, this, nullptr);
     r->abort();
     r->deleteLater();
 }
