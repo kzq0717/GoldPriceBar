@@ -5,11 +5,12 @@
 #include <QDate>
 #include <QDateTime>
 #include <QString>
+#include <QVector>
+#include <QPair>
 
 /**
- * @brief SQLite 存储当日最高/最低点（时间 + 价格）
- * 数据库文件：%AppData%/GoldPriceBarLite/gold_extremes.db （Windows）
- * 表 daily_extremes：按交易日 + 数据源 唯一
+ * @brief SQLite：当日高低点 + 日线行情（供月份曲线）
+ * 库文件：{databaseDir}/gold_extremes.db
  */
 class ExtremeDatabase : public QObject
 {
@@ -22,19 +23,29 @@ public:
     bool isOpen() const { return m_open; }
     QString databasePath() const { return m_dbPath; }
 
-    /**
-     * 写入或更新当日极值
-     * @param tradeDate 交易日
-     * @param source    数据源代码 zs/ms/gj
-     * @param highTime  最高点时间
-     * @param highPrice 最高价
-     * @param lowTime   最低点时间
-     * @param lowPrice  最低价
-     */
     bool upsertDayExtremes(const QDate& tradeDate,
                            const QString& source,
                            const QDateTime& highTime, double highPrice,
                            const QDateTime& lowTime, double lowPrice);
+
+    /** 用实时价更新日线 OHLC（开高低收） */
+    bool upsertDailyBar(const QDate& tradeDate, const QString& source, double price,
+                        const QDateTime& when = QDateTime::currentDateTime());
+
+    /** 用分时点批量刷新当日 OHLC */
+    bool refreshDailyBarFromPoints(const QDate& tradeDate, const QString& source,
+                                   const QVector<QPair<qint64, double>>& points);
+
+    /**
+     * 读取某月日线收盘价序列（用于月份曲线）
+     * 返回 (日期中午, close)
+     */
+    QVector<QPair<QDateTime, double>> loadMonthCloses(int year, int month,
+                                                      const QString& source) const;
+
+    /** 读取某月 OHLC，用于标题统计 */
+    bool monthRange(int year, int month, const QString& source,
+                    double& outHigh, double& outLow, int& outDays) const;
 
 private:
     explicit ExtremeDatabase(QObject* parent = nullptr);
@@ -46,9 +57,7 @@ private:
     QString m_dbPath;
     QString m_connectionName;
     qint64 m_lastWriteMs = 0;
-    static constexpr int kMinWriteIntervalMs = 5000; // 避免高频写库导致卡顿/闪退
+    static constexpr int kMinWriteIntervalMs = 5000;
 };
-
-
 
 #endif // EXTREMEDATABASE_H

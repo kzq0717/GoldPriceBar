@@ -19,12 +19,13 @@ class QValueAxis;
 class QNetworkReply;
 class QLabel;
 class QFrame;
+class QComboBox;
 QT_END_NAMESPACE
 
 /**
- * @brief 分时曲线窗口
- * 右侧固定信息栏显示：当前价、预测值、高、低
- * 曲线：当前点浅红、预测虚线、高低散点
+ * 分时 / 月份曲线：
+ * - 默认「今日分时」
+ * - 可选 7 月～当前月：显示本地日线收盘走势（依赖运行期累积的 daily_bars）
  */
 class ChartWindow : public QWidget
 {
@@ -46,12 +47,15 @@ protected:
 
 private slots:
     void onChartReplyFinished(QNetworkReply* reply);
+    void onPeriodChanged(int index);
 
 private:
     void setupChart();
-    void setupSidePanel(QWidget* parentLayoutHost);
     void updateSeries();
+    void updateMonthSeries();
     void fetchChartFromApi();
+    void fillPeriodCombo();
+    bool isIntradayMode() const;
     QString currentTypeCode() const;
     void updateCrosshair(const QPoint& viewPos);
     void hideCrosshair();
@@ -64,6 +68,9 @@ private:
                                double high, double low, const QString& modeTag);
     int nearestPointIndex(qreal xMsecs) const;
     QVector<QPair<QDateTime, double>> computeForecastLocal(int horizonSec) const;
+    void setForecastVisible(bool on);
+
+    QComboBox* m_periodCombo = nullptr;
 
     QChartView* m_chartView = nullptr;
     QChart* m_chart = nullptr;
@@ -78,7 +85,6 @@ private:
 
     QLabel* m_tipLabel = nullptr;
 
-    // 右侧固定信息栏（可靠显示，不依赖 mapToPosition）
     QFrame* m_sidePanel = nullptr;
     QLabel* m_sideCurrentLabel = nullptr;
     QLabel* m_sidePredictLabel = nullptr;
@@ -96,10 +102,8 @@ private:
     QVector<QPair<QDateTime, double>> m_plotPoints;
     double m_lastPredictPrice = 0.0;
     bool m_hasPredict = false;
-    qint64 m_lastForecastMs = 0;  // 限制预测刷新频率，避免侧栏乱跳
-    static constexpr int kForecastIntervalMs = 30000; // 至少 30 秒重算一次
+    qint64 m_lastForecastMs = 0;
+    static constexpr int kForecastIntervalMs = 30000;
 };
-
-
 
 #endif // CHARTWINDOW_H

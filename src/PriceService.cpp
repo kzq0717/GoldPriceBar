@@ -1,6 +1,7 @@
 #include "PriceService.h"
 #include "AppSettings.h"
 #include "HistoryCache.h"
+#include "ExtremeDatabase.h"
 #include "Logger.h"
 
 #include <QJsonDocument>
@@ -10,6 +11,7 @@
 #include <QNetworkRequest>
 #include <QDebug>
 #include <QDateTime>
+#include <QDate>
 
 PriceService::PriceService(QObject* parent)
     : QObject(parent)
@@ -245,11 +247,16 @@ void PriceService::onChartSeedFinished(QNetworkReply* reply)
         return;
 
     HistoryCache::instance().replaceFromChart(chartPoints);
+    ExtremeDatabase::instance().refreshDailyBarFromPoints(
+        QDate::currentDate(), currentTypeCode(), chartPoints);
     HistoryCache::instance().persistExtremesToDb(currentTypeCode());
 
     // 若已有实时价，合并进缓存，保证最高不低于现价
-    if (m_hasValidPrice && m_lastPrice > 0.0)
+    if (m_hasValidPrice && m_lastPrice > 0.0) {
         HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
+        ExtremeDatabase::instance().upsertDailyBar(
+            QDate::currentDate(), currentTypeCode(), m_lastPrice);
+    }
 
     emit extremesUpdated();
 
@@ -367,6 +374,8 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
     m_lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
 
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
+    ExtremeDatabase::instance().upsertDailyBar(
+        QDate::currentDate(), currentTypeCode(), m_lastPrice);
     // 降低写库频率：约每 12 次成功刷新写一次
     if ((++m_persistCounter % 12) == 0)
         HistoryCache::instance().persistExtremesToDb(currentTypeCode());
