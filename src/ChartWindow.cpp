@@ -32,6 +32,7 @@
 #include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 #include <QtMath>
+#include <algorithm>
 
 
 ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
@@ -218,7 +219,7 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
   HistoryCache::instance().todayHigh(high);
   HistoryCache::instance().todayLow(low);
   if (price > 0.0)
-    ForecastTracker::instance().evaluateWithActual(price);
+    ForecastTracker::instance().evaluateWithActual(price, m_plotPoints);
 
   updateSidePanelValues(
       price > 0 ? price
@@ -320,11 +321,17 @@ void ChartWindow::hideCrosshair() {
  * 3) 叠加短窗动量衰减，生成未来 120 秒、步长 10 秒的路径
  * 仅供参考，不构成投资建议
  */
+/**
+ * 本地 2 分钟预测（务实版）：
+ * 短时金价近似随机游走，最优基线往往是「维持现价」。
+ * 在此基础上叠加：多尺度稳健动量 + 向 EMA 的弱回归，并用已实现波动率限制幅度。
+ * 仅供参考，不构成投资建议。
+ */
 QVector<QPair<QDateTime, double>>
 ChartWindow::computeForecastLocal(int horizonSec) const
 {
     QVector<QPair<QDateTime, double>> out;
-    if (m_plotPoints.size() < 3)
+    if (m_plotPoints.size() < 4)
         return out;
 
     const int n = m_plotPoints.size();
@@ -333,44 +340,81 @@ ChartWindow::computeForecastLocal(int horizonSec) const
     if (lastPrice <= 0.0)
         return out;
 
-    // ---- 改进本地模型：指数平滑 + 弱动量 + 均值回归 ----
-    // 对积存金 2 分钟尺度，大幅外推很容易错；以「贴近现价」为主。
-    const int w = qMin(20, n);
-    double ema = m_plotPoints.at(n - w).second;
-    const double alpha = 0.35;
-    for (int i = n - w + 1; i < n; ++i)
+    auto priceAtOffset = [&](int back) -> double {
+        const int idx = qMax(0, n - 1 - back);
+        return m_plotPoints.at(idx).second;
+    };
+    auto secsBack = [&](int back) -> double {
+        const int idx = qMax(0, n - 1 - back);
+        return static_cast<double>(m_plotPoints.at(idx).first.secsTo(lastT));
+    };
+
+    // 1) EMA（近期中枢）
+    const int wEma = qMin(30, n);
+    double ema = m_plotPoints.at(n - wEma).second;
+    const double alpha = 0.25;
+    for (int i = n - wEma + 1; i < n; ++i)
         ema = alpha * m_plotPoints.at(i).second + (1.0 - alpha) * ema;
 
-    // 最近段动量（约 1～3 分钟内，若点够）
-    double momPerSec = 0.0;
-    const int back = qMin(8, n - 1);
-    const auto& a = m_plotPoints.at(n - 1 - back);
-    const double dts = static_cast<double>(a.first.secsTo(lastT));
-    if (dts > 1.0)
-        momPerSec = (lastPrice - a.second) / dts;
+    // 2) 多尺度动量（元/秒），取中位数更抗噪
+    QVector<double> moms;
+    for (int back : {3, 5, 8, 12}) {
+        if (back >= n)
+            continue;
+        const double dt = secsBack(back);
+        if (dt < 2.0)
+            continue;
+        moms.append((lastPrice - priceAtOffset(back)) / dt);
+    }
+    double momMed = 0.0;
+    if (!moms.isEmpty()) {
+        std::sort(moms.begin(), moms.end());
+        momMed = moms.at(moms.size() / 2);
+    }
 
-    // 均值回归：拉向 EMA
-    const double reversion = (ema - lastPrice) / 120.0; // 约 2 分钟内靠拢一部分
+    // 3) 已实现波动：近窗价格标准差 / 时间尺度 → 限制 2 分钟合理波动
+    const int wVol = qMin(25, n);
+    double mean = 0.0;
+    for (int i = n - wVol; i < n; ++i)
+        mean += m_plotPoints.at(i).second;
+    mean /= static_cast<double>(wVol);
+    double var = 0.0;
+    for (int i = n - wVol; i < n; ++i) {
+        const double d = m_plotPoints.at(i).second - mean;
+        var += d * d;
+    }
+    const double stdev = qSqrt(var / static_cast<double>(qMax(1, wVol - 1)));
+    const double spanSec = qMax(30.0, secsBack(wVol - 1));
+    // 将窗口波动缩放到 horizon
+    const double volHorizon = stdev * qSqrt(static_cast<double>(horizonSec) / spanSec);
 
-    // 合成：弱动量 + 回归，再强阻尼
-    double slope = 0.35 * momPerSec + 0.65 * reversion;
-    slope *= 0.35;
+    // 4) 合成：现价基线 + 弱动量(40%) + 弱回归(60% 的一部分)
+    // 回归：2 分钟内只消化与 EMA 差距的一小部分
+    const double gap = ema - lastPrice;
+    const double reversionMove = gap * 0.20; // 最多向中枢靠 20%
 
-    // 2 分钟最大偏离：约 0.06% 或至少 0.15 元
-    const double maxMove = qMax(0.15, lastPrice * 0.0006);
-    double totalMove = slope * horizonSec;
-    totalMove = qBound(-maxMove, totalMove, maxMove);
+    double driftMove = momMed * horizonSec * 0.40;
+    // 动量幅度不超过 0.6 * volHorizon
+    const double momCap = qMax(0.08, 0.6 * volHorizon);
+    driftMove = qBound(-momCap, driftMove, momCap);
 
-    // 若近期几乎横盘，预测保持现价附近
-    if (qAbs(momPerSec) * 120.0 < 0.05 && qAbs(lastPrice - ema) < 0.1)
-        totalMove *= 0.25;
+    double totalMove = driftMove + reversionMove;
+
+    // 总位移硬顶：max(0.12元, 0.05% 现价, 0.85*volHorizon)
+    const double hardCap = qMax(0.12, qMax(lastPrice * 0.0005, 0.85 * volHorizon));
+    totalMove = qBound(-hardCap, totalMove, hardCap);
+
+    // 极低波动时：预测几乎等于现价（随机游走）
+    if (stdev < 0.08 && qAbs(momMed) * 120.0 < 0.05)
+        totalMove *= 0.15;
 
     out.append({lastT, lastPrice});
     const int step = 10;
     for (int s = step; s <= horizonSec; s += step) {
         const double frac = static_cast<double>(s) / static_cast<double>(horizonSec);
-        // 平滑曲线，略带一点向 EMA 的弯曲
-        const double y = lastPrice + totalMove * frac;
+        // 前半段更贴近现价，后半段逐渐体现漂移（减轻早期误差）
+        const double ease = frac * frac; // 二次缓入
+        const double y = lastPrice + totalMove * ease;
         out.append({lastT.addSecs(s), y});
     }
     return out;
@@ -483,10 +527,11 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
       m_sideHitRateLabel->setText(tr("--%"));
     } else {
       m_sideHitRateLabel->setText(
-          tr("%1% (%2/%3)")
+          tr("%1% (%2/%3)\nMAE %4")
               .arg(ft.hitRatePercent(), 0, 'f', 1)
               .arg(ft.hits())
-              .arg(n));
+              .arg(n)
+              .arg(ft.meanAbsError(), 0, 'f', 2));
     }
   }
 
