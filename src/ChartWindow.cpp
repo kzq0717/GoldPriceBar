@@ -11,6 +11,7 @@
 #include <QDateTime>
 #include <QDate>
 #include <QFrame>
+#include <QSizePolicy>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -165,16 +166,29 @@ void ChartWindow::setupChart() {
   root->addLayout(topBar);
 
   auto *body = new QHBoxLayout();
-  body->setSpacing(6);
+  body->setSpacing(8);
+  body->setContentsMargins(0, 0, 0, 0);
+  // 左右等高：子控件垂直方向默认拉伸至行高
+  body->setAlignment(Qt::AlignVCenter);
+
+  m_chartView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   body->addWidget(m_chartView, 1);
 
   m_sidePanel = new QFrame(this);
-  m_sidePanel->setFixedWidth(128);
+  m_sidePanel->setFixedWidth(140);
+  // 垂直扩展，高度与左侧 chartView 对齐
+  m_sidePanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+  m_sidePanel->setMinimumHeight(0);
   m_sidePanel->setStyleSheet(
-      "QFrame{background:#f8f9fa;border:1px solid #e3e6eb;border-radius:6px;}");
+      "QFrame{"
+      "  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+      "    stop:0 #ffffff, stop:1 #f0f3f7);"
+      "  border: 1px solid #d8dee6;"
+      "  border-radius: 8px;"
+      "}");
   auto *sideLay = new QVBoxLayout(m_sidePanel);
-  sideLay->setContentsMargins(10, 12, 10, 12);
-  sideLay->setSpacing(10);
+  sideLay->setContentsMargins(12, 16, 12, 16);
+  sideLay->setSpacing(8);
 
   auto mkTitle = [](const QString &s) {
     auto *l = new QLabel(s);
@@ -216,10 +230,14 @@ void ChartWindow::setupChart() {
   m_sideLowLabel = mkValue(tr("--.--"), "#27ae60");
   sideLay->addWidget(m_sideLowLabel);
 
-  sideLay->addStretch();
+  sideLay->addStretch(1);
   body->addWidget(m_sidePanel, 0);
+  // 强制同一行内垂直方向填满
+  body->setStretch(0, 1);
+  body->setStretch(1, 0);
   root->addLayout(body, 1);
 }
+
 
 void ChartWindow::refreshData() {
   if (isIntradayMode())
