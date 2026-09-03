@@ -2,6 +2,7 @@
 #include "AppSettings.h"
 #include "ExtremeDatabase.h"
 #include "Logger.h"
+#include "UpdateChecker.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -189,9 +190,13 @@ void SettingsDialog::setupUi()
         QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
     });
 
+    auto* updateBtn = new QPushButton(tr("检查更新"), this);
+    connect(updateBtn, &QPushButton::clicked, this, &SettingsDialog::onCheckUpdate);
+
     auto* bottom = new QHBoxLayout;
     bottom->addWidget(exitBtn);
     bottom->addWidget(logBtn);
+    bottom->addWidget(updateBtn);
     bottom->addStretch();
     bottom->addWidget(buttons);
     mainLayout->addLayout(bottom);
@@ -308,3 +313,9 @@ void SettingsDialog::onExitApp()
 }
 
 void SettingsDialog::onIntervalChanged(int) {}
+
+void SettingsDialog::onCheckUpdate()
+{
+    auto* checker = new UpdateChecker(this);
+    checker->check(this, false);
+}

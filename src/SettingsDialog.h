@@ -25,6 +25,7 @@ private slots:
     void onOpacityChanged(int value);
     void onForecastSliderChanged(int value);
     void onExitApp();
+    void onCheckUpdate();
 
 private:
     void setupUi();

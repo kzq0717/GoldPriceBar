@@ -4,6 +4,7 @@
 #include "ChartWindow.h"
 #include "AppSettings.h"
 #include "HistoryCache.h"
+#include "UpdateChecker.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -154,6 +155,10 @@ void PriceBarWindow::setupTray()
     });
     menu->addAction(tr("分时曲线"), this, &PriceBarWindow::onChartClicked);
     menu->addAction(tr("关于"), this, &PriceBarWindow::showAbout);
+    menu->addAction(tr("检查更新"), this, [this]() {
+        auto* c = new UpdateChecker(this);
+        c->check(this, false);
+    });
     menu->addSeparator();
     menu->addAction(tr("退出"), qApp, &QApplication::quit);
 

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(GoldPriceBarLite
-    VERSION 0.4.0
+    VERSION 0.4.1
     DESCRIPTION "Lightweight Windows gold savings price bar with intraday chart"
     LANGUAGES CXX
 )
@@ -68,6 +68,8 @@ set(PROJECT_SOURCES
     src/ForecastTracker.cpp
     src/SingleInstance.h
     src/SingleInstance.cpp
+    src/UpdateChecker.h
+    src/UpdateChecker.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}
