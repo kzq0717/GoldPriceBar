@@ -94,6 +94,61 @@ bool AppSettings::alertSound() const { return m_alertSound; }
 void AppSettings::setAlertSound(bool on)
 { if (m_alertSound != on) { m_alertSound = on; emit settingsChanged(); } }
 
+bool AppSettings::hotkeyEnabled() const { return m_hotkeyEnabled; }
+void AppSettings::setHotkeyEnabled(bool on)
+{ if (m_hotkeyEnabled != on) { m_hotkeyEnabled = on; emit settingsChanged(); } }
+
+bool AppSettings::quietHoursEnabled() const { return m_quietHoursEnabled; }
+void AppSettings::setQuietHoursEnabled(bool on)
+{ if (m_quietHoursEnabled != on) { m_quietHoursEnabled = on; emit settingsChanged(); } }
+
+QTime AppSettings::quietStart() const { return m_quietStart; }
+void AppSettings::setQuietStart(const QTime& t)
+{
+    if (t.isValid() && m_quietStart != t) { m_quietStart = t; emit settingsChanged(); }
+}
+
+QTime AppSettings::quietEnd() const { return m_quietEnd; }
+void AppSettings::setQuietEnd(const QTime& t)
+{
+    if (t.isValid() && m_quietEnd != t) { m_quietEnd = t; emit settingsChanged(); }
+}
+
+bool AppSettings::isInQuietHours(const QTime& now) const
+{
+    if (!m_quietHoursEnabled || !now.isValid())
+        return false;
+    // 同一天：start < end → [start, end)
+    // 跨天：start > end → [start, 24:00) U [00:00, end)
+    if (m_quietStart == m_quietEnd)
+        return true; // 全天静默（少见）
+    if (m_quietStart < m_quietEnd)
+        return now >= m_quietStart && now < m_quietEnd;
+    return now >= m_quietStart || now < m_quietEnd;
+}
+
+int AppSettings::dcaDayOfMonth() const { return m_dcaDayOfMonth; }
+void AppSettings::setDcaDayOfMonth(int day)
+{
+    day = qBound(0, day, 28);
+    if (m_dcaDayOfMonth != day) { m_dcaDayOfMonth = day; emit settingsChanged(); }
+}
+
+QString AppSettings::dcaNote() const { return m_dcaNote; }
+void AppSettings::setDcaNote(const QString& note)
+{
+    if (m_dcaNote != note) { m_dcaNote = note; emit settingsChanged(); }
+}
+
+QString AppSettings::dcaLastNotifiedDate() const { return m_dcaLastNotifiedDate; }
+void AppSettings::setDcaLastNotifiedDate(const QString& isoDate)
+{
+    if (m_dcaLastNotifiedDate != isoDate) {
+        m_dcaLastNotifiedDate = isoDate;
+        // 不发 settingsChanged，避免循环；直接 save 由调用方负责
+    }
+}
+
 void AppSettings::load()
 {
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
@@ -114,6 +169,15 @@ void AppSettings::load()
     m_darkTheme          = s.value("darkTheme", true).toBool();
     m_showMovingAverage  = s.value("showMovingAverage", true).toBool();
     m_alertSound         = s.value("alertSound", false).toBool();
+    m_hotkeyEnabled      = s.value("hotkeyEnabled", true).toBool();
+    m_quietHoursEnabled  = s.value("quietHoursEnabled", false).toBool();
+    m_quietStart = QTime::fromString(s.value("quietStart", "22:00").toString(), "HH:mm");
+    if (!m_quietStart.isValid()) m_quietStart = QTime(22, 0);
+    m_quietEnd = QTime::fromString(s.value("quietEnd", "08:00").toString(), "HH:mm");
+    if (!m_quietEnd.isValid()) m_quietEnd = QTime(8, 0);
+    m_dcaDayOfMonth = s.value("dcaDayOfMonth", 0).toInt();
+    m_dcaNote = s.value("dcaNote", "").toString();
+    m_dcaLastNotifiedDate = s.value("dcaLastNotifiedDate", "").toString();
 }
 
 void AppSettings::save()
@@ -136,5 +200,12 @@ void AppSettings::save()
     s.setValue("darkTheme", m_darkTheme);
     s.setValue("showMovingAverage", m_showMovingAverage);
     s.setValue("alertSound", m_alertSound);
+    s.setValue("hotkeyEnabled", m_hotkeyEnabled);
+    s.setValue("quietHoursEnabled", m_quietHoursEnabled);
+    s.setValue("quietStart", m_quietStart.toString("HH:mm"));
+    s.setValue("quietEnd", m_quietEnd.toString("HH:mm"));
+    s.setValue("dcaDayOfMonth", m_dcaDayOfMonth);
+    s.setValue("dcaNote", m_dcaNote);
+    s.setValue("dcaLastNotifiedDate", m_dcaLastNotifiedDate);
     s.sync();
 }

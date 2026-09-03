@@ -15,6 +15,7 @@ class QNetworkReply;
 class PriceService;
 class SettingsDialog;
 class ChartWindow;
+class GlobalHotkey;
 
 class PriceBarWindow : public QWidget
 {
@@ -54,6 +55,9 @@ private:
     void updateSecondaryVisibility();
     void applyTheme();
     void showAbout();
+    void toggleVisible();
+    void checkDcaReminder();
+    void setupHotkey();
 
     QLabel* m_sourceLabel = nullptr;
     QLabel* m_priceLabel = nullptr;
@@ -80,6 +84,8 @@ private:
     bool m_alertLit = false;
     QDateTime m_lastHighNotify;
     QDateTime m_lastLowNotify;
+    GlobalHotkey* m_hotkey = nullptr;
+    QTimer* m_dcaTimer = nullptr;
 };
 
 #endif // PRICEBARWINDOW_H

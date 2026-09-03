@@ -18,6 +18,7 @@
 #include <QStandardPaths>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
+#include <QTimeEdit>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QApplication>
@@ -28,7 +29,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 {
     setWindowTitle(tr("设置 - GoldPriceBarLite %1").arg(QApplication::applicationVersion()));
     setMinimumWidth(460);
-    setMinimumHeight(620);
+    setMinimumHeight(700);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     setupUi();
@@ -103,6 +104,33 @@ void SettingsDialog::setupUi()
 
     m_alertSoundCheck = new QCheckBox(tr("预警时系统提示音"), this);
     form->addRow("", m_alertSoundCheck);
+
+    m_hotkeyCheck = new QCheckBox(tr("全局热键 Ctrl+Shift+G 显示/隐藏价格条"), this);
+    form->addRow("", m_hotkeyCheck);
+
+    m_quietCheck = new QCheckBox(tr("启用免打扰时段（不通知、不闪点、不蜂鸣）"), this);
+    form->addRow("", m_quietCheck);
+    auto* quietLay = new QHBoxLayout;
+    m_quietStartEdit = new QTimeEdit(this);
+    m_quietStartEdit->setDisplayFormat("HH:mm");
+    m_quietEndEdit = new QTimeEdit(this);
+    m_quietEndEdit->setDisplayFormat("HH:mm");
+    quietLay->addWidget(new QLabel(tr("从"), this));
+    quietLay->addWidget(m_quietStartEdit);
+    quietLay->addWidget(new QLabel(tr("到"), this));
+    quietLay->addWidget(m_quietEndEdit);
+    quietLay->addWidget(new QLabel(tr("（可跨午夜）"), this));
+    quietLay->addStretch();
+    form->addRow(tr("免打扰："), quietLay);
+
+    m_dcaDaySpin = new QSpinBox(this);
+    m_dcaDaySpin->setRange(0, 28);
+    m_dcaDaySpin->setSpecialValueText(tr("关闭"));
+    m_dcaDaySpin->setToolTip(tr("每月几号提醒定投，0=关闭"));
+    form->addRow(tr("定投日："), m_dcaDaySpin);
+    m_dcaNoteEdit = new QLineEdit(this);
+    m_dcaNoteEdit->setPlaceholderText(tr("可选备注，如：每月定投 500 元"));
+    form->addRow(tr("定投备注："), m_dcaNoteEdit);
 
     auto* dbLayout = new QHBoxLayout;
     m_dbDirEdit = new QLineEdit(this);
@@ -245,6 +273,12 @@ void SettingsDialog::loadFromSettings()
     m_darkThemeCheck->setChecked(settings.darkTheme());
     m_maCheck->setChecked(settings.showMovingAverage());
     m_alertSoundCheck->setChecked(settings.alertSound());
+    m_hotkeyCheck->setChecked(settings.hotkeyEnabled());
+    m_quietCheck->setChecked(settings.quietHoursEnabled());
+    m_quietStartEdit->setTime(settings.quietStart());
+    m_quietEndEdit->setTime(settings.quietEnd());
+    m_dcaDaySpin->setValue(settings.dcaDayOfMonth());
+    m_dcaNoteEdit->setText(settings.dcaNote());
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
@@ -290,6 +324,12 @@ void SettingsDialog::onAccept()
     settings.setDarkTheme(m_darkThemeCheck->isChecked());
     settings.setShowMovingAverage(m_maCheck->isChecked());
     settings.setAlertSound(m_alertSoundCheck->isChecked());
+    settings.setHotkeyEnabled(m_hotkeyCheck->isChecked());
+    settings.setQuietHoursEnabled(m_quietCheck->isChecked());
+    settings.setQuietStart(m_quietStartEdit->time());
+    settings.setQuietEnd(m_quietEndEdit->time());
+    settings.setDcaDayOfMonth(m_dcaDaySpin->value());
+    settings.setDcaNote(m_dcaNoteEdit->text().trimmed());
     settings.save();
 
     if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())

@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QTime>
 
 class AppSettings : public QObject
 {
@@ -50,17 +51,39 @@ public:
     bool showSecondaryPrice() const;
     void setShowSecondaryPrice(bool on);
 
-    /** 深色主题（价格条/分时窗口） */
     bool darkTheme() const;
     void setDarkTheme(bool on);
 
-    /** 分时显示 MA5 / MA20 */
     bool showMovingAverage() const;
     void setShowMovingAverage(bool on);
 
-    /** 预警时系统蜂鸣 */
     bool alertSound() const;
     void setAlertSound(bool on);
+
+    /** 全局热键 Ctrl+Shift+G 显隐价格条 */
+    bool hotkeyEnabled() const;
+    void setHotkeyEnabled(bool on);
+
+    /** 免打扰：该时段内不托盘通知、不闪点、不蜂鸣 */
+    bool quietHoursEnabled() const;
+    void setQuietHoursEnabled(bool on);
+    QTime quietStart() const;
+    void setQuietStart(const QTime& t);
+    QTime quietEnd() const;
+    void setQuietEnd(const QTime& t);
+    /** 当前是否处于免打扰 */
+    bool isInQuietHours(const QTime& now = QTime::currentTime()) const;
+
+    /**
+     * 定投提醒：每月几号（1～28），0=关闭
+     * 当天首次检查时托盘提醒一次
+     */
+    int dcaDayOfMonth() const;
+    void setDcaDayOfMonth(int day);
+    QString dcaNote() const; // 如金额说明
+    void setDcaNote(const QString& note);
+    QString dcaLastNotifiedDate() const; // yyyy-MM-dd
+    void setDcaLastNotifiedDate(const QString& isoDate);
 
     void load();
     void save();
@@ -88,6 +111,13 @@ private:
     bool m_darkTheme = true;
     bool m_showMovingAverage = true;
     bool m_alertSound = false;
+    bool m_hotkeyEnabled = true;
+    bool m_quietHoursEnabled = false;
+    QTime m_quietStart = QTime(22, 0);
+    QTime m_quietEnd = QTime(8, 0);
+    int m_dcaDayOfMonth = 0;
+    QString m_dcaNote;
+    QString m_dcaLastNotifiedDate;
 };
 
 #endif // APPSETTINGS_H

@@ -5,6 +5,7 @@
 #include "AppSettings.h"
 #include "HistoryCache.h"
 #include "UpdateChecker.h"
+#include "GlobalHotkey.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -25,6 +26,7 @@
 #include <QJsonObject>
 #include <QDesktopServices>
 #include <QDateTime>
+#include <QDate>
 
 PriceBarWindow::PriceBarWindow(QWidget* parent)
     : QWidget(parent)
@@ -141,13 +143,15 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_settingsButton);
 
     applyTheme();
+    setupHotkey();
 }
 
 void PriceBarWindow::setupTray()
 {
     m_trayIcon = new QSystemTrayIcon(this);
     m_trayIcon->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
-    m_trayIcon->setToolTip(tr("GoldPriceBarLite %1").arg(QApplication::applicationVersion()));
+    m_trayIcon->setToolTip(tr("GoldPriceBarLite %1  |  Ctrl+Shift+G 显隐")
+        .arg(QApplication::applicationVersion()));
 
     auto* menu = new QMenu(this);
     menu->addAction(tr("显示/隐藏价格条"), this, [this]() {
@@ -258,7 +262,15 @@ void PriceBarWindow::onSettingsChanged()
     if (m_lastPrice > 0.0)
         updateAlertIndicator(m_lastPrice);
     updateSecondaryVisibility();
+    setupHotkey();
+
+    m_dcaTimer = new QTimer(this);
+    m_dcaTimer->setInterval(60 * 1000); // 每分钟检查定投日
+    connect(m_dcaTimer, &QTimer::timeout, this, &PriceBarWindow::checkDcaReminder);
+    m_dcaTimer->start();
+    QTimer::singleShot(5000, this, &PriceBarWindow::checkDcaReminder);
     applyTheme();
+    setupHotkey();
 }
 
 void PriceBarWindow::mousePressEvent(QMouseEvent* event)
@@ -302,10 +314,12 @@ void PriceBarWindow::updateAlertIndicator(double price)
     const double lo = AppSettings::instance().alertLow();
 
     AlertKind kind = AlertKind::None;
-    if (hi > 0.0 && price >= hi)
-        kind = AlertKind::High;
-    else if (lo > 0.0 && price <= lo)
-        kind = AlertKind::Low;
+    if (!AppSettings::instance().isInQuietHours()) {
+        if (hi > 0.0 && price >= hi)
+            kind = AlertKind::High;
+        else if (lo > 0.0 && price <= lo)
+            kind = AlertKind::Low;
+    }
 
     const bool kindChanged = (kind != m_alertKind);
     m_alertKind = kind;
@@ -334,6 +348,8 @@ void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
         return;
     if (kind == AlertKind::None)
         return;
+    if (AppSettings::instance().isInQuietHours())
+        return; // 免打扰
 
     const int cool = AppSettings::instance().alertCooldownSec();
     const QDateTime now = QDateTime::currentDateTime();
@@ -533,5 +549,62 @@ void PriceBarWindow::showAbout()
            "预测仅供参考，不构成投资建议。<br/><br/>"
            "仓库：github.com/kzq0717/GoldPriceBar")
             .arg(QApplication::applicationVersion()));
+}
+
+void PriceBarWindow::toggleVisible()
+{
+    setVisible(!isVisible());
+    if (isVisible()) {
+        raise();
+        activateWindow();
+    }
+}
+
+void PriceBarWindow::setupHotkey()
+{
+    if (!m_hotkey) {
+        m_hotkey = new GlobalHotkey(this);
+        connect(m_hotkey, &GlobalHotkey::activated, this, &PriceBarWindow::toggleVisible);
+    }
+    if (AppSettings::instance().hotkeyEnabled()) {
+        if (!m_hotkey->registerHotkey()) {
+            if (m_trayIcon)
+                m_trayIcon->showMessage(
+                    tr("热键"),
+                    tr("Ctrl+Shift+G 注册失败（可能被占用）"),
+                    QSystemTrayIcon::Warning, 3000);
+        }
+    } else {
+        m_hotkey->unregisterHotkey();
+    }
+}
+
+void PriceBarWindow::checkDcaReminder()
+{
+    const int day = AppSettings::instance().dcaDayOfMonth();
+    if (day <= 0 || !m_trayIcon)
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+
+    const QDate today = QDate::currentDate();
+    if (today.day() != day)
+        return;
+
+    const QString iso = today.toString(Qt::ISODate);
+    if (AppSettings::instance().dcaLastNotifiedDate() == iso)
+        return;
+
+    const QString note = AppSettings::instance().dcaNote().trimmed();
+    const QString body = note.isEmpty()
+        ? tr("今天是定投日（每月 %1 日），记得买入积存金。").arg(day)
+        : tr("今天是定投日（每月 %1 日）\n%2").arg(day).arg(note);
+
+    m_trayIcon->showMessage(tr("定投提醒"), body, QSystemTrayIcon::Information, 8000);
+    if (AppSettings::instance().alertSound())
+        QApplication::beep();
+
+    AppSettings::instance().setDcaLastNotifiedDate(iso);
+    AppSettings::instance().save();
 }
 

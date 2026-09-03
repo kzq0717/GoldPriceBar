@@ -11,6 +11,7 @@ class QLineEdit;
 class QPushButton;
 class QDoubleSpinBox;
 class QSpinBox;
+class QTimeEdit;
 
 class SettingsDialog : public QDialog
 {
@@ -56,6 +57,12 @@ private:
     QCheckBox* m_darkThemeCheck = nullptr;
     QCheckBox* m_maCheck = nullptr;
     QCheckBox* m_alertSoundCheck = nullptr;
+    QCheckBox* m_hotkeyCheck = nullptr;
+    QCheckBox* m_quietCheck = nullptr;
+    QTimeEdit* m_quietStartEdit = nullptr;
+    QTimeEdit* m_quietEndEdit = nullptr;
+    QSpinBox* m_dcaDaySpin = nullptr;
+    QLineEdit* m_dcaNoteEdit = nullptr;
 };
 
 
