@@ -37,9 +37,18 @@ jobs:
           if-no-files-found: error
 
   windows-build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja -y
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,45 +60,44 @@ jobs:
         run: |
           python -m pip install --upgrade pip aqtinstall
           $prefix = Join-Path $env:GITHUB_WORKSPACE "Qt"
-          # 明确输出目录，便于定位 msvc2019_64
           aqt install-qt windows desktop 6.5.3 win64_msvc2019_64 -m qtcharts -O $prefix
 
           $qtRoot = Join-Path $prefix "6.5.3\msvc2019_64"
           if (-not (Test-Path (Join-Path $qtRoot "bin\qmake.exe"))) {
-            Write-Host "Expected path missing, searching..."
-            $qmake = Get-ChildItem -Path $prefix -Recurse -Filter qmake.exe -ErrorAction SilentlyContinue |
+            $qmake = Get-ChildItem -Path $prefix -Recurse -Filter qmake.exe |
                      Select-Object -First 1
-            if (-not $qmake) { throw "qmake.exe not found under $prefix" }
+            if (-not $qmake) { throw "qmake.exe not found" }
             $qtRoot = $qmake.Directory.Parent.FullName
           }
-
-          Write-Host "Using QT_ROOT_DIR=$qtRoot"
-          Get-ChildItem (Join-Path $qtRoot "lib\cmake") -ErrorAction SilentlyContinue | Select-Object Name
-
+          Write-Host "QT_ROOT_DIR=$qtRoot"
           "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "CMAKE_PREFIX_PATH=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PATH=$qtRoot\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Configure CMake
+      - name: Configure CMake (Ninja)
         shell: cmd
         run: |
           echo QT_ROOT_DIR=%QT_ROOT_DIR%
-          dir "%QT_ROOT_DIR%\lib\cmake\Qt6"
-          cmake -B build -G "Visual Studio 17 2022" -A x64 ^
-            -DCMAKE_PREFIX_PATH="%QT_ROOT_DIR%" ^
-            -DQT6_ROOT_DIR="%QT_ROOT_DIR%" ^
-            -DCMAKE_BUILD_TYPE=Release
+          where cl
+          where ninja
+          cmake -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_PREFIX_PATH=%QT_ROOT_DIR% ^
+            -DQT6_ROOT_DIR=%QT_ROOT_DIR%
 
       - name: Build Release
         shell: cmd
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
 
       - name: Deploy with windeployqt
         shell: cmd
         run: |
-          set EXE=build\Release\GoldPriceBarLite.exe
+          set EXE=build\GoldPriceBarLite.exe
           if not exist "%EXE%" (
-            echo EXE not found
+            echo try Release subdir
+            set EXE=build\Release\GoldPriceBarLite.exe
+          )
+          if not exist "%EXE%" (
             dir /s /b build\*.exe
             exit /b 1
           )
