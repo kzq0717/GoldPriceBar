@@ -1,0 +1,86 @@
+# 将此文件内容复制到 .github/workflows/release.yml
+# 推送 workflow 文件需要 PAT 勾选 workflow 权限
+name: Build and Package
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  source-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create source archive
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then VERSION="${GITHUB_REF_NAME}"
+          else VERSION="main-$(git rev-parse --short HEAD)"; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p dist
+          git archive --format=zip --prefix="GoldPriceBarLite-${VERSION}/" \
+            -o "dist/GoldPriceBarLite-${VERSION}-src.zip" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-zip
+          path: dist/*.zip
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.7.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtcharts
+          cache: true
+      - name: Configure CMake
+        shell: cmd
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%QT_ROOT_DIR% -DQT6_ROOT_DIR=%QT_ROOT_DIR%
+      - name: Build Release
+        shell: cmd
+        run: cmake --build build --config Release --parallel
+      - name: Deploy
+        shell: cmd
+        run: |
+          set EXE=build\Release\GoldPriceBarLite.exe
+          mkdir dist\GoldPriceBarLite
+          copy /Y %EXE% dist\GoldPriceBarLite\
+          "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-translations --compiler-runtime dist\GoldPriceBarLite\GoldPriceBarLite.exe
+      - name: Zip
+        shell: pwsh
+        run: |
+          $ver = if ($env:GITHUB_REF -like "refs/tags/*") { $env:GITHUB_REF_NAME } else { "main-$($env:GITHUB_SHA.Substring(0,7))" }
+          Compress-Archive -Path dist\GoldPriceBarLite\* -DestinationPath "dist\GoldPriceBarLite-$ver-win64.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/*-win64.zip
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [source-package, windows-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: GoldPriceBarLite ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/source-zip/*.zip
+            artifacts/windows-release/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
