@@ -1,62 +1,42 @@
 # GitHub Actions 自动构建与 Release
 
-## 已启用的工作流
+## 关于页面上的 Token 提示
 
-文件：`.github/workflows/release.yml`
+> Upcoming change to GitHub App installation token format (ghs_...)
 
-| 触发条件 | 行为 |
-|----------|------|
-| `push` 到 `main` | Windows 编译 + 上传 Artifacts（不发 Release） |
-| `push` tag `v*`（如 `v0.4.1`） | 编译完成后**自动创建 GitHub Release** 并挂上 zip |
-| 手动 | Actions 页 → Build and Package → Run workflow |
+这是 **GitHub 平台公告**，与是否生成 Release **无关**，可忽略。
 
-产物：
+## 为何之前没有自动 Release？
 
-- `GoldPriceBarLite-<version>-src.zip` 源码
-- `GoldPriceBarLite-<version>-win64.zip` Windows 可执行包（含 windeployqt 依赖）
+查看 Actions 记录：`windows-build` 在 **Install Qt 6.7** 步骤失败 →  
+`publish-release` 因依赖失败被 **skipped** → 仓库 Releases 为空。
 
-## 你需要配置什么？
+已将 Qt 安装改为 `aqtinstall` + **Qt 6.5.3 / win64_msvc2019_64**（更稳定）。
 
-**一般不需要额外 Secret。**
+## 你需要做的配置
 
-- `permissions: contents: write` + 默认 `GITHUB_TOKEN` 即可创建 Release。
-- 仓库为 **public** 时，Actions 按 GitHub 免费额度运行。
+1. **Settings → Actions → General**
+   - Actions 权限：允许
+   - Workflow permissions：**Read and write**
+2. 把修复后的 `.github/workflows/release.yml` 推到仓库  
+   - 若 PAT 无 `workflow` 权限，请在网页上直接编辑该文件并粘贴内容，或使用勾选了 **`workflow`** 的 Token 推送。
 
-建议确认：
-
-1. https://github.com/kzq0717/GoldPriceBar/settings/actions  
-   - 允许 Actions  
-   - Workflow permissions：**Read and write**（创建 Release 失败时检查此项）
-
-2. https://github.com/kzq0717/GoldPriceBar/actions  
-   - “Build and Package” 是否成功
-
-## 发版标准流程
+## 发版
 
 ```bat
-cd D:\Project\Tools\GoldPriceBar
-git checkout main
-git pull
-
-git add .
-git commit -m "Release v0.x.y"
 git push origin main
-
-git tag -a v0.x.y -m "GoldPriceBarLite v0.x.y"
-git push origin v0.x.y
+git tag -a v0.4.2 -m "v0.4.2"
+git push origin v0.4.2
 ```
 
-推送 `v*` tag 后 Actions 会自动：
+成功后应看到：
 
-1. 编译 Windows 包  
-2. 创建 GitHub Release 并上传 zip  
-3. 客户端「检查更新」可读 `releases/latest`
+1. Actions 全绿（含 `publish-release`）
+2. https://github.com/kzq0717/GoldPriceBar/releases 出现附件 zip
 
-## 常见问题
+也可对已有 tag 在 Actions 页 **Re-run all jobs**。
 
-| 现象 | 处理 |
-|------|------|
-| publish-release 跳过 | tag 必须以 `v` 开头（`v0.4.1`） |
-| 403 创建 Release | Actions → Workflow permissions → Read and write |
-| 检查更新仍旧 | 确认 Release 非 draft，且为最新正式版 |
+## 检查更新
 
+客户端读取 `GET /repos/kzq0717/GoldPriceBar/releases/latest`，  
+需要至少有一个 **Published**（非 draft）的 Release。
