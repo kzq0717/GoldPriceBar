@@ -87,14 +87,14 @@ void ChartWindow::setupChart() {
   m_ma5Series->setName(tr("MA5"));
   m_ma5Series->setPointsVisible(false);
   QPen ma5(QColor(230, 126, 34));
-  ma5.setWidth(1);
+  ma5.setWidth(2);
   m_ma5Series->setPen(ma5);
 
   m_ma20Series = new QLineSeries(this);
   m_ma20Series->setName(tr("MA20"));
   m_ma20Series->setPointsVisible(false);
   QPen ma20(QColor(155, 89, 182));
-  ma20.setWidth(1);
+  ma20.setWidth(2);
   m_ma20Series->setPen(ma20);
 
   m_yesterdaySeries = new QLineSeries(this);
@@ -928,7 +928,9 @@ void ChartWindow::updateSeries() {
     m_currentSeries->clear();
     m_highSeries->clear();
     m_lowSeries->clear();
-
+    if (m_ma5Series) m_ma5Series->clear();
+    if (m_ma20Series) m_ma20Series->clear();
+    if (m_yesterdaySeries) m_yesterdaySeries->clear();
     return;
   }
 
@@ -1021,11 +1023,15 @@ void ChartWindow::updateSeries() {
                         .arg(low, 0, 'f', 2)
                         .arg(predText));
 
+  updateMovingAverages();
+  updateYesterdayOverlay();
+
   QTimer::singleShot(50, this, [this]() {
     if (!isVisible())
       return;
     updateForecast();
     updateHighLowMarkers();
+    updateMovingAverages();
   });
 }
 
