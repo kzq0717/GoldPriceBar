@@ -1,5 +1,3 @@
-# 自动构建 + 打 tag(v*) 时发布 Release
-# 修复：Qt 安装改用 aqtinstall + 更稳的版本/架构组合
 name: Build and Package
 
 on:
@@ -43,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python (for aqtinstall)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -51,21 +49,36 @@ jobs:
       - name: Install Qt 6.5.3 via aqtinstall
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          pip install aqtinstall
-          # 使用长期可用的 6.5.3 + msvc2019 套件（与 VS2022 兼容）
-          aqt install-qt windows desktop 6.5.3 win64_msvc2019_64 -m qtcharts -O "$env:GITHUB_WORKSPACE\Qt"
-          Get-ChildItem "$env:GITHUB_WORKSPACE\Qt" -Recurse -Depth 3 | Select-Object -First 40 FullName
-          $qtRoot = Get-ChildItem "$env:GITHUB_WORKSPACE\Qt\6.5.3" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          echo "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          echo "CMAKE_PREFIX_PATH=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "QT_ROOT_DIR=$qtRoot"
+          python -m pip install --upgrade pip aqtinstall
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "Qt"
+          # 明确输出目录，便于定位 msvc2019_64
+          aqt install-qt windows desktop 6.5.3 win64_msvc2019_64 -m qtcharts -O $prefix
+
+          $qtRoot = Join-Path $prefix "6.5.3\msvc2019_64"
+          if (-not (Test-Path (Join-Path $qtRoot "bin\qmake.exe"))) {
+            Write-Host "Expected path missing, searching..."
+            $qmake = Get-ChildItem -Path $prefix -Recurse -Filter qmake.exe -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+            if (-not $qmake) { throw "qmake.exe not found under $prefix" }
+            $qtRoot = $qmake.Directory.Parent.FullName
+          }
+
+          Write-Host "Using QT_ROOT_DIR=$qtRoot"
+          Get-ChildItem (Join-Path $qtRoot "lib\cmake") -ErrorAction SilentlyContinue | Select-Object Name
+
+          "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CMAKE_PREFIX_PATH=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PATH=$qtRoot\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Configure CMake
         shell: cmd
         run: |
           echo QT_ROOT_DIR=%QT_ROOT_DIR%
-          cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%QT_ROOT_DIR% -DQT6_ROOT_DIR=%QT_ROOT_DIR%
+          dir "%QT_ROOT_DIR%\lib\cmake\Qt6"
+          cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+            -DCMAKE_PREFIX_PATH="%QT_ROOT_DIR%" ^
+            -DQT6_ROOT_DIR="%QT_ROOT_DIR%" ^
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Release
         shell: cmd
@@ -75,13 +88,13 @@ jobs:
         shell: cmd
         run: |
           set EXE=build\Release\GoldPriceBarLite.exe
-          if not exist %EXE% (
+          if not exist "%EXE%" (
             echo EXE not found
             dir /s /b build\*.exe
             exit /b 1
           )
           mkdir dist\GoldPriceBarLite
-          copy /Y %EXE% dist\GoldPriceBarLite\
+          copy /Y "%EXE%" dist\GoldPriceBarLite\
           "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-translations --compiler-runtime dist\GoldPriceBarLite\GoldPriceBarLite.exe
           dir dist\GoldPriceBarLite
 
