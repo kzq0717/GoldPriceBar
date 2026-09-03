@@ -80,6 +80,19 @@ void PriceBarWindow::setupUi()
     m_highLabel->setStyleSheet("color: #e74c3c; font-size: 12px;");
     m_highLabel->setToolTip(tr("今日最高价（来自全日分时接口，截至当前）"));
 
+    // 预警闪烁点：位于「高」与分时图标之间
+    m_alertDot = new QLabel(this);
+    m_alertDot->setFixedSize(12, 12);
+    m_alertDot->setAlignment(Qt::AlignCenter);
+    m_alertDot->setText(QStringLiteral("●"));
+    m_alertDot->setStyleSheet("color: transparent; font-size: 14px;");
+    m_alertDot->setToolTip(tr("价格预警指示：红=触及高预警，绿=触及低预警"));
+    m_alertDot->hide();
+
+    m_alertBlinkTimer = new QTimer(this);
+    m_alertBlinkTimer->setInterval(450);
+    connect(m_alertBlinkTimer, &QTimer::timeout, this, &PriceBarWindow::onAlertBlinkTick);
+
     m_chartButton = new QToolButton(this);
     m_chartButton->setText(QStringLiteral("📈"));
     m_chartButton->setToolTip(tr("查看今日分时曲线"));
@@ -100,6 +113,7 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_priceLabel);
     layout->addWidget(m_changeLabel);
     layout->addWidget(m_highLabel);
+    layout->addWidget(m_alertDot);
     layout->addStretch();
     layout->addWidget(m_chartButton);
     layout->addWidget(m_settingsButton);
@@ -168,6 +182,9 @@ void PriceBarWindow::updatePriceDisplay(double price, double change, const QStri
     } else {
         m_highLabel->setText(tr("高 %1").arg(price, 0, 'f', 2));
     }
+
+    m_lastPrice = price;
+    updateAlertIndicator(price);
 }
 
 void PriceBarWindow::applyOpacity()
@@ -226,6 +243,8 @@ void PriceBarWindow::onSettingsChanged()
     // 切换数据源后清空当日缓存，避免浙商与伦敦金价格混在同一曲线
     HistoryCache::instance().clear();
     m_priceService->forceRefresh();
+    if (m_lastPrice > 0.0)
+        updateAlertIndicator(m_lastPrice);
 }
 
 void PriceBarWindow::mousePressEvent(QMouseEvent* event)
@@ -259,3 +278,58 @@ void PriceBarWindow::closeEvent(QCloseEvent* event)
     hide();
     event->ignore();
 }
+
+void PriceBarWindow::updateAlertIndicator(double price)
+{
+    if (!m_alertDot)
+        return;
+
+    const double hi = AppSettings::instance().alertHigh();
+    const double lo = AppSettings::instance().alertLow();
+
+    AlertKind kind = AlertKind::None;
+    if (hi > 0.0 && price >= hi)
+        kind = AlertKind::High;
+    else if (lo > 0.0 && price <= lo)
+        kind = AlertKind::Low;
+
+    m_alertKind = kind;
+    if (kind == AlertKind::None) {
+        m_alertBlinkTimer->stop();
+        m_alertDot->hide();
+        m_alertDot->setStyleSheet("color: transparent; font-size: 14px;");
+        m_alertLit = false;
+        return;
+    }
+
+    m_alertDot->show();
+    if (!m_alertBlinkTimer->isActive()) {
+        m_alertLit = true;
+        onAlertBlinkTick();
+        m_alertBlinkTimer->start();
+    }
+}
+
+void PriceBarWindow::onAlertBlinkTick()
+{
+    if (!m_alertDot || m_alertKind == AlertKind::None)
+        return;
+
+    m_alertLit = !m_alertLit;
+    if (!m_alertLit) {
+        m_alertDot->setStyleSheet("color: transparent; font-size: 14px;");
+        return;
+    }
+    if (m_alertKind == AlertKind::High) {
+        m_alertDot->setStyleSheet(
+            "color: #ff3333; font-size: 14px; font-weight: bold;");
+        m_alertDot->setToolTip(tr("高价预警：现价 ≥ %1")
+                                   .arg(AppSettings::instance().alertHigh(), 0, 'f', 2));
+    } else {
+        m_alertDot->setStyleSheet(
+            "color: #2ecc71; font-size: 14px; font-weight: bold;");
+        m_alertDot->setToolTip(tr("低价预警：现价 ≤ %1")
+                                   .arg(AppSettings::instance().alertLow(), 0, 'f', 2));
+    }
+}
+

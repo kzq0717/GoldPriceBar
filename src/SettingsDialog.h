@@ -9,6 +9,7 @@ class QLabel;
 class QCheckBox;
 class QLineEdit;
 class QPushButton;
+class QDoubleSpinBox;
 
 class SettingsDialog : public QDialog
 {
@@ -22,6 +23,7 @@ private slots:
     void onIntervalChanged(int index);
     void onOpacityChanged(int value);
     void onForecastSliderChanged(int value);
+    void onExitApp();
 
 private:
     void setupUi();
@@ -43,8 +45,9 @@ private:
 
     QLineEdit* m_dbDirEdit = nullptr;
     QPushButton* m_dbDirBrowseBtn = nullptr;
+
+    QDoubleSpinBox* m_alertHighSpin = nullptr;
+    QDoubleSpinBox* m_alertLowSpin = nullptr;
 };
-
-
 
 #endif // SETTINGSDIALOG_H

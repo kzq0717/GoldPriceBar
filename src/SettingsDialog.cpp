@@ -14,13 +14,16 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QStandardPaths>
+#include <QDoubleSpinBox>
+#include <QApplication>
+#include <QMessageBox>
 
 SettingsDialog::SettingsDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("设置 - GoldPriceBarLite"));
-    setMinimumWidth(440);
-    setFixedHeight(420);
+    setMinimumWidth(460);
+    setMinimumHeight(480);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     setupUi();
@@ -58,7 +61,23 @@ void SettingsDialog::setupUi()
     form->addRow(tr("窗口透明度："), opacityLayout);
     connect(m_opacitySlider, &QSlider::valueChanged, this, &SettingsDialog::onOpacityChanged);
 
-    // 数据库目录
+    // 预警阈值
+    m_alertHighSpin = new QDoubleSpinBox(this);
+    m_alertHighSpin->setRange(0.0, 99999.0);
+    m_alertHighSpin->setDecimals(2);
+    m_alertHighSpin->setSingleStep(1.0);
+    m_alertHighSpin->setSpecialValueText(tr("关闭"));
+    m_alertHighSpin->setToolTip(tr("现价达到或超过该值时，价格条红点闪烁；0=关闭"));
+    form->addRow(tr("高价预警："), m_alertHighSpin);
+
+    m_alertLowSpin = new QDoubleSpinBox(this);
+    m_alertLowSpin->setRange(0.0, 99999.0);
+    m_alertLowSpin->setDecimals(2);
+    m_alertLowSpin->setSingleStep(1.0);
+    m_alertLowSpin->setSpecialValueText(tr("关闭"));
+    m_alertLowSpin->setToolTip(tr("现价达到或低于该值时，价格条绿点闪烁；0=关闭"));
+    form->addRow(tr("低价预警："), m_alertLowSpin);
+
     auto* dbLayout = new QHBoxLayout;
     m_dbDirEdit = new QLineEdit(this);
     m_dbDirEdit->setPlaceholderText(tr("留空 = 默认路径（系统 AppData）"));
@@ -77,7 +96,6 @@ void SettingsDialog::setupUi()
             m_dbDirEdit->setText(dir);
     });
 
-    // 预测模式
     auto* forecastLayout = new QHBoxLayout;
     auto* localLbl = new QLabel(tr("本地"), this);
     localLbl->setStyleSheet("color:#666;font-size:11px;");
@@ -121,8 +139,8 @@ void SettingsDialog::setupUi()
     mainLayout->addLayout(form);
 
     auto* hint = new QLabel(
-        tr("数据库文件名为 gold_extremes.db。目录留空则使用系统默认："
-           "%AppData%/GoldPriceBarLite/（Windows）。修改目录后将重新打开数据库。"),
+        tr("高/低预警：0 表示关闭。触发后价格条在「高」与分时按钮之间闪烁色点。"
+           "退出可直接点下方「退出软件」。"),
         this);
     hint->setWordWrap(true);
     hint->setStyleSheet("color:#888;font-size:11px;");
@@ -132,7 +150,18 @@ void SettingsDialog::setupUi()
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::onAccept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    mainLayout->addWidget(buttons);
+
+    auto* exitBtn = new QPushButton(tr("退出软件"), this);
+    exitBtn->setStyleSheet(
+        "QPushButton{color:#c0392b;font-weight:bold;padding:6px 14px;}"
+        "QPushButton:hover{background:#fdecea;}");
+    connect(exitBtn, &QPushButton::clicked, this, &SettingsDialog::onExitApp);
+
+    auto* bottom = new QHBoxLayout;
+    bottom->addWidget(exitBtn);
+    bottom->addStretch();
+    bottom->addWidget(buttons);
+    mainLayout->addLayout(bottom);
 }
 
 void SettingsDialog::updateForecastUiState()
@@ -170,6 +199,9 @@ void SettingsDialog::loadFromSettings()
     m_autoStartCheck->setChecked(settings.autoStart());
     m_dbDirEdit->setText(settings.databaseDir());
 
+    m_alertHighSpin->setValue(settings.alertHigh());
+    m_alertLowSpin->setValue(settings.alertLow());
+
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
 
@@ -206,14 +238,28 @@ void SettingsDialog::onAccept()
     settings.setXaiApiKey(m_apiKeyEdit->text().trimmed());
     settings.setXaiModel(m_modelCombo->currentText().trimmed());
     settings.setDatabaseDir(m_dbDirEdit->text().trimmed());
+    settings.setAlertHigh(m_alertHighSpin->value());
+    settings.setAlertLow(m_alertLowSpin->value());
     settings.save();
 
-    // 目录变更或首次配置后重新打开数据库
-    if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen()) {
+    if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())
         ExtremeDatabase::instance().open();
-    }
 
     accept();
+}
+
+void SettingsDialog::onExitApp()
+{
+    const auto ret = QMessageBox::question(
+        this, tr("退出确认"),
+        tr("确定要退出 GoldPriceBarLite 吗？"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes)
+        return;
+
+    // 先保存当前表单中的设置
+    onAccept();
+    QApplication::quit();
 }
 
 void SettingsDialog::onIntervalChanged(int) {}

@@ -32,15 +32,15 @@ public:
     QString xaiModel() const;
     void setXaiModel(const QString& model);
 
-    /**
-     * 数据库目录（存放 gold_extremes.db）
-     * 为空表示使用默认路径：AppDataLocation
-     */
     QString databaseDir() const;
     void setDatabaseDir(const QString& dir);
-
-    /** 解析后的实际目录：配置非空则用配置，否则默认 AppData */
     QString resolvedDatabaseDir() const;
+
+    /** 预警：现价 >= 高阈值值 → 红点闪烁；现价 <= 低预警值 → 绿点闪烁；0 表示关闭 */
+    double alertHigh() const;
+    void setAlertHigh(double v);
+    double alertLow() const;
+    void setAlertLow(double v);
 
     void load();
     void save();
@@ -59,7 +59,9 @@ private:
     bool m_forecastOnline = false;
     QString m_xaiApiKey;
     QString m_xaiModel = "grok-4.6";
-    QString m_databaseDir; // 空 = 默认
+    QString m_databaseDir;
+    double m_alertHigh = 0.0;
+    double m_alertLow = 0.0;
 };
 
 #endif // APPSETTINGS_H

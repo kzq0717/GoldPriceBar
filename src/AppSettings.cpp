@@ -102,11 +102,31 @@ void AppSettings::setDatabaseDir(const QString& dir)
 
 QString AppSettings::resolvedDatabaseDir() const
 {
-    if (!m_databaseDir.isEmpty()) {
+    if (!m_databaseDir.isEmpty())
         return QDir::cleanPath(m_databaseDir);
-    }
-    // 默认：系统应用数据目录
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+}
+
+double AppSettings::alertHigh() const { return m_alertHigh; }
+
+void AppSettings::setAlertHigh(double v)
+{
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_alertHigh, v)) {
+        m_alertHigh = v;
+        emit settingsChanged();
+    }
+}
+
+double AppSettings::alertLow() const { return m_alertLow; }
+
+void AppSettings::setAlertLow(double v)
+{
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_alertLow, v)) {
+        m_alertLow = v;
+        emit settingsChanged();
+    }
 }
 
 void AppSettings::load()
@@ -122,8 +142,9 @@ void AppSettings::load()
     m_forecastOnline    = settings.value("forecastOnline", false).toBool();
     m_xaiApiKey         = settings.value("xaiApiKey", "").toString();
     m_xaiModel          = settings.value("xaiModel", "grok-4.6").toString();
-    // 未配置或空字符串 → 使用默认路径
     m_databaseDir       = settings.value("databaseDir", "").toString().trimmed();
+    m_alertHigh         = settings.value("alertHigh", 0.0).toDouble();
+    m_alertLow          = settings.value("alertLow", 0.0).toDouble();
 }
 
 void AppSettings::save()
@@ -140,5 +161,7 @@ void AppSettings::save()
     settings.setValue("xaiApiKey", m_xaiApiKey);
     settings.setValue("xaiModel", m_xaiModel);
     settings.setValue("databaseDir", m_databaseDir);
+    settings.setValue("alertHigh", m_alertHigh);
+    settings.setValue("alertLow", m_alertLow);
     settings.sync();
 }
