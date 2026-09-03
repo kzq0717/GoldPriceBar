@@ -25,9 +25,9 @@
 SettingsDialog::SettingsDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("设置 - GoldPriceBarLite"));
+    setWindowTitle(tr("设置 - GoldPriceBarLite %1").arg(QApplication::applicationVersion()));
     setMinimumWidth(460);
-    setMinimumHeight(560);
+    setMinimumHeight(620);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     setupUi();
@@ -93,6 +93,15 @@ void SettingsDialog::setupUi()
 
     m_secondaryPriceCheck = new QCheckBox(tr("词条显示对照价（主源非伦敦金时显示伦敦金）"), this);
     form->addRow("", m_secondaryPriceCheck);
+
+    m_darkThemeCheck = new QCheckBox(tr("深色主题（价格条 / 分时窗口）"), this);
+    form->addRow("", m_darkThemeCheck);
+
+    m_maCheck = new QCheckBox(tr("分时显示均线 MA5 / MA20"), this);
+    form->addRow("", m_maCheck);
+
+    m_alertSoundCheck = new QCheckBox(tr("预警时系统提示音"), this);
+    form->addRow("", m_alertSoundCheck);
 
     auto* dbLayout = new QHBoxLayout;
     m_dbDirEdit = new QLineEdit(this);
@@ -228,6 +237,9 @@ void SettingsDialog::loadFromSettings()
     m_alertCooldownSpin->setValue(settings.alertCooldownSec());
     m_trayNotifyCheck->setChecked(settings.trayNotifyOnAlert());
     m_secondaryPriceCheck->setChecked(settings.showSecondaryPrice());
+    m_darkThemeCheck->setChecked(settings.darkTheme());
+    m_maCheck->setChecked(settings.showMovingAverage());
+    m_alertSoundCheck->setChecked(settings.alertSound());
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
@@ -270,6 +282,9 @@ void SettingsDialog::onAccept()
     settings.setAlertCooldownSec(m_alertCooldownSpin->value());
     settings.setTrayNotifyOnAlert(m_trayNotifyCheck->isChecked());
     settings.setShowSecondaryPrice(m_secondaryPriceCheck->isChecked());
+    settings.setDarkTheme(m_darkThemeCheck->isChecked());
+    settings.setShowMovingAverage(m_maCheck->isChecked());
+    settings.setAlertSound(m_alertSoundCheck->isChecked());
     settings.save();
 
     if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())

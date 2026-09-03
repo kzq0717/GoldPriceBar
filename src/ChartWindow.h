@@ -70,12 +70,16 @@ private:
     int nearestPointIndex(qreal xMsecs) const;
     QVector<QPair<QDateTime, double>> computeForecastLocal(int horizonSec) const;
     void setForecastVisible(bool on);
+    void applyChartTheme();
+    void updateMovingAverages();
 
     QComboBox* m_periodCombo = nullptr;
 
     QChartView* m_chartView = nullptr;
     QChart* m_chart = nullptr;
     QLineSeries* m_series = nullptr;
+    QLineSeries* m_ma5Series = nullptr;
+    QLineSeries* m_ma20Series = nullptr;
     QLineSeries* m_forecastSeries = nullptr;
     QScatterSeries* m_currentSeries = nullptr;
     QScatterSeries* m_highSeries = nullptr;

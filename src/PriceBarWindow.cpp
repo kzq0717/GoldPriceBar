@@ -14,6 +14,7 @@
 #include <QApplication>
 #include <QStyle>
 #include <QScreen>
+#include <QMessageBox>
 #include <QTimer>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
@@ -138,23 +139,7 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_chartButton);
     layout->addWidget(m_settingsButton);
 
-    // 深色背景
-    setStyleSheet(
-        "PriceBarWindow {"
-        "  background-color: rgba(30, 30, 30, 230);"
-        "  border: 1px solid #555555;"
-        "  border-radius: 6px;"
-        "}"
-        "QToolButton {"
-        "  color: #dddddd;"
-        "  border: none;"
-        "  font-size: 14px;"
-        "}"
-        "QToolButton:hover {"
-        "  background-color: rgba(80, 80, 80, 180);"
-        "  border-radius: 4px;"
-        "}"
-    );
+    applyTheme();
 }
 
 void PriceBarWindow::setupTray()
@@ -167,6 +152,8 @@ void PriceBarWindow::setupTray()
     menu->addAction(tr("显示/隐藏价格条"), this, [this]() {
         setVisible(!isVisible());
     });
+    menu->addAction(tr("分时曲线"), this, &PriceBarWindow::onChartClicked);
+    menu->addAction(tr("关于"), this, &PriceBarWindow::showAbout);
     menu->addSeparator();
     menu->addAction(tr("退出"), qApp, &QApplication::quit);
 
@@ -266,6 +253,7 @@ void PriceBarWindow::onSettingsChanged()
     if (m_lastPrice > 0.0)
         updateAlertIndicator(m_lastPrice);
     updateSecondaryVisibility();
+    applyTheme();
 }
 
 void PriceBarWindow::mousePressEvent(QMouseEvent* event)
@@ -361,7 +349,11 @@ void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
                    .arg(AppSettings::instance().alertLow(), 0, 'f', 2);
     }
     m_trayIcon->showMessage(title, body, QSystemTrayIcon::Warning, 5000);
+    if (AppSettings::instance().alertSound())
+        QApplication::beep();
 }
+
+
 
 void PriceBarWindow::updateSecondaryVisibility()
 {
@@ -456,5 +448,85 @@ void PriceBarWindow::onAlertBlinkTick()
         m_alertDot->setToolTip(tr("低价预警：现价 ≤ %1")
                                    .arg(AppSettings::instance().alertLow(), 0, 'f', 2));
     }
+}
+
+void PriceBarWindow::applyTheme()
+{
+    const bool dark = AppSettings::instance().darkTheme();
+    if (dark) {
+        setStyleSheet(
+            "PriceBarWindow {"
+            "  background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "    stop:0 #1a1d23, stop:1 #252a33);"
+            "  border: 1px solid #3d4450;"
+            "  border-radius: 8px;"
+            "}"
+            "QToolButton {"
+            "  color: #e8eaed;"
+            "  border: none;"
+            "  font-size: 14px;"
+            "  padding: 2px;"
+            "}"
+            "QToolButton:hover {"
+            "  background-color: rgba(255,255,255,28);"
+            "  border-radius: 5px;"
+            "}"
+        );
+        if (m_sourceLabel)
+            m_sourceLabel->setStyleSheet("color:#9aa0a6;font-size:12px;");
+        if (m_priceLabel)
+            m_priceLabel->setStyleSheet("color:#ffffff;font-size:16px;font-weight:bold;");
+        if (m_highLabel)
+            m_highLabel->setStyleSheet("color:#ff6b6b;font-size:12px;");
+        if (m_secondaryLabel)
+            m_secondaryLabel->setStyleSheet("color:#c792ea;font-size:11px;");
+    } else {
+        setStyleSheet(
+            "PriceBarWindow {"
+            "  background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "    stop:0 #f7f8fa, stop:1 #eef1f6);"
+            "  border: 1px solid #c5cdd8;"
+            "  border-radius: 8px;"
+            "}"
+            "QToolButton {"
+            "  color: #333;"
+            "  border: none;"
+            "  font-size: 14px;"
+            "}"
+            "QToolButton:hover {"
+            "  background-color: rgba(0,0,0,18);"
+            "  border-radius: 5px;"
+            "}"
+        );
+        if (m_sourceLabel)
+            m_sourceLabel->setStyleSheet("color:#5c6b77;font-size:12px;");
+        if (m_priceLabel)
+            m_priceLabel->setStyleSheet("color:#1a1d23;font-size:16px;font-weight:bold;");
+        if (m_highLabel)
+            m_highLabel->setStyleSheet("color:#c0392b;font-size:12px;");
+        if (m_secondaryLabel)
+            m_secondaryLabel->setStyleSheet("color:#8e44ad;font-size:11px;");
+    }
+    applyOpacity();
+}
+
+void PriceBarWindow::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton)
+        onChartClicked();
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void PriceBarWindow::showAbout()
+{
+    QMessageBox::about(
+        this,
+        tr("关于 GoldPriceBarLite"),
+        tr("<b>GoldPriceBarLite %1</b><br/>"
+           "轻量级积存金/金价浮窗<br/><br/>"
+           "数据来源：jin.20021002.xyz 公开接口<br/>"
+           "预测仅供参考，不构成投资建议。<br/><br/>"
+           "仓库：github.com/kzq0717/GoldPriceBar")
+            .arg(QApplication::applicationVersion()));
 }
 

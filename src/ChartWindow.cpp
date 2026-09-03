@@ -55,8 +55,12 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
   setupChart();
   connect(&AppSettings::instance(), &AppSettings::settingsChanged, this,
           [this]() {
-            if (isVisible() && !m_plotPoints.isEmpty())
-              updateForecast();
+            applyChartTheme();
+            if (isVisible() && !m_plotPoints.isEmpty()) {
+              updateMovingAverages();
+              if (isIntradayMode())
+                updateForecast();
+            }
           });
   m_lastRedraw.invalidate();
 }
@@ -77,6 +81,20 @@ void ChartWindow::setupChart() {
   QPen pen(QColor(0, 82, 217));
   pen.setWidth(2);
   m_series->setPen(pen);
+
+  m_ma5Series = new QLineSeries(this);
+  m_ma5Series->setName(tr("MA5"));
+  m_ma5Series->setPointsVisible(false);
+  QPen ma5(QColor(230, 126, 34));
+  ma5.setWidth(1);
+  m_ma5Series->setPen(ma5);
+
+  m_ma20Series = new QLineSeries(this);
+  m_ma20Series->setName(tr("MA20"));
+  m_ma20Series->setPointsVisible(false);
+  QPen ma20(QColor(155, 89, 182));
+  ma20.setWidth(1);
+  m_ma20Series->setPen(ma20);
 
   // 未来 2 分钟预测：虚线
   m_forecastSeries = new QLineSeries(this);
@@ -106,6 +124,8 @@ void ChartWindow::setupChart() {
 
   m_chart = new QChart();
   m_chart->addSeries(m_series);
+  m_chart->addSeries(m_ma5Series);
+  m_chart->addSeries(m_ma20Series);
   m_chart->addSeries(m_forecastSeries);
   m_chart->addSeries(m_currentSeries);
   m_chart->addSeries(m_highSeries);
@@ -131,6 +151,8 @@ void ChartWindow::setupChart() {
   m_chart->addAxis(m_axisY, Qt::AlignLeft);
 
   for (QAbstractSeries *s : {static_cast<QAbstractSeries *>(m_series),
+                       static_cast<QAbstractSeries *>(m_ma5Series),
+                       static_cast<QAbstractSeries *>(m_ma20Series),
                              static_cast<QAbstractSeries *>(m_forecastSeries),
                              static_cast<QAbstractSeries *>(m_currentSeries),
                              static_cast<QAbstractSeries *>(m_highSeries),
@@ -248,6 +270,7 @@ void ChartWindow::setupChart() {
   body->setStretch(0, 1);
   body->setStretch(1, 0);
   root->addLayout(body, 1);
+  applyChartTheme();
 }
 
 
@@ -1184,3 +1207,76 @@ void ChartWindow::onExportCsv()
     f.close();
     QMessageBox::information(this, tr("导出"), tr("已导出 %1 个点。").arg(m_plotPoints.size()));
 }
+
+void ChartWindow::applyChartTheme()
+{
+    const bool dark = AppSettings::instance().darkTheme();
+    if (!m_chart)
+        return;
+    if (dark) {
+        m_chart->setBackgroundBrush(QBrush(QColor(28, 31, 38)));
+        m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(34, 38, 46)));
+        m_chart->setTitleBrush(QBrush(QColor(230, 230, 230)));
+        if (m_axisX) {
+            m_axisX->setLabelsColor(QColor(180, 180, 180));
+            m_axisX->setGridLineColor(QColor(55, 60, 70));
+        }
+        if (m_axisY) {
+            m_axisY->setLabelsColor(QColor(180, 180, 180));
+            m_axisY->setGridLineColor(QColor(55, 60, 70));
+        }
+        if (m_sidePanel)
+            m_sidePanel->setStyleSheet(
+                "QFrame{background:#252a33;border:1px solid #3d4450;border-radius:8px;}");
+        setStyleSheet("background:#1a1d23;");
+    } else {
+        m_chart->setBackgroundBrush(QBrush(QColor(255, 255, 255)));
+        m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(248, 249, 250)));
+        m_chart->setTitleBrush(QBrush(QColor(33, 37, 41)));
+        if (m_axisX) {
+            m_axisX->setLabelsColor(QColor(80, 80, 80));
+            m_axisX->setGridLineColor(QColor(230, 230, 230));
+        }
+        if (m_axisY) {
+            m_axisY->setLabelsColor(QColor(80, 80, 80));
+            m_axisY->setGridLineColor(QColor(230, 230, 230));
+        }
+        if (m_sidePanel)
+            m_sidePanel->setStyleSheet(
+                "QFrame{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                "stop:0 #ffffff, stop:1 #f0f3f7);border:1px solid #d8dee6;border-radius:8px;}");
+        setStyleSheet("background:#f5f6f8;");
+    }
+    const bool showMa = AppSettings::instance().showMovingAverage() && isIntradayMode();
+    if (m_ma5Series) m_ma5Series->setVisible(showMa);
+    if (m_ma20Series) m_ma20Series->setVisible(showMa);
+}
+
+void ChartWindow::updateMovingAverages()
+{
+    if (!m_ma5Series || !m_ma20Series)
+        return;
+    m_ma5Series->clear();
+    m_ma20Series->clear();
+    const bool show = AppSettings::instance().showMovingAverage() && isIntradayMode();
+    m_ma5Series->setVisible(show);
+    m_ma20Series->setVisible(show);
+    if (!show || m_plotPoints.size() < 2)
+        return;
+
+    auto appendMa = [&](QLineSeries* series, int period) {
+        double sum = 0.0;
+        for (int i = 0; i < m_plotPoints.size(); ++i) {
+            sum += m_plotPoints.at(i).second;
+            if (i >= period)
+                sum -= m_plotPoints.at(i - period).second;
+            if (i >= period - 1) {
+                const double avg = sum / static_cast<double>(period);
+                series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), avg);
+            }
+        }
+    };
+    appendMa(m_ma5Series, 5);
+    appendMa(m_ma20Series, 20);
+}
+

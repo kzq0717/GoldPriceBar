@@ -41,17 +41,26 @@ public:
     double alertLow() const;
     void setAlertLow(double v);
 
-    /** 同一方向预警最短间隔（秒），默认 120 */
     int alertCooldownSec() const;
     void setAlertCooldownSec(int sec);
 
-    /** 触发预警时是否弹出系统托盘通知 */
     bool trayNotifyOnAlert() const;
     void setTrayNotifyOnAlert(bool on);
 
-    /** 词条是否同时显示第二数据源价格（伦敦金对照） */
     bool showSecondaryPrice() const;
     void setShowSecondaryPrice(bool on);
+
+    /** 深色主题（价格条/分时窗口） */
+    bool darkTheme() const;
+    void setDarkTheme(bool on);
+
+    /** 分时显示 MA5 / MA20 */
+    bool showMovingAverage() const;
+    void setShowMovingAverage(bool on);
+
+    /** 预警时系统蜂鸣 */
+    bool alertSound() const;
+    void setAlertSound(bool on);
 
     void load();
     void save();
@@ -76,6 +85,9 @@ private:
     int m_alertCooldownSec = 120;
     bool m_trayNotifyOnAlert = true;
     bool m_showSecondaryPrice = false;
+    bool m_darkTheme = true;
+    bool m_showMovingAverage = true;
+    bool m_alertSound = false;
 };
 
 #endif // APPSETTINGS_H

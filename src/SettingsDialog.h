@@ -52,6 +52,9 @@ private:
     QSpinBox* m_alertCooldownSpin = nullptr;
     QCheckBox* m_trayNotifyCheck = nullptr;
     QCheckBox* m_secondaryPriceCheck = nullptr;
+    QCheckBox* m_darkThemeCheck = nullptr;
+    QCheckBox* m_maCheck = nullptr;
+    QCheckBox* m_alertSoundCheck = nullptr;
 };
 
 

@@ -12,22 +12,15 @@ AppSettings& AppSettings::instance()
     return inst;
 }
 
-AppSettings::AppSettings(QObject* parent)
-    : QObject(parent)
-{
-}
+AppSettings::AppSettings(QObject* parent) : QObject(parent) {}
 
 int AppSettings::refreshIntervalMs() const { return m_refreshIntervalMs; }
 void AppSettings::setRefreshIntervalMs(int ms)
-{
-    if (m_refreshIntervalMs != ms) { m_refreshIntervalMs = ms; emit settingsChanged(); }
-}
+{ if (m_refreshIntervalMs != ms) { m_refreshIntervalMs = ms; emit settingsChanged(); } }
 
 QString AppSettings::dataSource() const { return m_dataSource; }
 void AppSettings::setDataSource(const QString& source)
-{
-    if (m_dataSource != source) { m_dataSource = source; emit settingsChanged(); }
-}
+{ if (m_dataSource != source) { m_dataSource = source; emit settingsChanged(); } }
 
 double AppSettings::opacity() const { return m_opacity; }
 void AppSettings::setOpacity(double value)
@@ -38,21 +31,15 @@ void AppSettings::setOpacity(double value)
 
 bool AppSettings::autoStart() const { return m_autoStart; }
 void AppSettings::setAutoStart(bool enable)
-{
-    if (m_autoStart != enable) { m_autoStart = enable; emit settingsChanged(); }
-}
+{ if (m_autoStart != enable) { m_autoStart = enable; emit settingsChanged(); } }
 
 bool AppSettings::forecastOnline() const { return m_forecastOnline; }
 void AppSettings::setForecastOnline(bool online)
-{
-    if (m_forecastOnline != online) { m_forecastOnline = online; emit settingsChanged(); }
-}
+{ if (m_forecastOnline != online) { m_forecastOnline = online; emit settingsChanged(); } }
 
 QString AppSettings::xaiApiKey() const { return m_xaiApiKey; }
 void AppSettings::setXaiApiKey(const QString& key)
-{
-    if (m_xaiApiKey != key) { m_xaiApiKey = key; emit settingsChanged(); }
-}
+{ if (m_xaiApiKey != key) { m_xaiApiKey = key; emit settingsChanged(); } }
 
 QString AppSettings::xaiModel() const { return m_xaiModel; }
 void AppSettings::setXaiModel(const QString& model)
@@ -77,76 +64,77 @@ QString AppSettings::resolvedDatabaseDir() const
 
 double AppSettings::alertHigh() const { return m_alertHigh; }
 void AppSettings::setAlertHigh(double v)
-{
-    v = qMax(0.0, v);
-    if (!qFuzzyCompare(m_alertHigh, v)) { m_alertHigh = v; emit settingsChanged(); }
-}
+{ v = qMax(0.0, v); if (!qFuzzyCompare(m_alertHigh, v)) { m_alertHigh = v; emit settingsChanged(); } }
 
 double AppSettings::alertLow() const { return m_alertLow; }
 void AppSettings::setAlertLow(double v)
-{
-    v = qMax(0.0, v);
-    if (!qFuzzyCompare(m_alertLow, v)) { m_alertLow = v; emit settingsChanged(); }
-}
+{ v = qMax(0.0, v); if (!qFuzzyCompare(m_alertLow, v)) { m_alertLow = v; emit settingsChanged(); } }
 
 int AppSettings::alertCooldownSec() const { return m_alertCooldownSec; }
 void AppSettings::setAlertCooldownSec(int sec)
-{
-    sec = qBound(30, sec, 3600);
-    if (m_alertCooldownSec != sec) { m_alertCooldownSec = sec; emit settingsChanged(); }
-}
+{ sec = qBound(30, sec, 3600); if (m_alertCooldownSec != sec) { m_alertCooldownSec = sec; emit settingsChanged(); } }
 
 bool AppSettings::trayNotifyOnAlert() const { return m_trayNotifyOnAlert; }
 void AppSettings::setTrayNotifyOnAlert(bool on)
-{
-    if (m_trayNotifyOnAlert != on) { m_trayNotifyOnAlert = on; emit settingsChanged(); }
-}
+{ if (m_trayNotifyOnAlert != on) { m_trayNotifyOnAlert = on; emit settingsChanged(); } }
 
 bool AppSettings::showSecondaryPrice() const { return m_showSecondaryPrice; }
 void AppSettings::setShowSecondaryPrice(bool on)
-{
-    if (m_showSecondaryPrice != on) { m_showSecondaryPrice = on; emit settingsChanged(); }
-}
+{ if (m_showSecondaryPrice != on) { m_showSecondaryPrice = on; emit settingsChanged(); } }
+
+bool AppSettings::darkTheme() const { return m_darkTheme; }
+void AppSettings::setDarkTheme(bool on)
+{ if (m_darkTheme != on) { m_darkTheme = on; emit settingsChanged(); } }
+
+bool AppSettings::showMovingAverage() const { return m_showMovingAverage; }
+void AppSettings::setShowMovingAverage(bool on)
+{ if (m_showMovingAverage != on) { m_showMovingAverage = on; emit settingsChanged(); } }
+
+bool AppSettings::alertSound() const { return m_alertSound; }
+void AppSettings::setAlertSound(bool on)
+{ if (m_alertSound != on) { m_alertSound = on; emit settingsChanged(); } }
 
 void AppSettings::load()
 {
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                       QApplication::organizationName(),
-                       QApplication::applicationName());
-
-    m_refreshIntervalMs = settings.value("refreshIntervalMs", 5000).toInt();
-    m_dataSource        = settings.value("dataSource", "zs").toString();
-    m_opacity           = settings.value("opacity", 0.95).toDouble();
-    m_autoStart         = settings.value("autoStart", false).toBool();
-    m_forecastOnline    = settings.value("forecastOnline", false).toBool();
-    m_xaiApiKey         = settings.value("xaiApiKey", "").toString();
-    m_xaiModel          = settings.value("xaiModel", "grok-4.6").toString();
-    m_databaseDir       = settings.value("databaseDir", "").toString().trimmed();
-    m_alertHigh         = settings.value("alertHigh", 0.0).toDouble();
-    m_alertLow          = settings.value("alertLow", 0.0).toDouble();
-    m_alertCooldownSec    = settings.value("alertCooldownSec", 120).toInt();
-    m_trayNotifyOnAlert = settings.value("trayNotifyOnAlert", true).toBool();
-    m_showSecondaryPrice = settings.value("showSecondaryPrice", false).toBool();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QApplication::organizationName(), QApplication::applicationName());
+    m_refreshIntervalMs  = s.value("refreshIntervalMs", 5000).toInt();
+    m_dataSource         = s.value("dataSource", "zs").toString();
+    m_opacity            = s.value("opacity", 0.95).toDouble();
+    m_autoStart          = s.value("autoStart", false).toBool();
+    m_forecastOnline     = s.value("forecastOnline", false).toBool();
+    m_xaiApiKey          = s.value("xaiApiKey", "").toString();
+    m_xaiModel           = s.value("xaiModel", "grok-4.6").toString();
+    m_databaseDir        = s.value("databaseDir", "").toString().trimmed();
+    m_alertHigh          = s.value("alertHigh", 0.0).toDouble();
+    m_alertLow           = s.value("alertLow", 0.0).toDouble();
+    m_alertCooldownSec     = s.value("alertCooldownSec", 120).toInt();
+    m_trayNotifyOnAlert  = s.value("trayNotifyOnAlert", true).toBool();
+    m_showSecondaryPrice = s.value("showSecondaryPrice", false).toBool();
+    m_darkTheme          = s.value("darkTheme", true).toBool();
+    m_showMovingAverage  = s.value("showMovingAverage", true).toBool();
+    m_alertSound         = s.value("alertSound", false).toBool();
 }
 
 void AppSettings::save()
 {
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                       QApplication::organizationName(),
-                       QApplication::applicationName());
-
-    settings.setValue("refreshIntervalMs", m_refreshIntervalMs);
-    settings.setValue("dataSource", m_dataSource);
-    settings.setValue("opacity", m_opacity);
-    settings.setValue("autoStart", m_autoStart);
-    settings.setValue("forecastOnline", m_forecastOnline);
-    settings.setValue("xaiApiKey", m_xaiApiKey);
-    settings.setValue("xaiModel", m_xaiModel);
-    settings.setValue("databaseDir", m_databaseDir);
-    settings.setValue("alertHigh", m_alertHigh);
-    settings.setValue("alertLow", m_alertLow);
-    settings.setValue("alertCooldownSec", m_alertCooldownSec);
-    settings.setValue("trayNotifyOnAlert", m_trayNotifyOnAlert);
-    settings.setValue("showSecondaryPrice", m_showSecondaryPrice);
-    settings.sync();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QApplication::organizationName(), QApplication::applicationName());
+    s.setValue("refreshIntervalMs", m_refreshIntervalMs);
+    s.setValue("dataSource", m_dataSource);
+    s.setValue("opacity", m_opacity);
+    s.setValue("autoStart", m_autoStart);
+    s.setValue("forecastOnline", m_forecastOnline);
+    s.setValue("xaiApiKey", m_xaiApiKey);
+    s.setValue("xaiModel", m_xaiModel);
+    s.setValue("databaseDir", m_databaseDir);
+    s.setValue("alertHigh", m_alertHigh);
+    s.setValue("alertLow", m_alertLow);
+    s.setValue("alertCooldownSec", m_alertCooldownSec);
+    s.setValue("trayNotifyOnAlert", m_trayNotifyOnAlert);
+    s.setValue("showSecondaryPrice", m_showSecondaryPrice);
+    s.setValue("darkTheme", m_darkTheme);
+    s.setValue("showMovingAverage", m_showMovingAverage);
+    s.setValue("alertSound", m_alertSound);
+    s.sync();
 }

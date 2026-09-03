@@ -29,6 +29,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private slots:
     void onPriceUpdated(double price, double change, const QString& sourceName);
@@ -51,6 +52,8 @@ private:
     void updateAlertIndicator(double price);
     void maybeTrayNotify(AlertKind kind, double price);
     void updateSecondaryVisibility();
+    void applyTheme();
+    void showAbout();
 
     QLabel* m_sourceLabel = nullptr;
     QLabel* m_priceLabel = nullptr;
