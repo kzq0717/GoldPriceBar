@@ -84,14 +84,14 @@ void ChartWindow::setupChart() {
   m_series->setPen(pen);
 
   m_ma5Series = new QLineSeries(this);
-  m_ma5Series->setName(tr("MA5"));
+  m_ma5Series->setName(tr("MA5分"));
   m_ma5Series->setPointsVisible(false);
   QPen ma5(QColor(230, 126, 34));
   ma5.setWidth(2);
   m_ma5Series->setPen(ma5);
 
   m_ma20Series = new QLineSeries(this);
-  m_ma20Series->setName(tr("MA20"));
+  m_ma20Series->setName(tr("MA20分"));
   m_ma20Series->setPointsVisible(false);
   QPen ma20(QColor(155, 89, 182));
   ma20.setWidth(2);
@@ -1278,23 +1278,45 @@ void ChartWindow::updateMovingAverages()
     const bool show = AppSettings::instance().showMovingAverage() && isIntradayMode();
     m_ma5Series->setVisible(show);
     m_ma20Series->setVisible(show);
-    if (!show || m_plotPoints.size() < 2)
+    // 至少需要能覆盖数分钟的数据才有意义
+    if (!show || m_plotPoints.size() < 3)
         return;
 
-    auto appendMa = [&](QLineSeries* series, int period) {
+    // 按「时间窗口」而非「点数」计算均线：
+    // MA5分 = 过去 5 分钟内所有分时点的简单平均
+    // MA20分 = 过去 20 分钟内所有分时点的简单平均
+    // （点很密时若按 5/20 个点，几乎贴着现价，没有参考意义）
+    auto appendTimeMa = [&](QLineSeries* series, int windowMinutes) {
+        const qint64 windowMs = static_cast<qint64>(windowMinutes) * 60 * 1000;
+        int left = 0;
         double sum = 0.0;
+        int cnt = 0;
         for (int i = 0; i < m_plotPoints.size(); ++i) {
-            sum += m_plotPoints.at(i).second;
-            if (i >= period)
-                sum -= m_plotPoints.at(i - period).second;
-            if (i >= period - 1) {
-                const double avg = sum / static_cast<double>(period);
-                series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), avg);
+            const qint64 ti = m_plotPoints.at(i).first.toMSecsSinceEpoch();
+            const double pi = m_plotPoints.at(i).second;
+            sum += pi;
+            ++cnt;
+            // 滑出窗口左端
+            while (left <= i) {
+                const qint64 tl = m_plotPoints.at(left).first.toMSecsSinceEpoch();
+                if (ti - tl <= windowMs)
+                    break;
+                sum -= m_plotPoints.at(left).second;
+                --cnt;
+                ++left;
             }
+            if (cnt <= 0)
+                continue;
+            // 窗口需至少跨过约 30% 目标时长，避免开盘前几秒均线无意义乱跳
+            const qint64 span = ti - m_plotPoints.at(left).first.toMSecsSinceEpoch();
+            if (span < windowMs / 3 && i < m_plotPoints.size() - 1)
+                continue;
+            series->append(ti, sum / static_cast<double>(cnt));
         }
     };
-    appendMa(m_ma5Series, 5);
-    appendMa(m_ma20Series, 20);
+
+    appendTimeMa(m_ma5Series, 5);
+    appendTimeMa(m_ma20Series, 20);
 }
 
 void ChartWindow::updateYesterdayOverlay()
