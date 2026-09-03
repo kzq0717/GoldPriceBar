@@ -85,6 +85,15 @@ public:
     QString dcaLastNotifiedDate() const; // yyyy-MM-dd
     void setDcaLastNotifiedDate(const QString& isoDate);
 
+    bool proxyEnabled() const;
+    void setProxyEnabled(bool on);
+    QString proxyHost() const;
+    void setProxyHost(const QString& host);
+    int proxyPort() const;
+    void setProxyPort(int port);
+    /** 应用 QNetworkProxy::setApplicationProxy */
+    void applyNetworkProxy() const;
+
     void load();
     void save();
 
@@ -118,6 +127,9 @@ private:
     int m_dcaDayOfMonth = 0;
     QString m_dcaNote;
     QString m_dcaLastNotifiedDate;
+    bool m_proxyEnabled = false;
+    QString m_proxyHost;
+    int m_proxyPort = 7890;
 };
 
 #endif // APPSETTINGS_H

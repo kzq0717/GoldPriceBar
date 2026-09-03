@@ -58,6 +58,7 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
             applyChartTheme();
             if (isVisible() && !m_plotPoints.isEmpty()) {
               updateMovingAverages();
+  updateYesterdayOverlay();
               if (isIntradayMode())
                 updateForecast();
             }
@@ -96,6 +97,14 @@ void ChartWindow::setupChart() {
   ma20.setWidth(1);
   m_ma20Series->setPen(ma20);
 
+  m_yesterdaySeries = new QLineSeries(this);
+  m_yesterdaySeries->setName(tr("昨日"));
+  m_yesterdaySeries->setPointsVisible(false);
+  QPen yPen(QColor(150, 150, 150));
+  yPen.setWidth(1);
+  yPen.setStyle(Qt::DotLine);
+  m_yesterdaySeries->setPen(yPen);
+
   // 未来 2 分钟预测：虚线
   m_forecastSeries = new QLineSeries(this);
   m_forecastSeries->setName(tr("预测2分钟"));
@@ -126,6 +135,7 @@ void ChartWindow::setupChart() {
   m_chart->addSeries(m_series);
   m_chart->addSeries(m_ma5Series);
   m_chart->addSeries(m_ma20Series);
+  m_chart->addSeries(m_yesterdaySeries);
   m_chart->addSeries(m_forecastSeries);
   m_chart->addSeries(m_currentSeries);
   m_chart->addSeries(m_highSeries);
@@ -153,6 +163,7 @@ void ChartWindow::setupChart() {
   for (QAbstractSeries *s : {static_cast<QAbstractSeries *>(m_series),
                        static_cast<QAbstractSeries *>(m_ma5Series),
                        static_cast<QAbstractSeries *>(m_ma20Series),
+                       static_cast<QAbstractSeries *>(m_yesterdaySeries),
                              static_cast<QAbstractSeries *>(m_forecastSeries),
                              static_cast<QAbstractSeries *>(m_currentSeries),
                              static_cast<QAbstractSeries *>(m_highSeries),
@@ -1280,3 +1291,28 @@ void ChartWindow::updateMovingAverages()
     appendMa(m_ma20Series, 20);
 }
 
+void ChartWindow::updateYesterdayOverlay()
+{
+    if (!m_yesterdaySeries)
+        return;
+    m_yesterdaySeries->clear();
+    if (!isIntradayMode()) {
+        m_yesterdaySeries->setVisible(false);
+        return;
+    }
+    m_yesterdaySeries->setVisible(true);
+
+    const QDate yday = QDate::currentDate().addDays(-1);
+    const auto pts = ExtremeDatabase::instance().loadIntradaySamples(
+        yday, currentTypeCode());
+    if (pts.isEmpty())
+        return;
+
+    // 将昨日点的「时刻」映射到今天的日期，便于与今日分时同轴对比
+    const QDate today = QDate::currentDate();
+    for (const auto& p : pts) {
+        const QTime tm = p.first.time();
+        const QDateTime mapped(today, tm);
+        m_yesterdaySeries->append(mapped.toMSecsSinceEpoch(), p.second);
+    }
+}

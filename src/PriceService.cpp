@@ -55,6 +55,7 @@ QString PriceService::currentTypeCode() const
 void PriceService::start()
 {
     if (!m_timer->isActive()) {
+        ExtremeDatabase::instance().purgeIntradayOlderThan(14);
         requestChartSeed();   // 启动即拉全日分时，校正最高价
         requestPrice();
         m_timer->start(m_intervalMs);
@@ -376,6 +377,8 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
     ExtremeDatabase::instance().upsertDailyBar(
         QDate::currentDate(), currentTypeCode(), m_lastPrice);
+    ExtremeDatabase::instance().insertIntradaySample(
+        QDateTime::currentDateTime(), currentTypeCode(), m_lastPrice);
     // 降低写库频率：约每 12 次成功刷新写一次
     if ((++m_persistCounter % 12) == 0)
         HistoryCache::instance().persistExtremesToDb(currentTypeCode());

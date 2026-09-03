@@ -80,6 +80,20 @@ bool ExtremeDatabase::ensureSchema()
     q.exec(QStringLiteral(
         "CREATE INDEX IF NOT EXISTS idx_daily_extremes_date ON daily_extremes(trade_date)"));
 
+    // 分时抽样：昨日对比（按分钟去重）
+    if (!q.exec(QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS intraday_samples ("
+            "  trade_date TEXT NOT NULL,"
+            "  minute_key TEXT NOT NULL,"
+            "  source TEXT NOT NULL,"
+            "  ts TEXT NOT NULL,"
+            "  price REAL NOT NULL,"
+            "  PRIMARY KEY(trade_date, minute_key, source)"
+            ")"))) {
+        qWarning() << "CREATE intraday_samples failed:" << q.lastError().text();
+        return false;
+    }
+
     // 日线：月份曲线用
     if (!q.exec(QStringLiteral(
             "CREATE TABLE IF NOT EXISTS daily_bars ("
@@ -296,4 +310,78 @@ bool ExtremeDatabase::monthRange(int year, int month, const QString& source,
     outLow = q.value(1).toDouble();
     outDays = q.value(2).toInt();
     return outDays > 0 && outHigh > 0.0;
+}
+
+bool ExtremeDatabase::insertIntradaySample(const QDateTime& ts, const QString& source, double price)
+{
+    if (!m_open && !open())
+        return false;
+    if (!ts.isValid() || price <= 0.0)
+        return false;
+
+    // 节流：全局至少间隔 20s 写一次抽样（与实时刷新解耦）
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    static qint64 s_lastSampleMs = 0;
+    if (s_lastSampleMs > 0 && (nowMs - s_lastSampleMs) < 20000)
+        return true;
+    s_lastSampleMs = nowMs;
+
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QString dateStr = ts.date().toString(Qt::ISODate);
+    const QString minuteKey = ts.toString(QStringLiteral("HH:mm"));
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery u(db);
+    u.prepare(QStringLiteral(
+        "INSERT INTO intraday_samples (trade_date, minute_key, source, ts, price) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(trade_date, minute_key, source) DO UPDATE SET "
+        "  ts=excluded.ts, price=excluded.price"));
+    u.addBindValue(dateStr);
+    u.addBindValue(minuteKey);
+    u.addBindValue(src);
+    u.addBindValue(ts.toString(Qt::ISODateWithMs));
+    u.addBindValue(price);
+    if (!u.exec()) {
+        qWarning() << "insertIntradaySample failed:" << u.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QVector<QPair<QDateTime, double>> ExtremeDatabase::loadIntradaySamples(
+    const QDate& day, const QString& source) const
+{
+    QVector<QPair<QDateTime, double>> out;
+    if (!m_open || !day.isValid())
+        return out;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT ts, price FROM intraday_samples "
+        "WHERE trade_date=? AND source=? ORDER BY minute_key ASC"));
+    q.addBindValue(day.toString(Qt::ISODate));
+    q.addBindValue(src);
+    if (!q.exec())
+        return out;
+    while (q.next()) {
+        const QDateTime dt = QDateTime::fromString(q.value(0).toString(), Qt::ISODateWithMs);
+        const double p = q.value(1).toDouble();
+        if (dt.isValid() && p > 0.0)
+            out.append({dt, p});
+    }
+    return out;
+}
+
+bool ExtremeDatabase::purgeIntradayOlderThan(int keepDays)
+{
+    if (!m_open && !open())
+        return false;
+    const QDate cut = QDate::currentDate().addDays(-qMax(1, keepDays));
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("DELETE FROM intraday_samples WHERE trade_date < ?"));
+    q.addBindValue(cut.toString(Qt::ISODate));
+    return q.exec();
 }

@@ -47,6 +47,19 @@ public:
     bool monthRange(int year, int month, const QString& source,
                     double& outHigh, double& outLow, int& outDays) const;
 
+    /**
+     * 分时抽样写入（降采样，供「昨日对比」）
+     * 同一分钟内同 source 只保留一个点（REPLACE）
+     */
+    bool insertIntradaySample(const QDateTime& ts, const QString& source, double price);
+
+    /** 读取某日分时抽样点（本地时间） */
+    QVector<QPair<QDateTime, double>> loadIntradaySamples(const QDate& day,
+                                                          const QString& source) const;
+
+    /** 清理 N 天前的分时抽样，控制库体积 */
+    bool purgeIntradayOlderThan(int keepDays = 14);
+
 private:
     explicit ExtremeDatabase(QObject* parent = nullptr);
     Q_DISABLE_COPY(ExtremeDatabase)

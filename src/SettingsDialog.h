@@ -63,6 +63,9 @@ private:
     QTimeEdit* m_quietEndEdit = nullptr;
     QSpinBox* m_dcaDaySpin = nullptr;
     QLineEdit* m_dcaNoteEdit = nullptr;
+    QCheckBox* m_proxyCheck = nullptr;
+    QLineEdit* m_proxyHostEdit = nullptr;
+    QSpinBox* m_proxyPortSpin = nullptr;
 };
 
 

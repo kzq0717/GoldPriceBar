@@ -4,6 +4,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QDir>
+#include <QNetworkProxy>
 #include <QtGlobal>
 
 AppSettings& AppSettings::instance()
@@ -149,6 +150,33 @@ void AppSettings::setDcaLastNotifiedDate(const QString& isoDate)
     }
 }
 
+bool AppSettings::proxyEnabled() const { return m_proxyEnabled; }
+void AppSettings::setProxyEnabled(bool on)
+{ if (m_proxyEnabled != on) { m_proxyEnabled = on; emit settingsChanged(); } }
+
+QString AppSettings::proxyHost() const { return m_proxyHost; }
+void AppSettings::setProxyHost(const QString& host)
+{
+    if (m_proxyHost != host) { m_proxyHost = host.trimmed(); emit settingsChanged(); }
+}
+
+int AppSettings::proxyPort() const { return m_proxyPort; }
+void AppSettings::setProxyPort(int port)
+{
+    port = qBound(1, port, 65535);
+    if (m_proxyPort != port) { m_proxyPort = port; emit settingsChanged(); }
+}
+
+void AppSettings::applyNetworkProxy() const
+{
+    if (m_proxyEnabled && !m_proxyHost.isEmpty()) {
+        QNetworkProxy proxy(QNetworkProxy::HttpProxy, m_proxyHost, static_cast<quint16>(m_proxyPort));
+        QNetworkProxy::setApplicationProxy(proxy);
+    } else {
+        QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+    }
+}
+
 void AppSettings::load()
 {
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
@@ -178,6 +206,10 @@ void AppSettings::load()
     m_dcaDayOfMonth = s.value("dcaDayOfMonth", 0).toInt();
     m_dcaNote = s.value("dcaNote", "").toString();
     m_dcaLastNotifiedDate = s.value("dcaLastNotifiedDate", "").toString();
+    m_proxyEnabled = s.value("proxyEnabled", false).toBool();
+    m_proxyHost = s.value("proxyHost", "").toString();
+    m_proxyPort = s.value("proxyPort", 7890).toInt();
+    applyNetworkProxy();
 }
 
 void AppSettings::save()
@@ -207,5 +239,9 @@ void AppSettings::save()
     s.setValue("dcaDayOfMonth", m_dcaDayOfMonth);
     s.setValue("dcaNote", m_dcaNote);
     s.setValue("dcaLastNotifiedDate", m_dcaLastNotifiedDate);
+    s.setValue("proxyEnabled", m_proxyEnabled);
+    s.setValue("proxyHost", m_proxyHost);
+    s.setValue("proxyPort", m_proxyPort);
     s.sync();
+    applyNetworkProxy();
 }

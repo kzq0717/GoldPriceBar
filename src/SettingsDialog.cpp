@@ -132,6 +132,19 @@ void SettingsDialog::setupUi()
     m_dcaNoteEdit->setPlaceholderText(tr("可选备注，如：每月定投 500 元"));
     form->addRow(tr("定投备注："), m_dcaNoteEdit);
 
+    m_proxyCheck = new QCheckBox(tr("启用 HTTP 代理（公司网络/科学上网）"), this);
+    form->addRow("", m_proxyCheck);
+    auto* proxyLay = new QHBoxLayout;
+    m_proxyHostEdit = new QLineEdit(this);
+    m_proxyHostEdit->setPlaceholderText(tr("主机，如 127.0.0.1"));
+    m_proxyPortSpin = new QSpinBox(this);
+    m_proxyPortSpin->setRange(1, 65535);
+    m_proxyPortSpin->setValue(7890);
+    proxyLay->addWidget(m_proxyHostEdit, 1);
+    proxyLay->addWidget(new QLabel(tr(":"), this));
+    proxyLay->addWidget(m_proxyPortSpin);
+    form->addRow(tr("代理地址："), proxyLay);
+
     auto* dbLayout = new QHBoxLayout;
     m_dbDirEdit = new QLineEdit(this);
     m_dbDirEdit->setPlaceholderText(tr("留空 = 默认路径（系统 AppData）"));
@@ -279,6 +292,9 @@ void SettingsDialog::loadFromSettings()
     m_quietEndEdit->setTime(settings.quietEnd());
     m_dcaDaySpin->setValue(settings.dcaDayOfMonth());
     m_dcaNoteEdit->setText(settings.dcaNote());
+    m_proxyCheck->setChecked(settings.proxyEnabled());
+    m_proxyHostEdit->setText(settings.proxyHost());
+    m_proxyPortSpin->setValue(settings.proxyPort());
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
@@ -330,6 +346,9 @@ void SettingsDialog::onAccept()
     settings.setQuietEnd(m_quietEndEdit->time());
     settings.setDcaDayOfMonth(m_dcaDaySpin->value());
     settings.setDcaNote(m_dcaNoteEdit->text().trimmed());
+    settings.setProxyEnabled(m_proxyCheck->isChecked());
+    settings.setProxyHost(m_proxyHostEdit->text().trimmed());
+    settings.setProxyPort(m_proxyPortSpin->value());
     settings.save();
 
     if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())

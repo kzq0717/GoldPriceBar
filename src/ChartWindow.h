@@ -72,6 +72,7 @@ private:
     void setForecastVisible(bool on);
     void applyChartTheme();
     void updateMovingAverages();
+    void updateYesterdayOverlay();
 
     QComboBox* m_periodCombo = nullptr;
 
@@ -80,6 +81,7 @@ private:
     QLineSeries* m_series = nullptr;
     QLineSeries* m_ma5Series = nullptr;
     QLineSeries* m_ma20Series = nullptr;
+    QLineSeries* m_yesterdaySeries = nullptr;
     QLineSeries* m_forecastSeries = nullptr;
     QScatterSeries* m_currentSeries = nullptr;
     QScatterSeries* m_highSeries = nullptr;
