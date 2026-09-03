@@ -36,11 +36,22 @@ public:
     void setDatabaseDir(const QString& dir);
     QString resolvedDatabaseDir() const;
 
-    /** 预警：现价 >= 高阈值值 → 红点闪烁；现价 <= 低预警值 → 绿点闪烁；0 表示关闭 */
     double alertHigh() const;
     void setAlertHigh(double v);
     double alertLow() const;
     void setAlertLow(double v);
+
+    /** 同一方向预警最短间隔（秒），默认 120 */
+    int alertCooldownSec() const;
+    void setAlertCooldownSec(int sec);
+
+    /** 触发预警时是否弹出系统托盘通知 */
+    bool trayNotifyOnAlert() const;
+    void setTrayNotifyOnAlert(bool on);
+
+    /** 词条是否同时显示第二数据源价格（伦敦金对照） */
+    bool showSecondaryPrice() const;
+    void setShowSecondaryPrice(bool on);
 
     void load();
     void save();
@@ -62,6 +73,9 @@ private:
     QString m_databaseDir;
     double m_alertHigh = 0.0;
     double m_alertLow = 0.0;
+    int m_alertCooldownSec = 120;
+    bool m_trayNotifyOnAlert = true;
+    bool m_showSecondaryPrice = false;
 };
 
 #endif // APPSETTINGS_H

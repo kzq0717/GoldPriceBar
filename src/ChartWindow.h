@@ -48,6 +48,7 @@ protected:
 private slots:
     void onChartReplyFinished(QNetworkReply* reply);
     void onPeriodChanged(int index);
+    void onExportCsv();
 
 private:
     void setupChart();

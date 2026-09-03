@@ -1,6 +1,7 @@
 #include "SettingsDialog.h"
 #include "AppSettings.h"
 #include "ExtremeDatabase.h"
+#include "Logger.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -15,6 +16,9 @@
 #include <QFileDialog>
 #include <QStandardPaths>
 #include <QDoubleSpinBox>
+#include <QSpinBox>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QApplication>
 #include <QMessageBox>
 
@@ -23,7 +27,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 {
     setWindowTitle(tr("设置 - GoldPriceBarLite"));
     setMinimumWidth(460);
-    setMinimumHeight(480);
+    setMinimumHeight(560);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     setupUi();
@@ -77,6 +81,18 @@ void SettingsDialog::setupUi()
     m_alertLowSpin->setSpecialValueText(tr("关闭"));
     m_alertLowSpin->setToolTip(tr("现价达到或低于该值时，价格条绿点闪烁；0=关闭"));
     form->addRow(tr("低价预警："), m_alertLowSpin);
+
+    m_alertCooldownSpin = new QSpinBox(this);
+    m_alertCooldownSpin->setRange(30, 3600);
+    m_alertCooldownSpin->setSuffix(tr(" 秒"));
+    m_alertCooldownSpin->setToolTip(tr("同一方向预警最短通知间隔，避免频繁弹窗"));
+    form->addRow(tr("预警冷却："), m_alertCooldownSpin);
+
+    m_trayNotifyCheck = new QCheckBox(tr("触发预警时弹出系统托盘通知"), this);
+    form->addRow("", m_trayNotifyCheck);
+
+    m_secondaryPriceCheck = new QCheckBox(tr("词条显示对照价（主源非伦敦金时显示伦敦金）"), this);
+    form->addRow("", m_secondaryPriceCheck);
 
     auto* dbLayout = new QHBoxLayout;
     m_dbDirEdit = new QLineEdit(this);
@@ -157,8 +173,16 @@ void SettingsDialog::setupUi()
         "QPushButton:hover{background:#fdecea;}");
     connect(exitBtn, &QPushButton::clicked, this, &SettingsDialog::onExitApp);
 
+    auto* logBtn = new QPushButton(tr("打开日志目录"), this);
+    connect(logBtn, &QPushButton::clicked, this, []() {
+        const QString dir = Logger::logDir();
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+
     auto* bottom = new QHBoxLayout;
     bottom->addWidget(exitBtn);
+    bottom->addWidget(logBtn);
     bottom->addStretch();
     bottom->addWidget(buttons);
     mainLayout->addLayout(bottom);
@@ -201,6 +225,9 @@ void SettingsDialog::loadFromSettings()
 
     m_alertHighSpin->setValue(settings.alertHigh());
     m_alertLowSpin->setValue(settings.alertLow());
+    m_alertCooldownSpin->setValue(settings.alertCooldownSec());
+    m_trayNotifyCheck->setChecked(settings.trayNotifyOnAlert());
+    m_secondaryPriceCheck->setChecked(settings.showSecondaryPrice());
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
@@ -240,6 +267,9 @@ void SettingsDialog::onAccept()
     settings.setDatabaseDir(m_dbDirEdit->text().trimmed());
     settings.setAlertHigh(m_alertHighSpin->value());
     settings.setAlertLow(m_alertLowSpin->value());
+    settings.setAlertCooldownSec(m_alertCooldownSpin->value());
+    settings.setTrayNotifyOnAlert(m_trayNotifyCheck->isChecked());
+    settings.setShowSecondaryPrice(m_secondaryPriceCheck->isChecked());
     settings.save();
 
     if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())

@@ -10,6 +10,7 @@ class QCheckBox;
 class QLineEdit;
 class QPushButton;
 class QDoubleSpinBox;
+class QSpinBox;
 
 class SettingsDialog : public QDialog
 {
@@ -48,6 +49,11 @@ private:
 
     QDoubleSpinBox* m_alertHighSpin = nullptr;
     QDoubleSpinBox* m_alertLowSpin = nullptr;
+    QSpinBox* m_alertCooldownSpin = nullptr;
+    QCheckBox* m_trayNotifyCheck = nullptr;
+    QCheckBox* m_secondaryPriceCheck = nullptr;
 };
+
+
 
 #endif // SETTINGSDIALOG_H

@@ -18,6 +18,12 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QComboBox>
+#include <QFileDialog>
+#include <QFile>
+#include <QTextStream>
+#include <QPushButton>
+#include <QMessageBox>
+#include <QStringConverter>
 #include <QMouseEvent>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -154,9 +160,15 @@ void ChartWindow::setupChart() {
   connect(m_periodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ChartWindow::onPeriodChanged);
 
+  auto *exportBtn = new QPushButton(tr("导出CSV"), this);
+  exportBtn->setFixedWidth(80);
+  exportBtn->setToolTip(tr("导出当前曲线点到 CSV 文件"));
+  connect(exportBtn, &QPushButton::clicked, this, &ChartWindow::onExportCsv);
+
   auto *topBar = new QHBoxLayout();
   topBar->addWidget(new QLabel(tr("周期："), this));
   topBar->addWidget(m_periodCombo);
+  topBar->addWidget(exportBtn);
   topBar->addStretch();
 
   // 主布局：上工具栏 + 曲线 + 右侧信息栏
@@ -1141,3 +1153,34 @@ void ChartWindow::updateMonthSeries()
         mh > 0 ? mh : maxP, ml > 0 ? ml : minP, tr("月线"));
 }
 
+
+
+void ChartWindow::onExportCsv()
+{
+    if (m_plotPoints.isEmpty()) {
+        QMessageBox::information(this, tr("导出"), tr("当前没有可导出的数据点。"));
+        return;
+    }
+    const QString suggest = isIntradayMode()
+        ? QStringLiteral("intraday-%1.csv").arg(QDate::currentDate().toString(QStringLiteral("yyyyMMdd")))
+        : QStringLiteral("month-%1.csv").arg(m_periodCombo ? m_periodCombo->currentData().toInt() : 0);
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("导出 CSV"), suggest, tr("CSV 文件 (*.csv)"));
+    if (path.isEmpty())
+        return;
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("导出"), tr("无法写入文件：%1").arg(path));
+        return;
+    }
+    QTextStream ts(&f);
+    ts.setEncoding(QStringConverter::Utf8);
+    ts << "time,price\n";
+    for (const auto& p : m_plotPoints) {
+        ts << p.first.toString(Qt::ISODateWithMs) << ","
+           << QString::number(p.second, 'f', 4) << "\n";
+    }
+    f.close();
+    QMessageBox::information(this, tr("导出"), tr("已导出 %1 个点。").arg(m_plotPoints.size()));
+}

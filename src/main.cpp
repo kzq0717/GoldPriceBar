@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QMessageBox>
 #include <QDir>
 #include <QStandardPaths>
 
@@ -7,18 +8,30 @@
 #include "ExtremeDatabase.h"
 #include "Logger.h"
 #include "CrashHandler.h"
+#include "SingleInstance.h"
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
     QApplication::setApplicationName("GoldPriceBarLite");
-    QApplication::setApplicationVersion("0.2.0");
+    QApplication::setApplicationVersion("0.3.0");
     QApplication::setOrganizationName("GoldPriceBarLite");
     QApplication::setOrganizationDomain("local");
 
     QApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+
+    // 单实例
+    SingleInstance single(QStringLiteral("GoldPriceBarLite_single_instance"));
+    if (!single.tryLock()) {
+        QMessageBox::warning(
+            nullptr,
+            QObject::tr("已在运行"),
+            QObject::tr("GoldPriceBarLite 已在运行，请勿重复打开。\n"
+                        "可在系统托盘中找到图标并显示价格条。"));
+        return 1;
+    }
 
     AppSettings::instance().load();
 

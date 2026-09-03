@@ -14,6 +14,15 @@
 #include <QApplication>
 #include <QStyle>
 #include <QScreen>
+#include <QTimer>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QUrl>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QDesktopServices>
+#include <QDateTime>
 
 PriceBarWindow::PriceBarWindow(QWidget* parent)
     : QWidget(parent)
@@ -76,6 +85,11 @@ void PriceBarWindow::setupUi()
     m_changeLabel = new QLabel(tr(""), this);
     m_changeLabel->setStyleSheet("font-size: 12px;");
 
+    m_secondaryLabel = new QLabel(this);
+    m_secondaryLabel->setStyleSheet("color: #9b59b6; font-size: 11px;");
+    m_secondaryLabel->setToolTip(tr("对照行情（伦敦金）"));
+    m_secondaryLabel->hide();
+
     m_highLabel = new QLabel(tr("高 --.--"), this);
     m_highLabel->setStyleSheet("color: #e74c3c; font-size: 12px;");
     m_highLabel->setToolTip(tr("今日最高价（来自全日分时接口，截至当前）"));
@@ -92,6 +106,11 @@ void PriceBarWindow::setupUi()
     m_alertBlinkTimer = new QTimer(this);
     m_alertBlinkTimer->setInterval(450);
     connect(m_alertBlinkTimer, &QTimer::timeout, this, &PriceBarWindow::onAlertBlinkTick);
+
+    m_secondaryNam = new QNetworkAccessManager(this);
+    m_secondaryTimer = new QTimer(this);
+    m_secondaryTimer->setInterval(15000);
+    connect(m_secondaryTimer, &QTimer::timeout, this, &PriceBarWindow::onSecondaryTimer);
 
     m_chartButton = new QToolButton(this);
     m_chartButton->setText(QStringLiteral("📈"));
@@ -112,6 +131,7 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_sourceLabel);
     layout->addWidget(m_priceLabel);
     layout->addWidget(m_changeLabel);
+    layout->addWidget(m_secondaryLabel);
     layout->addWidget(m_highLabel);
     layout->addWidget(m_alertDot);
     layout->addStretch();
@@ -141,7 +161,7 @@ void PriceBarWindow::setupTray()
 {
     m_trayIcon = new QSystemTrayIcon(this);
     m_trayIcon->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
-    m_trayIcon->setToolTip(tr("GoldPriceBarLite"));
+    m_trayIcon->setToolTip(tr("GoldPriceBarLite %1").arg(QApplication::applicationVersion()));
 
     auto* menu = new QMenu(this);
     menu->addAction(tr("显示/隐藏价格条"), this, [this]() {
@@ -245,6 +265,7 @@ void PriceBarWindow::onSettingsChanged()
     m_priceService->forceRefresh();
     if (m_lastPrice > 0.0)
         updateAlertIndicator(m_lastPrice);
+    updateSecondaryVisibility();
 }
 
 void PriceBarWindow::mousePressEvent(QMouseEvent* event)
@@ -293,6 +314,7 @@ void PriceBarWindow::updateAlertIndicator(double price)
     else if (lo > 0.0 && price <= lo)
         kind = AlertKind::Low;
 
+    const bool kindChanged = (kind != m_alertKind);
     m_alertKind = kind;
     if (kind == AlertKind::None) {
         m_alertBlinkTimer->stop();
@@ -308,6 +330,109 @@ void PriceBarWindow::updateAlertIndicator(double price)
         onAlertBlinkTick();
         m_alertBlinkTimer->start();
     }
+    // 托盘通知（带冷却）
+    if (kindChanged || true)
+        maybeTrayNotify(kind, price);
+}
+
+void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
+{
+    if (!m_trayIcon || !AppSettings::instance().trayNotifyOnAlert())
+        return;
+    if (kind == AlertKind::None)
+        return;
+
+    const int cool = AppSettings::instance().alertCooldownSec();
+    const QDateTime now = QDateTime::currentDateTime();
+    QDateTime* last = (kind == AlertKind::High) ? &m_lastHighNotify : &m_lastLowNotify;
+    if (last->isValid() && last->secsTo(now) < cool)
+        return;
+    *last = now;
+
+    const QString title = tr("金价预警");
+    QString body;
+    if (kind == AlertKind::High) {
+        body = tr("现价 %1 ≥ 高预警 %2")
+                   .arg(price, 0, 'f', 2)
+                   .arg(AppSettings::instance().alertHigh(), 0, 'f', 2);
+    } else {
+        body = tr("现价 %1 ≤ 低预警 %2")
+                   .arg(price, 0, 'f', 2)
+                   .arg(AppSettings::instance().alertLow(), 0, 'f', 2);
+    }
+    m_trayIcon->showMessage(title, body, QSystemTrayIcon::Warning, 5000);
+}
+
+void PriceBarWindow::updateSecondaryVisibility()
+{
+    const bool on = AppSettings::instance().showSecondaryPrice();
+    if (!m_secondaryLabel)
+        return;
+    if (on) {
+        m_secondaryLabel->show();
+        if (m_secondaryTimer && !m_secondaryTimer->isActive()) {
+            onSecondaryTimer();
+            m_secondaryTimer->start();
+        }
+        setMinimumWidth(420);
+    } else {
+        m_secondaryLabel->hide();
+        m_secondaryLabel->clear();
+        if (m_secondaryTimer)
+            m_secondaryTimer->stop();
+        setMinimumWidth(360);
+    }
+}
+
+void PriceBarWindow::onSecondaryTimer()
+{
+    if (!AppSettings::instance().showSecondaryPrice())
+        return;
+    if (m_secondaryReply)
+        return;
+    if (!m_secondaryNam)
+        return;
+
+    // 主源已是伦敦金时，对照改拉浙商
+    const QString primary = AppSettings::instance().dataSource();
+    const QString sec = (primary == QStringLiteral("gj") || primary == QStringLiteral("xau"))
+                            ? QStringLiteral("zs")
+                            : QStringLiteral("gj");
+    const QUrl url(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1").arg(sec));
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.3.0"));
+    req.setTransferTimeout(8000);
+    QNetworkReply* reply = m_secondaryNam->get(req);
+    m_secondaryReply = reply;
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        onSecondaryFinished(reply);
+    });
+}
+
+void PriceBarWindow::onSecondaryFinished(QNetworkReply* reply)
+{
+    if (m_secondaryReply.data() == reply)
+        m_secondaryReply.clear();
+    if (!reply)
+        return;
+    if (reply->error() != QNetworkReply::NoError) {
+        reply->deleteLater();
+        return;
+    }
+    const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+    reply->deleteLater();
+    if (!doc.isObject())
+        return;
+    const QJsonObject data = doc.object().value(QStringLiteral("data")).toObject();
+    const double price = data.value(QStringLiteral("price")).toDouble();
+    if (price <= 0.0)
+        return;
+    const QString name = data.value(QStringLiteral("name")).toString();
+    const QString shortName = name.contains(QStringLiteral("伦敦")) || name.toLower().contains(QStringLiteral("xau"))
+                                  ? tr("伦")
+                                  : (name.contains(QStringLiteral("浙商")) ? tr("浙") : tr("对照"));
+    if (m_secondaryLabel)
+        m_secondaryLabel->setText(tr("%1 %2").arg(shortName).arg(price, 0, 'f', 2));
 }
 
 void PriceBarWindow::onAlertBlinkTick()
