@@ -385,3 +385,75 @@ bool ExtremeDatabase::purgeIntradayOlderThan(int keepDays)
     q.addBindValue(cut.toString(Qt::ISODate));
     return q.exec();
 }
+
+
+QVector<QPair<QDate, double>> ExtremeDatabase::loadRecentDailyCloses(
+    int maxDays, const QString& source) const
+{
+    QVector<QPair<QDate, double>> out;
+    if (!m_open || maxDays <= 0)
+        return out;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    // 取最近 maxDays 条再正序
+    q.prepare(QStringLiteral(
+        "SELECT trade_date, close_price FROM daily_bars "
+        "WHERE source=? AND close_price>0 "
+        "ORDER BY trade_date DESC LIMIT ?"));
+    q.addBindValue(src);
+    q.addBindValue(maxDays);
+    if (!q.exec())
+        return out;
+    QVector<QPair<QDate, double>> rev;
+    while (q.next()) {
+        const QDate d = QDate::fromString(q.value(0).toString(), Qt::ISODate);
+        const double c = q.value(1).toDouble();
+        if (d.isValid() && c > 0.0)
+            rev.append({d, c});
+    }
+    for (int i = rev.size() - 1; i >= 0; --i)
+        out.append(rev.at(i));
+    return out;
+}
+
+bool ExtremeDatabase::upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close)
+{
+    if (!m_open && !open())
+        return false;
+    if (!tradeDate.isValid() || close <= 0.0)
+        return false;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    // 若已有当日记录则只在 close 为空/0 时更新，或更新 close 为历史收盘
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(trade_date, source) DO UPDATE SET "
+        "  close_price=excluded.close_price, "
+        "  high_price=MAX(daily_bars.high_price, excluded.high_price), "
+        "  low_price=CASE WHEN daily_bars.low_price<=0 THEN excluded.low_price "
+        "                 ELSE MIN(daily_bars.low_price, excluded.low_price) END, "
+        "  updated_at=excluded.updated_at"));
+    // SQLite MAX in ON CONFLICT may not work that way - simplify
+    q.prepare(QStringLiteral(
+        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(trade_date, source) DO UPDATE SET "
+        "  close_price=excluded.close_price, "
+        "  updated_at=excluded.updated_at"));
+    const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    q.addBindValue(tradeDate.toString(Qt::ISODate));
+    q.addBindValue(src);
+    q.addBindValue(close);
+    q.addBindValue(close);
+    q.addBindValue(close);
+    q.addBindValue(close);
+    q.addBindValue(now);
+    if (!q.exec()) {
+        qWarning() << "upsertHistoricalClose failed:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}

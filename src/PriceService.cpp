@@ -56,6 +56,7 @@ void PriceService::start()
 {
     if (!m_timer->isActive()) {
         ExtremeDatabase::instance().purgeIntradayOlderThan(14);
+        requestHistorySeed();
         requestChartSeed();   // 启动即拉全日分时，校正最高价
         requestPrice();
         m_timer->start(m_intervalMs);
@@ -268,23 +269,46 @@ void PriceService::onChartSeedFinished(QNetworkReply* reply)
 
 void PriceService::requestPrice()
 {
+    m_backupIndex = 0;
+    requestPriceFromBackup(0);
+}
+
+void PriceService::requestPriceFromBackup(int backupIndex)
+{
     if (m_pendingReply)
         return;
 
     if (!m_network)
         m_network = new QNetworkAccessManager(this);
 
-    const QUrl url(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1")
-                       .arg(currentTypeCode()));
+    m_backupIndex = backupIndex;
+    QUrl url;
+    const QString type = currentTypeCode();
+
+    if (backupIndex == 0) {
+        // 主源：公开积存金/伦敦金接口
+        url = QUrl(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1").arg(type));
+    } else if (backupIndex == 1) {
+        // 备用1：gold-api.com（XAU/USD 盎司）— 仅国际金参考
+        url = QUrl(QStringLiteral("https://api.gold-api.com/price/XAU"));
+    } else if (backupIndex == 2) {
+        // 备用2：goldprice.dev spot
+        url = QUrl(QStringLiteral("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT"));
+    } else {
+        ++m_consecutiveFail;
+        emit fetchFailed(tr("全部数据源失败"));
+        return;
+    }
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QStringLiteral("GoldPriceBarLite/0.1.5"));
+                      QStringLiteral("GoldPriceBarLite/0.6.3"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                          QNetworkRequest::AlwaysNetwork);
     request.setTransferTimeout(10000);
+    request.setRawHeader("Accept", "application/json");
 
     QNetworkReply* reply = m_network->get(request);
     m_pendingReply = reply;
@@ -295,73 +319,10 @@ void PriceService::requestPrice()
     });
 }
 
-void PriceService::onNetworkFinished(QNetworkReply* reply)
+bool PriceService::applyPrice(double price, double change, const QString& name, const QString& currency)
 {
-    if (m_pendingReply.data() != reply) {
-        reply->deleteLater();
-        return;
-    }
-    m_pendingReply.clear();
-    m_requestStartMs = 0;
-
-    if (reply->error() != QNetworkReply::NoError) {
-        if (reply->error() != QNetworkReply::OperationCanceledError) {
-            ++m_consecutiveFail;
-            Logger::warn(QStringLiteral("Price fetch error: %1").arg(reply->errorString()));
-            qWarning() << "Price fetch error:" << reply->errorString();
-            if (m_consecutiveFail >= 5) {
-                recreateNetworkManager();
-                m_consecutiveFail = 0;
-            }
-            emit fetchFailed(tr("网络错误: %1").arg(reply->errorString()));
-        }
-        reply->deleteLater();
-        return;
-    }
-
-    const QByteArray data = reply->readAll();
-    reply->deleteLater();
-
-    QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        ++m_consecutiveFail;
-        emit fetchFailed(tr("JSON 解析失败"));
-        return;
-    }
-
-    const QJsonObject root = doc.object();
-    if (root.value(QStringLiteral("code")).toInt() != 200) {
-        ++m_consecutiveFail;
-        emit fetchFailed(root.value(QStringLiteral("msg")).toString(tr("接口返回错误")));
-        return;
-    }
-
-    const QJsonObject d = root.value(QStringLiteral("data")).toObject();
-    if (d.isEmpty()) {
-        ++m_consecutiveFail;
-        emit fetchFailed(tr("数据为空"));
-        return;
-    }
-
-    const double price  = d.value(QStringLiteral("price")).toDouble();
-    const double change = d.value(QStringLiteral("change")).toDouble();
-    QString name        = d.value(QStringLiteral("name")).toString();
-    const QString currency = d.value(QStringLiteral("currency")).toString();
-
-    if (name.isEmpty())
-        name = tr("未知");
-
-    if (!(name.contains(QStringLiteral("伦敦")) || name.contains(QStringLiteral("国际")))) {
-        if (!name.contains(QStringLiteral("积存金")))
-            name += QStringLiteral("积存金");
-    }
-
-    if (price <= 0.0) {
-        ++m_consecutiveFail;
-        emit fetchFailed(tr("价格无效"));
-        return;
-    }
+    if (price <= 0.0)
+        return false;
 
     m_lastPrice = price;
     m_lastChange = change;
@@ -373,14 +334,180 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
     m_hasValidPrice = true;
     m_consecutiveFail = 0;
     m_lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
+    m_backupIndex = 0;
 
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
     ExtremeDatabase::instance().upsertDailyBar(
         QDate::currentDate(), currentTypeCode(), m_lastPrice);
     ExtremeDatabase::instance().insertIntradaySample(
         QDateTime::currentDateTime(), currentTypeCode(), m_lastPrice);
-    // 降低写库频率：约每 12 次成功刷新写一次
     if ((++m_persistCounter % 12) == 0)
         HistoryCache::instance().persistExtremesToDb(currentTypeCode());
     emit priceUpdated(m_lastPrice, m_lastChange, m_lastSourceName);
+    return true;
 }
+
+void PriceService::onNetworkFinished(QNetworkReply* reply)
+{
+    if (m_pendingReply.data() != reply) {
+        reply->deleteLater();
+        return;
+    }
+    m_pendingReply.clear();
+    m_requestStartMs = 0;
+
+    const int tried = m_backupIndex;
+    auto tryNext = [this, tried]() {
+        // 主源失败后，对任意数据源都尝试国际金备用（对照价可用）
+        if (tried < 2)
+            requestPriceFromBackup(tried + 1);
+        else {
+            ++m_consecutiveFail;
+            if (m_consecutiveFail >= 5) {
+                recreateNetworkManager();
+                m_consecutiveFail = 0;
+            }
+            emit fetchFailed(tr("全部数据源失败"));
+        }
+    };
+
+    if (reply->error() != QNetworkReply::NoError) {
+        if (reply->error() != QNetworkReply::OperationCanceledError) {
+            Logger::warn(QStringLiteral("Price fetch error (src %1): %2")
+                             .arg(tried).arg(reply->errorString()));
+            tryNext();
+        }
+        reply->deleteLater();
+        return;
+    }
+
+    const QByteArray data = reply->readAll();
+    reply->deleteLater();
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError) {
+        tryNext();
+        return;
+    }
+
+    if (tried == 0) {
+        // jin 格式
+        if (!doc.isObject()) { tryNext(); return; }
+        const QJsonObject root = doc.object();
+        if (root.value(QStringLiteral("code")).toInt() != 200) {
+            tryNext();
+            return;
+        }
+        const QJsonObject d = root.value(QStringLiteral("data")).toObject();
+        double price = d.value(QStringLiteral("price")).toDouble();
+        double change = d.value(QStringLiteral("change")).toDouble();
+        QString name = d.value(QStringLiteral("name")).toString();
+        const QString currency = d.value(QStringLiteral("currency")).toString();
+        if (name.isEmpty())
+            name = tr("未知");
+        if (!(name.contains(QStringLiteral("伦敦")) || name.contains(QStringLiteral("国际")))) {
+            if (!name.contains(QStringLiteral("积存金")))
+                name += QStringLiteral("积存金");
+        }
+        if (!applyPrice(price, change, name, currency))
+            tryNext();
+        return;
+    }
+
+    if (tried == 1) {
+        // gold-api.com
+        if (!doc.isObject()) { tryNext(); return; }
+        const QJsonObject o = doc.object();
+        const double price = o.value(QStringLiteral("price")).toDouble();
+        if (!applyPrice(price, 0.0, tr("伦敦金·备用gold-api"), QStringLiteral("USD")))
+            tryNext();
+        return;
+    }
+
+    if (tried == 2) {
+        // goldprice.dev
+        if (!doc.isObject()) { tryNext(); return; }
+        const QJsonObject root = doc.object();
+        const QJsonArray symbols = root.value(QStringLiteral("symbols")).toArray();
+        if (symbols.isEmpty()) { tryNext(); return; }
+        const QJsonObject s0 = symbols.at(0).toObject();
+        const double price = s0.value(QStringLiteral("price")).toString().toDouble();
+        if (!applyPrice(price, 0.0, tr("伦敦金·备用goldprice.dev"), QStringLiteral("USD")))
+            tryNext();
+        return;
+    }
+
+    tryNext();
+}
+
+void PriceService::requestHistorySeed()
+{
+    if (m_historySeeded || m_pendingHistory)
+        return;
+    if (!m_network)
+        m_network = new QNetworkAccessManager(this);
+
+    // freegoldapi：长期日线（含近年 Yahoo 日线），用于填充 MA5日/MA20日
+    const QUrl url(QStringLiteral("https://freegoldapi.com/data/latest.json"));
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+                      QStringLiteral("GoldPriceBarLite/0.6.3"));
+    request.setTransferTimeout(20000);
+    QNetworkReply* reply = m_network->get(request);
+    m_pendingHistory = reply;
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        onHistoryFinished(reply);
+    });
+    Logger::info(QStringLiteral("History seed request started (freegoldapi)"));
+}
+
+void PriceService::onHistoryFinished(QNetworkReply* reply)
+{
+    if (m_pendingHistory.data() == reply)
+        m_pendingHistory.clear();
+    if (!reply)
+        return;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        Logger::warn(QStringLiteral("History seed failed: %1").arg(reply->errorString()));
+        reply->deleteLater();
+        return;
+    }
+
+    const QByteArray raw = reply->readAll();
+    reply->deleteLater();
+
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
+    if (err.error != QJsonParseError::NoError || !doc.isArray()) {
+        Logger::warn(QStringLiteral("History seed JSON invalid"));
+        return;
+    }
+
+    const QJsonArray arr = doc.array();
+    const QDate today = QDate::currentDate();
+    const QDate from = today.addDays(-40); // 多取一些，过滤后够 20 交易日
+    int written = 0;
+    // 数组可能从古到今：只取最近区间
+    for (const QJsonValue& v : arr) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject o = v.toObject();
+        const QDate d = QDate::fromString(o.value(QStringLiteral("date")).toString(), Qt::ISODate);
+        const double price = o.value(QStringLiteral("price")).toDouble();
+        if (!d.isValid() || price <= 0.0)
+            continue;
+        if (d < from || d > today)
+            continue;
+        // 写入国际金日线源，供 MA5日/MA20日；积存金无历史源时也可参考
+        if (ExtremeDatabase::instance().upsertHistoricalClose(d, QStringLiteral("gj"), price))
+            ++written;
+        ExtremeDatabase::instance().upsertHistoricalClose(d, QStringLiteral("xau"), price);
+    }
+
+    m_historySeeded = true;
+    Logger::info(QStringLiteral("History seed wrote %1 daily bars").arg(written));
+    emit extremesUpdated();
+}
+

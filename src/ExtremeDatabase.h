@@ -60,6 +60,13 @@ public:
     /** 清理 N 天前的分时抽样，控制库体积 */
     bool purgeIntradayOlderThan(int keepDays = 14);
 
+    /** 最近 N 个交易日收盘价（按日期升序），用于 MA5日 / MA20日 */
+    QVector<QPair<QDate, double>> loadRecentDailyCloses(int maxDays,
+                                                        const QString& source) const;
+
+    /** 批量写入历史日线收盘（不覆盖已有更高质量实时日线时可只填空） */
+    bool upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close);
+
 private:
     explicit ExtremeDatabase(QObject* parent = nullptr);
     Q_DISABLE_COPY(ExtremeDatabase)

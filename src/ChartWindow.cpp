@@ -84,14 +84,14 @@ void ChartWindow::setupChart() {
   m_series->setPen(pen);
 
   m_ma5Series = new QLineSeries(this);
-  m_ma5Series->setName(tr("MA5分"));
+  m_ma5Series->setName(tr("MA5日"));
   m_ma5Series->setPointsVisible(false);
   QPen ma5(QColor(230, 126, 34));
   ma5.setWidth(2);
   m_ma5Series->setPen(ma5);
 
   m_ma20Series = new QLineSeries(this);
-  m_ma20Series->setName(tr("MA20分"));
+  m_ma20Series->setName(tr("MA20日"));
   m_ma20Series->setPointsVisible(false);
   QPen ma20(QColor(155, 89, 182));
   ma20.setWidth(2);
@@ -1278,45 +1278,59 @@ void ChartWindow::updateMovingAverages()
     const bool show = AppSettings::instance().showMovingAverage() && isIntradayMode();
     m_ma5Series->setVisible(show);
     m_ma20Series->setVisible(show);
-    // 至少需要能覆盖数分钟的数据才有意义
-    if (!show || m_plotPoints.size() < 3)
+    if (!show)
         return;
 
-    // 按「时间窗口」而非「点数」计算均线：
-    // MA5分 = 过去 5 分钟内所有分时点的简单平均
-    // MA20分 = 过去 20 分钟内所有分时点的简单平均
-    // （点很密时若按 5/20 个点，几乎贴着现价，没有参考意义）
-    auto appendTimeMa = [&](QLineSeries* series, int windowMinutes) {
-        const qint64 windowMs = static_cast<qint64>(windowMinutes) * 60 * 1000;
-        int left = 0;
-        double sum = 0.0;
-        int cnt = 0;
-        for (int i = 0; i < m_plotPoints.size(); ++i) {
-            const qint64 ti = m_plotPoints.at(i).first.toMSecsSinceEpoch();
-            const double pi = m_plotPoints.at(i).second;
-            sum += pi;
-            ++cnt;
-            // 滑出窗口左端
-            while (left <= i) {
-                const qint64 tl = m_plotPoints.at(left).first.toMSecsSinceEpoch();
-                if (ti - tl <= windowMs)
-                    break;
-                sum -= m_plotPoints.at(left).second;
-                --cnt;
-                ++left;
-            }
-            if (cnt <= 0)
-                continue;
-            // 窗口需至少跨过约 30% 目标时长，避免开盘前几秒均线无意义乱跳
-            const qint64 span = ti - m_plotPoints.at(left).first.toMSecsSinceEpoch();
-            if (span < windowMs / 3 && i < m_plotPoints.size() - 1)
-                continue;
-            series->append(ti, sum / static_cast<double>(cnt));
-        }
+    // 真正的「5日线 / 20日线」：基于本地 daily_bars 收盘价的 SMA
+    // 优先当前数据源；不足时回退 gj（freegoldapi 历史写入）
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, currentTypeCode());
+    if (closes.size() < 5)
+        closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, QStringLiteral("gj"));
+    if (closes.size() < 5)
+        closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, QStringLiteral("xau"));
+
+    auto sma = [](const QVector<QPair<QDate, double>>& c, int n) -> double {
+        if (c.size() < n)
+            return 0.0;
+        double s = 0.0;
+        for (int i = c.size() - n; i < c.size(); ++i)
+            s += c.at(i).second;
+        return s / static_cast<double>(n);
     };
 
-    appendTimeMa(m_ma5Series, 5);
-    appendTimeMa(m_ma20Series, 20);
+    const double ma5 = sma(closes, 5);
+    const double ma20 = sma(closes, 20);
+
+    // 在分时图上画水平参考线（当日全天同一日线均价值）
+    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+    const qint64 x0 = t0.toMSecsSinceEpoch();
+    const qint64 x1 = t1.toMSecsSinceEpoch();
+
+    if (ma5 > 0.0) {
+        m_ma5Series->append(x0, ma5);
+        m_ma5Series->append(x1, ma5);
+    }
+    if (ma20 > 0.0) {
+        m_ma20Series->append(x0, ma20);
+        m_ma20Series->append(x1, ma20);
+    }
+
+    // 把均线纳入 Y 轴范围：在 updateSeries 已算过 min/max，这里仅补充显示
+    if ((ma5 > 0.0 || ma20 > 0.0) && m_axisY) {
+        qreal yMin = m_axisY->min();
+        qreal yMax = m_axisY->max();
+        if (ma5 > 0.0) {
+            yMin = qMin(yMin, ma5);
+            yMax = qMax(yMax, ma5);
+        }
+        if (ma20 > 0.0) {
+            yMin = qMin(yMin, ma20);
+            yMax = qMax(yMax, ma20);
+        }
+        const qreal m = (yMax - yMin) * 0.05;
+        m_axisY->setRange(yMin - m, yMax + m);
+    }
 }
 
 void ChartWindow::updateYesterdayOverlay()

@@ -6,6 +6,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPointer>
+#include <QStringList>
 
 class PriceService : public QObject
 {
@@ -28,7 +29,6 @@ public:
 signals:
     void priceUpdated(double price, double change, const QString& sourceName);
     void fetchFailed(const QString& error);
-    /** 全日分时写入缓存后，高低价已更新 */
     void extremesUpdated();
 
 private slots:
@@ -37,12 +37,16 @@ private slots:
     void onWatchdog();
     void onChartSeedFinished(QNetworkReply* reply);
     void onChartSeedTimer();
+    void onHistoryFinished(QNetworkReply* reply);
 
 private:
     void requestPrice();
+    void requestPriceFromBackup(int backupIndex);
     void abortPending();
     void recreateNetworkManager();
     void requestChartSeed();
+    void requestHistorySeed();
+    bool applyPrice(double price, double change, const QString& name, const QString& currency);
     QString currentTypeCode() const;
 
     QTimer* m_timer = nullptr;
@@ -51,6 +55,7 @@ private:
     QNetworkAccessManager* m_network = nullptr;
     QPointer<QNetworkReply> m_pendingReply;
     QPointer<QNetworkReply> m_pendingChart;
+    QPointer<QNetworkReply> m_pendingHistory;
 
     double m_lastPrice = 0.0;
     double m_lastChange = 0.0;
@@ -62,6 +67,8 @@ private:
     qint64 m_lastSuccessMs = 0;
     qint64 m_requestStartMs = 0;
     int m_persistCounter = 0;
+    int m_backupIndex = 0; // 0=jin主源, 1=gold-api, 2=goldprice.dev
+    bool m_historySeeded = false;
 };
 
 #endif // PRICESERVICE_H
