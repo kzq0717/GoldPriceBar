@@ -298,12 +298,34 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
   if (!isIntradayMode())
     return;
 
-  // 实时只刷新「当前点」和侧栏当前/高低；预测值不跟每一跳实时价乱变
+  // 轻量刷新：主曲线只追加/更新末点，避免 1s 全量重绘卡顿
   m_plotPoints = HistoryCache::instance().todayPoints();
-  if (!m_plotPoints.isEmpty()) {
-    m_currentSeries->clear();
+  if (!m_plotPoints.isEmpty() && m_series) {
     const auto &cur = m_plotPoints.last();
-    m_currentSeries->append(cur.first.toMSecsSinceEpoch(), cur.second);
+    const qint64 x = cur.first.toMSecsSinceEpoch();
+    const double y = cur.second;
+    if (m_series->count() == 0) {
+      m_series->append(x, y);
+    } else {
+      const QPointF last = m_series->at(m_series->count() - 1);
+      if (qAbs(last.x() - static_cast<qreal>(x)) < 1.0)
+        m_series->replace(m_series->count() - 1, QPointF(static_cast<qreal>(x), y));
+      else
+        m_series->append(x, y);
+    }
+    m_currentSeries->clear();
+    m_currentSeries->append(x, y);
+
+    // 轻量扩展坐标，避免点画出视野
+    if (m_axisX && m_axisY) {
+      const QDateTime xt = QDateTime::fromMSecsSinceEpoch(x);
+      if (xt > m_axisX->max())
+        m_axisX->setMax(xt.addSecs(3600));
+      if (y > m_axisY->max())
+        m_axisY->setMax(y + (y - m_axisY->min()) * 0.05 + 0.5);
+      if (y < m_axisY->min())
+        m_axisY->setMin(y - (m_axisY->max() - y) * 0.05 - 0.5);
+    }
   }
 
   double high = 0.0, low = 0.0;
@@ -317,7 +339,6 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
                 : (m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second),
       m_lastPredictPrice, m_hasPredict, high, low, m_forecastModeTag);
 
-  // 预测：至少间隔 30 秒才重算，避免侧栏预测值持续跳动
   const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
   if (m_lastForecastMs == 0 ||
       (nowMs - m_lastForecastMs) >= kForecastIntervalMs) {
@@ -491,13 +512,15 @@ ChartWindow::computeForecastLocal(int horizonSec) const
 
     double totalMove = driftMove + reversionMove;
 
-    // 总位移硬顶：max(0.12元, 0.05% 现价, 0.85*volHorizon)
-    const double hardCap = qMax(0.12, qMax(lastPrice * 0.0005, 0.85 * volHorizon));
+    // 总位移硬顶：2 分钟内不超过 max(0.15% 现价, 0.5*已实现波动缩放到窗口)
+    // 禁止出现「飞出全日分时纵轴」的离谱预测
+    const double pctCap = lastPrice * 0.0015; // 0.15%
+    const double hardCap = qMax(0.05, qMin(pctCap * 2.0, qMax(pctCap, 0.50 * volHorizon)));
     totalMove = qBound(-hardCap, totalMove, hardCap);
 
-    // 极低波动时：预测几乎等于现价（随机游走）
-    if (stdev < 0.08 && qAbs(momMed) * 120.0 < 0.05)
-        totalMove *= 0.15;
+    // 极低波动或样本不足：几乎贴现价
+    if (n < 8 || (stdev < lastPrice * 0.0002 && qAbs(momMed) * 120.0 < lastPrice * 0.0001))
+        totalMove *= 0.1;
 
     out.append({lastT, lastPrice});
     const int step = 10;

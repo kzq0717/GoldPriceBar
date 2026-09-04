@@ -324,6 +324,15 @@ bool PriceService::applyPrice(double price, double change, const QString& name, 
     if (price <= 0.0)
         return false;
 
+    // 与上次有效价相比跳变过大（>25%）则拒绝，防止串源污染缓存
+    if (m_hasValidPrice && m_lastPrice > 0.0) {
+        const double ratio = price / m_lastPrice;
+        if (ratio > 1.25 || ratio < 0.75) {
+            Logger::warn(QStringLiteral("Reject price jump %1 -> %2").arg(m_lastPrice).arg(price));
+            return false;
+        }
+    }
+
     m_lastPrice = price;
     m_lastChange = change;
     m_lastSourceName = name;
@@ -358,17 +367,20 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
 
     const int tried = m_backupIndex;
     auto tryNext = [this, tried]() {
-        // 主源失败后，对任意数据源都尝试国际金备用（对照价可用）
-        if (tried < 2)
+        // 国际金备用仅当主数据源为伦敦金(gj)时启用；
+        // 浙商/民生与 XAU/USD 量纲不同，绝不能回退，否则预警/预测全错
+        const QString type = currentTypeCode();
+        const bool allowUsdBackup = (type == QStringLiteral("gj") || type == QStringLiteral("xau"));
+        if (allowUsdBackup && tried < 2) {
             requestPriceFromBackup(tried + 1);
-        else {
-            ++m_consecutiveFail;
-            if (m_consecutiveFail >= 5) {
-                recreateNetworkManager();
-                m_consecutiveFail = 0;
-            }
-            emit fetchFailed(tr("全部数据源失败"));
+            return;
         }
+        ++m_consecutiveFail;
+        if (m_consecutiveFail >= 5) {
+            recreateNetworkManager();
+            m_consecutiveFail = 0;
+        }
+        emit fetchFailed(tr("数据源失败（积存金无可用备用国际源）"));
     };
 
     if (reply->error() != QNetworkReply::NoError) {

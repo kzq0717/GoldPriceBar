@@ -33,6 +33,16 @@ void HistoryCache::append(const QDateTime& time, double price)
             return;
     }
 
+    // 与末点量纲/价位差过大则丢弃，防止备用国际金串入积存金序列
+    if (!m_points.isEmpty()) {
+        const double lastP = m_points.last().second;
+        if (lastP > 0.0) {
+            const double r = price / lastP;
+            if (r > 1.25 || r < 0.75)
+                return;
+        }
+    }
+
     m_points.append({time, price});
 
     if (!m_hasExtreme) {
