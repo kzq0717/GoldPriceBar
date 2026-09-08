@@ -64,6 +64,15 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
             }
           });
   m_lastRedraw.invalidate();
+
+  m_smoothTimer = new QTimer(this);
+  m_smoothTimer->setInterval(33); // ~30fps 平滑插值
+  connect(m_smoothTimer, &QTimer::timeout, this, &ChartWindow::onSmoothTick);
+
+  m_pulseTimer = new QTimer(this);
+  m_pulseTimer->setInterval(450);
+  connect(m_pulseTimer, &QTimer::timeout, this, &ChartWindow::onPulseTick);
+
 }
 
 QString ChartWindow::currentTypeCode() const {
@@ -298,25 +307,46 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
   if (!isIntradayMode())
     return;
 
-  // 轻量刷新：主曲线只追加/更新末点，避免 1s 全量重绘卡顿
   m_plotPoints = HistoryCache::instance().todayPoints();
   if (!m_plotPoints.isEmpty() && m_series) {
     const auto &cur = m_plotPoints.last();
     const qint64 x = cur.first.toMSecsSinceEpoch();
-    const double y = cur.second;
+    const double y = (price > 0.0) ? price : cur.second;
+
+    // 主曲线：新时间戳才追加，同秒只更新目标价（由平滑定时器插值）
     if (m_series->count() == 0) {
       m_series->append(x, y);
+      m_seriesLastIndex = 0;
+      m_smoothY = y;
     } else {
       const QPointF last = m_series->at(m_series->count() - 1);
-      if (qAbs(last.x() - static_cast<qreal>(x)) < 1.0)
-        m_series->replace(m_series->count() - 1, QPointF(static_cast<qreal>(x), y));
-      else
-        m_series->append(x, y);
+      if (qAbs(last.x() - static_cast<qreal>(x)) < 1.0) {
+        m_seriesLastIndex = m_series->count() - 1;
+        // 不立刻 replace 到目标价，交给 onSmoothTick
+      } else {
+        // 先把上一段落到平滑终点，再追加新点（起点用当前平滑价，避免硬跳）
+        if (m_seriesLastIndex >= 0 && m_seriesLastIndex < m_series->count()) {
+          const QPointF p = m_series->at(m_seriesLastIndex);
+          m_series->replace(m_seriesLastIndex,
+                            QPointF(p.x(), m_hasMarker ? m_smoothY : p.y()));
+        }
+        m_series->append(x, m_hasMarker ? m_smoothY : y);
+        m_seriesLastIndex = m_series->count() - 1;
+      }
     }
-    m_currentSeries->clear();
-    m_currentSeries->append(x, y);
 
-    // 轻量扩展坐标，避免点画出视野
+    m_targetY = y;
+    m_markerXMs = x;
+    if (!m_hasMarker) {
+      m_smoothY = y;
+      m_hasMarker = true;
+    }
+    if (m_smoothTimer && !m_smoothTimer->isActive())
+      m_smoothTimer->start();
+    if (m_pulseTimer && !m_pulseTimer->isActive())
+      m_pulseTimer->start();
+    setCurrentMarker(x, m_smoothY, true);
+
     if (m_axisX && m_axisY) {
       const QDateTime xt = QDateTime::fromMSecsSinceEpoch(x);
       if (xt > m_axisX->max())
@@ -344,6 +374,51 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
       (nowMs - m_lastForecastMs) >= kForecastIntervalMs) {
     updateForecast();
   }
+}
+
+void ChartWindow::setCurrentMarker(qint64 xMs, double y, bool startPulse)
+{
+  if (!m_currentSeries)
+    return;
+  m_currentSeries->clear();
+  m_currentSeries->append(xMs, y);
+  if (startPulse && m_pulseTimer && !m_pulseTimer->isActive())
+    m_pulseTimer->start();
+}
+
+void ChartWindow::onSmoothTick()
+{
+  if (!isVisible() || !isIntradayMode() || !m_hasMarker)
+    return;
+
+  // 指数逼近目标价，变化大时更快、接近时更细腻
+  const double diff = m_targetY - m_smoothY;
+  if (qAbs(diff) < 1e-4) {
+    m_smoothY = m_targetY;
+  } else {
+    // 每帧约 18%~28% 靠拢，约 0.3~0.6s 完成大部分过渡
+    const double alpha = qBound(0.12, 0.12 + qAbs(diff) / qMax(1.0, qAbs(m_targetY)) * 40.0, 0.35);
+    m_smoothY += diff * alpha;
+  }
+
+  if (m_series && m_seriesLastIndex >= 0 && m_seriesLastIndex < m_series->count()) {
+    const QPointF p = m_series->at(m_seriesLastIndex);
+    m_series->replace(m_seriesLastIndex, QPointF(p.x(), m_smoothY));
+  }
+  setCurrentMarker(m_markerXMs, m_smoothY, false);
+}
+
+void ChartWindow::onPulseTick()
+{
+  if (!m_currentSeries || !m_hasMarker || !isVisible() || !isIntradayMode())
+    return;
+  m_pulseOn = !m_pulseOn;
+  // 等待下一价时末点呼吸闪烁
+  m_currentSeries->setMarkerSize(m_pulseOn ? 11.0 : 7.0);
+  if (m_pulseOn)
+    m_currentSeries->setColor(QColor(255, 120, 120));
+  else
+    m_currentSeries->setColor(QColor(255, 180, 180));
 }
 
 void ChartWindow::showEvent(QShowEvent *event) {

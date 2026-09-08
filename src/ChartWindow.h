@@ -73,6 +73,9 @@ private:
     void applyChartTheme();
     void updateMovingAverages();
     void updateYesterdayOverlay();
+    void onSmoothTick();
+    void onPulseTick();
+    void setCurrentMarker(qint64 xMs, double y, bool startPulse = true);
 
     QComboBox* m_periodCombo = nullptr;
 
@@ -111,6 +114,14 @@ private:
     bool m_hasPredict = false;
     qint64 m_lastForecastMs = 0;
     static constexpr int kForecastIntervalMs = 30000;
+    QTimer* m_smoothTimer = nullptr;
+    QTimer* m_pulseTimer = nullptr;
+    qint64 m_markerXMs = 0;
+    double m_smoothY = 0.0;
+    double m_targetY = 0.0;
+    bool m_hasMarker = false;
+    bool m_pulseOn = false;
+    int m_seriesLastIndex = -1;
 };
 
 #endif // CHARTWINDOW_H
