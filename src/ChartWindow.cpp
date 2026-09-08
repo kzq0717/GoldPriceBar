@@ -116,12 +116,20 @@ void ChartWindow::setupChart() {
 
   // 未来 2 分钟预测：虚线
   m_forecastSeries = new QLineSeries(this);
-  m_forecastSeries->setName(tr("预测2分钟"));
+  m_forecastSeries->setName(tr("预测最高"));
   m_forecastSeries->setPointsVisible(false);
   QPen dashPen(QColor(255, 128, 128));
   dashPen.setWidth(2);
   dashPen.setStyle(Qt::DashLine);
   m_forecastSeries->setPen(dashPen);
+
+  m_forecastLowSeries = new QLineSeries(this);
+  m_forecastLowSeries->setName(tr("预测最低"));
+  m_forecastLowSeries->setPointsVisible(false);
+  QPen dashLow(QColor(46, 204, 113));
+  dashLow.setStyle(Qt::DashLine);
+  dashLow.setWidth(2);
+  m_forecastLowSeries->setPen(dashLow);
 
   // 当前点：浅红色
   m_currentSeries = new QScatterSeries(this);
@@ -146,6 +154,7 @@ void ChartWindow::setupChart() {
   m_chart->addSeries(m_ma20Series);
   m_chart->addSeries(m_yesterdaySeries);
   m_chart->addSeries(m_forecastSeries);
+  m_chart->addSeries(m_forecastLowSeries);
   m_chart->addSeries(m_currentSeries);
   m_chart->addSeries(m_highSeries);
   m_chart->addSeries(m_lowSeries);
@@ -174,6 +183,7 @@ void ChartWindow::setupChart() {
                        static_cast<QAbstractSeries *>(m_ma20Series),
                        static_cast<QAbstractSeries *>(m_yesterdaySeries),
                              static_cast<QAbstractSeries *>(m_forecastSeries),
+                             static_cast<QAbstractSeries *>(m_forecastLowSeries),
                              static_cast<QAbstractSeries *>(m_currentSeries),
                              static_cast<QAbstractSeries *>(m_highSeries),
                              static_cast<QAbstractSeries *>(m_lowSeries)}) {
@@ -261,7 +271,7 @@ void ChartWindow::setupChart() {
   m_sideCurrentLabel = mkValue(tr("--.--"), "#212529");
   sideLay->addWidget(m_sideCurrentLabel);
 
-  sideLay->addWidget(mkTitle(tr("2分钟预测")));
+  sideLay->addWidget(mkTitle(tr("预测今日高低")));
   m_sidePredictLabel = mkValue(tr("--.--"), "#e74c3c");
   sideLay->addWidget(m_sidePredictLabel);
 
@@ -509,173 +519,155 @@ void ChartWindow::hideCrosshair() {
  * 仅供参考，不构成投资建议
  */
 /**
- * 本地 2 分钟预测（务实版）：
- * 短时金价近似随机游走，最优基线往往是「维持现价」。
- * 在此基础上叠加：多尺度稳健动量 + 向 EMA 的弱回归，并用已实现波动率限制幅度。
- * 仅供参考，不构成投资建议。
+ * 预测「当日最高 / 最低」：
+ * - 不低于已出现的今高、不高于已出现的今低之外的合理扩张
+ * - 扩张幅度由近窗波动、已走振幅、剩余时间共同决定
+ * - 硬顶：全日预期振幅不超过现价约 1.2%（积存金尺度）
  */
-QVector<QPair<QDateTime, double>>
-ChartWindow::computeForecastLocal(int horizonSec) const
+bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLow) const
 {
-    QVector<QPair<QDateTime, double>> out;
-    if (m_plotPoints.size() < 4)
-        return out;
+    outPredHigh = 0.0;
+    outPredLow = 0.0;
+    if (m_plotPoints.size() < 3)
+        return false;
 
-    const int n = m_plotPoints.size();
+    double actHigh = 0.0, actLow = 0.0;
+    HistoryCache::instance().todayHigh(actHigh);
+    HistoryCache::instance().todayLow(actLow);
     const double lastPrice = m_plotPoints.last().second;
-    const QDateTime lastT = m_plotPoints.last().first;
     if (lastPrice <= 0.0)
-        return out;
+        return false;
+    if (actHigh <= 0.0) actHigh = lastPrice;
+    if (actLow <= 0.0) actLow = lastPrice;
 
-    auto priceAtOffset = [&](int back) -> double {
-        const int idx = qMax(0, n - 1 - back);
-        return m_plotPoints.at(idx).second;
-    };
-    auto secsBack = [&](int back) -> double {
-        const int idx = qMax(0, n - 1 - back);
-        return static_cast<double>(m_plotPoints.at(idx).first.secsTo(lastT));
-    };
-
-    // 1) EMA（近期中枢）
-    const int wEma = qMin(30, n);
-    double ema = m_plotPoints.at(n - wEma).second;
-    const double alpha = 0.25;
-    for (int i = n - wEma + 1; i < n; ++i)
-        ema = alpha * m_plotPoints.at(i).second + (1.0 - alpha) * ema;
-
-    // 2) 多尺度动量（元/秒），取中位数更抗噪
-    QVector<double> moms;
-    for (int back : {3, 5, 8, 12}) {
-        if (back >= n)
-            continue;
-        const double dt = secsBack(back);
-        if (dt < 2.0)
-            continue;
-        moms.append((lastPrice - priceAtOffset(back)) / dt);
-    }
-    double momMed = 0.0;
-    if (!moms.isEmpty()) {
-        std::sort(moms.begin(), moms.end());
-        momMed = moms.at(moms.size() / 2);
-    }
-
-    // 3) 已实现波动：近窗价格标准差 / 时间尺度 → 限制 2 分钟合理波动
-    const int wVol = qMin(25, n);
+    // 近窗波动
+    const int n = m_plotPoints.size();
+    const int w = qMin(40, n);
     double mean = 0.0;
-    for (int i = n - wVol; i < n; ++i)
+    for (int i = n - w; i < n; ++i)
         mean += m_plotPoints.at(i).second;
-    mean /= static_cast<double>(wVol);
+    mean /= static_cast<double>(w);
     double var = 0.0;
-    for (int i = n - wVol; i < n; ++i) {
+    for (int i = n - w; i < n; ++i) {
         const double d = m_plotPoints.at(i).second - mean;
         var += d * d;
     }
-    const double stdev = qSqrt(var / static_cast<double>(qMax(1, wVol - 1)));
-    const double spanSec = qMax(30.0, secsBack(wVol - 1));
-    // 将窗口波动缩放到 horizon
-    const double volHorizon = stdev * qSqrt(static_cast<double>(horizonSec) / spanSec);
+    const double stdev = qSqrt(var / static_cast<double>(qMax(1, w - 1)));
+    const double rangeSoFar = qMax(0.0, actHigh - actLow);
 
-    // 4) 合成：现价基线 + 弱动量(40%) + 弱回归(60% 的一部分)
-    // 回归：2 分钟内只消化与 EMA 差距的一小部分
-    const double gap = ema - lastPrice;
-    const double reversionMove = gap * 0.20; // 最多向中枢靠 20%
+    // 时间进度：按自然日 0~24h（金价近 24h 交易），剩余越多扩张越大
+    const QTime nowT = QTime::currentTime();
+    const double dayFrac = (nowT.msecsSinceStartOfDay()) / (24.0 * 3600.0 * 1000.0);
+    const double remain = qBound(0.05, 1.0 - dayFrac, 1.0);
+    // 平方根时间：波动大致按 sqrt(剩余占比) 缩放已实现振幅
+    const double timeScale = qSqrt(remain);
 
-    double driftMove = momMed * horizonSec * 0.40;
-    // 动量幅度不超过 0.6 * volHorizon
-    const double momCap = qMax(0.08, 0.6 * volHorizon);
-    driftMove = qBound(-momCap, driftMove, momCap);
-
-    double totalMove = driftMove + reversionMove;
-
-    // 总位移硬顶：2 分钟内不超过 max(0.15% 现价, 0.5*已实现波动缩放到窗口)
-    // 禁止出现「飞出全日分时纵轴」的离谱预测
-    const double pctCap = lastPrice * 0.0015; // 0.15%
-    const double hardCap = qMax(0.05, qMin(pctCap * 2.0, qMax(pctCap, 0.50 * volHorizon)));
-    totalMove = qBound(-hardCap, totalMove, hardCap);
-
-    // 极低波动或样本不足：几乎贴现价
-    if (n < 8 || (stdev < lastPrice * 0.0002 && qAbs(momMed) * 120.0 < lastPrice * 0.0001))
-        totalMove *= 0.1;
-
-    out.append({lastT, lastPrice});
-    const int step = 10;
-    for (int s = step; s <= horizonSec; s += step) {
-        const double frac = static_cast<double>(s) / static_cast<double>(horizonSec);
-        // 前半段更贴近现价，后半段逐渐体现漂移（减轻早期误差）
-        const double ease = frac * frac; // 二次缓入
-        const double y = lastPrice + totalMove * ease;
-        out.append({lastT.addSecs(s), y});
+    // 参考：近 20 日均振幅（若有）
+    double histRange = 0.0;
+    const auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(21, currentTypeCode());
+    if (closes.size() >= 5) {
+        // 用收盘价序列的近窗极差近似
+        double mn = closes.first().second, mx = mn;
+        for (const auto& c : closes) {
+            mn = qMin(mn, c.second);
+            mx = qMax(mx, c.second);
+        }
+        histRange = (mx - mn) / qMax(1, closes.size() / 5); // 粗略日均波段
     }
-    return out;
+
+    // 基础扩张：max(2.5*stdev, 0.35*已走振幅, 0.25*历史日波段)
+    double expand = qMax(2.5 * stdev, 0.35 * rangeSoFar);
+    if (histRange > 0.0)
+        expand = qMax(expand, 0.25 * histRange);
+    expand *= (0.55 + 0.45 * timeScale); // 早盘扩张更大，尾盘收敛
+
+    // 硬顶：相对现价
+    const double hard = lastPrice * 0.012; // 1.2%
+    expand = qMin(expand, hard);
+    expand = qMax(expand, lastPrice * 0.0008); // 至少约 0.08%
+
+    outPredHigh = actHigh + expand * remain;
+    outPredLow = actLow - expand * remain;
+    // 预测高不得低于已现高/现价；预测低不得高于已现低/现价
+    outPredHigh = qMax(outPredHigh, qMax(actHigh, lastPrice));
+    outPredLow = qMin(outPredLow, qMin(actLow, lastPrice));
+    // 再夹一次总宽度
+    if (outPredHigh - outPredLow > hard * 2.0) {
+        const double mid = 0.5 * (outPredHigh + outPredLow);
+        outPredHigh = mid + hard;
+        outPredLow = mid - hard;
+        outPredHigh = qMax(outPredHigh, actHigh);
+        outPredLow = qMin(outPredLow, actLow);
+    }
+    return outPredHigh > outPredLow && outPredHigh > 0.0;
 }
 
 void ChartWindow::updateForecast() {
   m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
-  m_forecastSeries->clear();
-  m_currentSeries->clear();
+  if (m_forecastSeries)
+    m_forecastSeries->clear();
+  if (m_forecastLowSeries)
+    m_forecastLowSeries->clear();
 
-  if (m_plotPoints.isEmpty())
-    return;
-
-  // 当前点（浅红色）
-  const auto &cur = m_plotPoints.last();
-  m_currentSeries->append(cur.first.toMSecsSinceEpoch(), cur.second);
-
-  if (AppSettings::instance().forecastOnline()) {
-    // 在线模式：异步请求，失败则回退本地
-    requestOnlineForecast();
-    // 先用本地占位，避免空白
-    const auto local = computeForecastLocal(120);
-    if (local.size() >= 2)
-      applyForecastPoints(local, tr("本地(请求中)"));
-  } else {
-    const auto local = computeForecastLocal(120);
-    applyForecastPoints(local, tr("本地"));
-  }
-}
-
-void ChartWindow::applyForecastPoints(
-    const QVector<QPair<QDateTime, double>> &forecast, const QString &modeTag) {
-  m_forecastModeTag = modeTag;
-  m_forecastSeries->clear();
-  if (forecast.size() < 2) {
+  if (!isIntradayMode() || m_plotPoints.isEmpty()) {
     m_hasPredict = false;
-    m_lastPredictPrice = 0.0;
-    if (m_sidePredictLabel)
-      m_sidePredictLabel->setText(tr("--.--"));
-    if (m_sideModeLabel)
-      m_sideModeLabel->setText(tr("模式: %1").arg(modeTag));
     return;
   }
 
-  for (const auto &p : forecast)
-    m_forecastSeries->append(p.first.toMSecsSinceEpoch(), p.second);
+  double predHigh = 0.0, predLow = 0.0;
+  if (!computeDayRangeForecast(predHigh, predLow)) {
+    m_hasPredict = false;
+    return;
+  }
 
+  m_lastPredictHigh = predHigh;
+  m_lastPredictLow = predLow;
+  m_lastPredictPrice = predHigh; // 侧栏主数字：预测最高
   m_hasPredict = true;
-  m_lastPredictPrice = forecast.last().second;
+  m_forecastModeTag = tr("本地·日高低");
 
-  // 登记预测，供 2 分钟后统计命中率
+  // 水平虚线：从当日 0 点到 23:59
+  const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+  const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+  const qint64 x0 = t0.toMSecsSinceEpoch();
+  const qint64 x1 = t1.toMSecsSinceEpoch();
+  if (m_forecastSeries) {
+    m_forecastSeries->append(x0, predHigh);
+    m_forecastSeries->append(x1, predHigh);
+  }
+  if (m_forecastLowSeries) {
+    m_forecastLowSeries->append(x0, predLow);
+    m_forecastLowSeries->append(x1, predLow);
+  }
+
+  // 命中统计：登记「预测高」与「预测低」的均值，到期用今高/今低检验
+  const double mid = 0.5 * (predHigh + predLow);
   ForecastTracker::instance().recordPrediction(
-      forecast.first().first, 120, m_lastPredictPrice,
-      forecast.first().second, modeTag);
+      QDateTime::currentDateTime(), 3600, mid, m_plotPoints.last().second,
+      m_forecastModeTag);
 
-  // 确保横轴右端覆盖预测终点（当前时间 + 3 分钟）
-  if (m_axisX) {
-    const QDateTime now = QDateTime::currentDateTime();
-    const QDateTime needMax =
-        ((now > forecast.last().first) ? now : forecast.last().first)
-            .addSecs(3600);
-    QDateTime curMax = m_axisX->max();
-    QDateTime curMin = m_axisX->min();
-    if (needMax > curMax)
-      m_axisX->setRange(curMin, needMax);
+  if (m_axisY) {
+    qreal yMin = m_axisY->min();
+    qreal yMax = m_axisY->max();
+    yMin = qMin(yMin, predLow);
+    yMax = qMax(yMax, predHigh);
+    const qreal m = (yMax - yMin) * 0.05 + 0.2;
+    m_axisY->setRange(yMin - m, yMax + m);
   }
 
   double high = 0.0, low = 0.0;
   HistoryCache::instance().todayHigh(high);
   HistoryCache::instance().todayLow(low);
-  const double cur = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
-  updateSidePanelValues(cur, m_lastPredictPrice, true, high, low, modeTag);
+  const double cur = m_plotPoints.last().second;
+  updateSidePanelValues(cur, predHigh, true, high, low, m_forecastModeTag);
+}
+
+void ChartWindow::applyForecastPoints(
+    const QVector<QPair<QDateTime, double>> &forecast, const QString &modeTag) {
+  Q_UNUSED(forecast);
+  // 在线路径若仍返回点列，统一改回「日高低」本地模型，避免 2 分钟路径残留
+  m_forecastModeTag = modeTag.isEmpty() ? tr("本地·日高低") : modeTag;
+  updateForecast();
 }
 
 void ChartWindow::updateSidePanelValues(double current, double predict,
@@ -688,7 +680,12 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
       m_sideCurrentLabel->setText(tr("--.--"));
   }
   if (m_sidePredictLabel) {
-    if (hasPredict && predict > 0.0)
+    if (hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0)
+      m_sidePredictLabel->setText(
+          tr("高 %1  低 %2")
+              .arg(m_lastPredictHigh, 0, 'f', 2)
+              .arg(m_lastPredictLow, 0, 'f', 2));
+    else if (hasPredict && predict > 0.0)
       m_sidePredictLabel->setText(QString::number(predict, 'f', 2));
     else
       m_sidePredictLabel->setText(tr("--.--"));
@@ -727,170 +724,17 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
 }
 
 void ChartWindow::requestOnlineForecast() {
-  if (m_pendingForecast)
-    return;
-  if (m_plotPoints.isEmpty())
-    return;
-
-  const QString apiKey = AppSettings::instance().xaiApiKey().trimmed();
-  if (apiKey.isEmpty()) {
-    const auto local = computeForecastLocal(120);
-    applyForecastPoints(local, tr("无Key·本地"));
-    return;
-  }
-
-  // 构造近期行情摘要给大模型
-  const int n = m_plotPoints.size();
-  const int take = qMin(20, n);
-  QString seriesText;
-  for (int i = n - take; i < n; ++i) {
-    const auto &pt = m_plotPoints.at(i);
-    seriesText += QStringLiteral("%1 %2\n")
-                      .arg(pt.first.toString(QStringLiteral("HH:mm:ss")))
-                      .arg(pt.second, 0, 'f', 2);
-  }
-  const double lastPrice = m_plotPoints.last().second;
-  const QString src = currentTypeCode();
-
-  const QString systemPrompt = QStringLiteral(
-      "你是黄金短线分析助手。根据用户提供的最近分时点，推断未来约120秒可能的价"
-      "格路径。"
-      "只输出一个 JSON 对象，不要 Markdown，不要解释。格式："
-      "{\"points\":[{\"offset_sec\":10,\"price\":0.0}],\"brief\":"
-      "\"一句话理由\"}。"
-      "points 从 offset_sec=10 起，步长约10秒，直到120；price 为合理小数。"
-      "这不是投资建议，路径应平滑、贴近最近走势，避免极端跳跃。");
-
-  const QString userPrompt =
-      QStringLiteral("品种代码:%1\n当前价:%2\n最近分时(时间 "
-                     "价格):\n%3\n请给出未来120秒预测路径 JSON。")
-          .arg(src)
-          .arg(lastPrice, 0, 'f', 2)
-          .arg(seriesText);
-
-  QJsonObject body;
-  body.insert(QStringLiteral("model"), AppSettings::instance().xaiModel());
-  body.insert(QStringLiteral("temperature"), 0.2);
-  body.insert(QStringLiteral("max_tokens"), 500);
-
-  QJsonArray messages;
-  messages.append(
-      QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
-                  {QStringLiteral("content"), systemPrompt}});
-  messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
-                              {QStringLiteral("content"), userPrompt}});
-  body.insert(QStringLiteral("messages"), messages);
-
-  const QUrl url(QStringLiteral("https://api.x.ai/v1/chat/completions"));
-  QNetworkRequest request(url);
-  request.setHeader(QNetworkRequest::ContentTypeHeader,
-                    QStringLiteral("application/json"));
-  request.setRawHeader("Authorization",
-                       QByteArray("Bearer ") + apiKey.toUtf8());
-  request.setHeader(QNetworkRequest::UserAgentHeader,
-                    QStringLiteral("GoldPriceBarLite/0.2.0"));
-  request.setTransferTimeout(25000);
-
-  QNetworkReply *reply = m_network->post(
-      request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-  m_pendingForecast = reply;
-  connect(reply, &QNetworkReply::finished, this,
-          [this, reply]() { onOnlineForecastFinished(reply); });
+  // 已改为「预测当日最高/最低」，不再请求 2 分钟路径；统一本地日高低模型
+  updateForecast();
 }
 
 void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
+  if (!reply)
+    return;
   if (m_pendingForecast.data() == reply)
     m_pendingForecast.clear();
-
-  auto fallbackLocal = [this](const QString &tag) {
-    const auto local = computeForecastLocal(120);
-    applyForecastPoints(local, tag);
-  };
-
-  if (reply->error() != QNetworkReply::NoError) {
-    const QString err = reply->errorString();
-    reply->deleteLater();
-    fallbackLocal(tr("Grok失败·本地"));
-    Q_UNUSED(err);
-    return;
-  }
-
-  const QByteArray raw = reply->readAll();
   reply->deleteLater();
-
-  QJsonParseError err;
-  const QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
-  if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-    fallbackLocal(tr("解析失败·本地"));
-    return;
-  }
-
-  const QJsonObject root = doc.object();
-  // OpenAI 兼容：choices[0].message.content
-  const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
-  if (choices.isEmpty()) {
-    fallbackLocal(tr("空响应·本地"));
-    return;
-  }
-
-  QString content = choices.at(0)
-                        .toObject()
-                        .value(QStringLiteral("message"))
-                        .toObject()
-                        .value(QStringLiteral("content"))
-                        .toString()
-                        .trimmed();
-
-  // 去掉可能的 ```json 包裹
-  if (content.startsWith(QStringLiteral("```"))) {
-    const int firstNl = content.indexOf(QLatin1Char('\n'));
-    const int lastFence = content.lastIndexOf(QStringLiteral("```"));
-    if (firstNl >= 0 && lastFence > firstNl)
-      content = content.mid(firstNl + 1, lastFence - firstNl - 1).trimmed();
-  }
-
-  QJsonParseError perr;
-  const QJsonDocument predDoc =
-      QJsonDocument::fromJson(content.toUtf8(), &perr);
-  if (perr.error != QJsonParseError::NoError || !predDoc.isObject()) {
-    fallbackLocal(tr("格式失败·本地"));
-    return;
-  }
-
-  const QJsonObject predObj = predDoc.object();
-  const QJsonArray points = predObj.value(QStringLiteral("points")).toArray();
-  if (points.isEmpty()) {
-    fallbackLocal(tr("无点·本地"));
-    return;
-  }
-
-  QVector<QPair<QDateTime, double>> forecast;
-  if (!m_plotPoints.isEmpty())
-    forecast.append(m_plotPoints.last());
-
-  const QDateTime base = m_plotPoints.isEmpty() ? QDateTime::currentDateTime()
-                                                : m_plotPoints.last().first;
-
-  for (const QJsonValue &v : points) {
-    if (!v.isObject())
-      continue;
-    const QJsonObject o = v.toObject();
-    int offset = o.value(QStringLiteral("offset_sec")).toInt();
-    if (offset <= 0)
-      offset = o.value(QStringLiteral("t")).toInt();
-    double price = o.value(QStringLiteral("price")).toDouble();
-    if (price <= 0.0)
-      price = o.value(QStringLiteral("p")).toDouble();
-    if (offset > 0 && price > 0.0)
-      forecast.append({base.addSecs(offset), price});
-  }
-
-  if (forecast.size() < 2) {
-    fallbackLocal(tr("点不足·本地"));
-    return;
-  }
-
-  applyForecastPoints(forecast, tr("Grok"));
+  updateForecast();
 }
 
 void ChartWindow::updateHighLowMarkers() {
@@ -1022,7 +866,8 @@ void ChartWindow::updateSeries() {
     m_axisX->setRange(QDateTime(QDate::currentDate(), QTime(0, 0)),
                       now.addSecs(3600));
     m_axisY->setRange(900.0, 1100.0);
-    m_forecastSeries->clear();
+    if (m_forecastSeries) m_forecastSeries->clear();
+    if (m_forecastLowSeries) m_forecastLowSeries->clear();
     m_currentSeries->clear();
     m_highSeries->clear();
     m_lowSeries->clear();
@@ -1058,15 +903,14 @@ void ChartWindow::updateSeries() {
     maxPrice = qMax(maxPrice, p.second);
   }
 
-  // 先算预测，把预测价也纳入坐标范围
-  const auto forecast = computeForecastLocal(120);
-  for (const auto &p : forecast) {
-    minPrice = qMin(minPrice, p.second);
-    maxPrice = qMax(maxPrice, p.second);
+  // 日高低预测纳入坐标范围
+  double ph = 0.0, pl = 0.0;
+  if (computeDayRangeForecast(ph, pl)) {
+    minPrice = qMin(minPrice, pl);
+    maxPrice = qMax(maxPrice, ph);
   }
 
-  // 横轴：左端尽量从当日 00:00 起；右端必须超过「当前时间」至少 3 分钟，
-  // 否则未来 2 分钟预测虚线会被裁切、无法完整显示。
+  // 横轴：左端尽量从当日 00:00 起；右端留足到当前之后 1 小时
   const QDateTime now = QDateTime::currentDateTime();
   const QDateTime dayStart = QDateTime(QDate::currentDate(), QTime(0, 0, 0));
   const QDateTime lastPt = m_plotPoints.last().first;
@@ -1110,8 +954,10 @@ void ChartWindow::updateSeries() {
                                                        : tr("浙商"));
 
   QString predText;
-  if (forecast.size() >= 2) {
-    predText = tr("  |  2分钟预测 %1").arg(forecast.last().second, 0, 'f', 2);
+  if (m_hasPredict && m_lastPredictHigh > 0.0) {
+    predText = tr("  |  预测高 %1 低 %2")
+                   .arg(m_lastPredictHigh, 0, 'f', 2)
+                   .arg(m_lastPredictLow, 0, 'f', 2);
   }
 
   m_chart->setTitle(tr("%1 · 今日分时（%2点）  高 %3  低 %4%5")
@@ -1198,6 +1044,8 @@ void ChartWindow::setForecastVisible(bool on)
 {
     if (m_forecastSeries)
         m_forecastSeries->setVisible(on);
+    if (m_forecastLowSeries)
+        m_forecastLowSeries->setVisible(on);
     if (m_currentSeries)
         m_currentSeries->setVisible(on);
     // 月份模式仍可用高低点系列
@@ -1230,7 +1078,8 @@ void ChartWindow::updateMonthSeries()
     setWindowTitle(tr("%1年%2月走势").arg(year).arg(month));
 
     m_series->clear();
-    m_forecastSeries->clear();
+    if (m_forecastSeries) m_forecastSeries->clear();
+    if (m_forecastLowSeries) m_forecastLowSeries->clear();
     m_currentSeries->clear();
     m_highSeries->clear();
     m_lowSeries->clear();

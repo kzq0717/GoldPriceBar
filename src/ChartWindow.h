@@ -68,7 +68,8 @@ private:
     void updateSidePanelValues(double current, double predict, bool hasPredict,
                                double high, double low, const QString& modeTag);
     int nearestPointIndex(qreal xMsecs) const;
-    QVector<QPair<QDateTime, double>> computeForecastLocal(int horizonSec) const;
+    /** 预测当日最高/最低（基于已现高低 + 波动 + 剩余时段） */
+    bool computeDayRangeForecast(double& outPredHigh, double& outPredLow) const;
     void setForecastVisible(bool on);
     void applyChartTheme();
     void updateMovingAverages();
@@ -85,7 +86,8 @@ private:
     QLineSeries* m_ma5Series = nullptr;
     QLineSeries* m_ma20Series = nullptr;
     QLineSeries* m_yesterdaySeries = nullptr;
-    QLineSeries* m_forecastSeries = nullptr;
+    QLineSeries* m_forecastSeries = nullptr;      // 预测最高（水平虚线）
+    QLineSeries* m_forecastLowSeries = nullptr;   // 预测最低（水平虚线）
     QScatterSeries* m_currentSeries = nullptr;
     QScatterSeries* m_highSeries = nullptr;
     QScatterSeries* m_lowSeries = nullptr;
@@ -110,7 +112,9 @@ private:
     QString m_forecastModeTag;
 
     QVector<QPair<QDateTime, double>> m_plotPoints;
-    double m_lastPredictPrice = 0.0;
+    double m_lastPredictPrice = 0.0; // 兼容侧栏：展示用（预测高）
+    double m_lastPredictHigh = 0.0;
+    double m_lastPredictLow = 0.0;
     bool m_hasPredict = false;
     qint64 m_lastForecastMs = 0;
     static constexpr int kForecastIntervalMs = 30000;
