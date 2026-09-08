@@ -1177,6 +1177,30 @@ void ChartWindow::applyChartTheme()
     const bool dark = AppSettings::instance().darkTheme();
     if (!m_chart)
         return;
+
+    // 曲线笔触：深色底用高对比色，避免「发白虚线」与看不清
+    auto setDash = [](QLineSeries* s, const QColor& c, int width = 2) {
+        if (!s) return;
+        QPen pen(c);
+        pen.setStyle(Qt::DashLine);
+        pen.setWidth(width);
+        s->setPen(pen);
+    };
+    auto setSolid = [](QLineSeries* s, const QColor& c, int width = 2) {
+        if (!s) return;
+        QPen pen(c);
+        pen.setStyle(Qt::SolidLine);
+        pen.setWidth(width);
+        s->setPen(pen);
+    };
+    auto setDot = [](QLineSeries* s, const QColor& c, int width = 1) {
+        if (!s) return;
+        QPen pen(c);
+        pen.setStyle(Qt::DotLine);
+        pen.setWidth(width);
+        s->setPen(pen);
+    };
+
     if (dark) {
         m_chart->setBackgroundBrush(QBrush(QColor(28, 31, 38)));
         m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(34, 38, 46)));
@@ -1184,15 +1208,42 @@ void ChartWindow::applyChartTheme()
         if (m_axisX) {
             m_axisX->setLabelsColor(QColor(180, 180, 180));
             m_axisX->setGridLineColor(QColor(55, 60, 70));
+            m_axisX->setTitleBrush(QBrush(QColor(180, 180, 180)));
         }
         if (m_axisY) {
             m_axisY->setLabelsColor(QColor(180, 180, 180));
             m_axisY->setGridLineColor(QColor(55, 60, 70));
+            m_axisY->setTitleBrush(QBrush(QColor(180, 180, 180)));
         }
         if (m_sidePanel)
             m_sidePanel->setStyleSheet(
-                "QFrame{background:#252a33;border:1px solid #3d4450;border-radius:8px;}");
+                "QFrame{background:#252a33;border:1px solid #3d4450;border-radius:8px;}"
+                "QLabel{color:#e8eaed;}");
         setStyleSheet("background:#1a1d23;");
+
+        setSolid(m_series, QColor(64, 158, 255), 2);           // 实际：亮蓝
+        setSolid(m_ma5Series, QColor(255, 167, 38), 2);         // MA5日：亮橙
+        setSolid(m_ma20Series, QColor(186, 104, 200), 2);       // MA20日：亮紫
+        setDot(m_yesterdaySeries, QColor(120, 144, 156), 1);    // 昨日：蓝灰点线（非白）
+        setDash(m_forecastSeries, QColor(255, 82, 82), 2);      // 预测高：鲜红虚线
+        setDash(m_forecastLowSeries, QColor(0, 230, 118), 2);   // 预测低：鲜绿虚线
+
+        if (m_currentSeries) {
+            m_currentSeries->setColor(QColor(255, 100, 100));
+            m_currentSeries->setBorderColor(QColor(255, 200, 200));
+        }
+        if (m_sideCurrentLabel)
+            m_sideCurrentLabel->setStyleSheet("color:#ffe082;font-size:16px;font-weight:bold;");
+        if (m_sidePredictLabel)
+            m_sidePredictLabel->setStyleSheet("color:#ff8a80;font-size:16px;font-weight:bold;");
+        if (m_sideHighLabel)
+            m_sideHighLabel->setStyleSheet("color:#ff8a80;font-size:16px;font-weight:bold;");
+        if (m_sideLowLabel)
+            m_sideLowLabel->setStyleSheet("color:#69f0ae;font-size:16px;font-weight:bold;");
+        if (m_sideModeLabel)
+            m_sideModeLabel->setStyleSheet("color:#9aa0a6;font-size:10px;");
+        if (m_sideHitRateLabel)
+            m_sideHitRateLabel->setStyleSheet("color:#82b1ff;font-size:14px;font-weight:bold;");
     } else {
         m_chart->setBackgroundBrush(QBrush(QColor(255, 255, 255)));
         m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(248, 249, 250)));
@@ -1200,17 +1251,50 @@ void ChartWindow::applyChartTheme()
         if (m_axisX) {
             m_axisX->setLabelsColor(QColor(80, 80, 80));
             m_axisX->setGridLineColor(QColor(230, 230, 230));
+            m_axisX->setTitleBrush(QBrush(QColor(80, 80, 80)));
         }
         if (m_axisY) {
             m_axisY->setLabelsColor(QColor(80, 80, 80));
             m_axisY->setGridLineColor(QColor(230, 230, 230));
+            m_axisY->setTitleBrush(QBrush(QColor(80, 80, 80)));
         }
         if (m_sidePanel)
             m_sidePanel->setStyleSheet(
                 "QFrame{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                "stop:0 #ffffff, stop:1 #f0f3f7);border:1px solid #d8dee6;border-radius:8px;}");
+                "stop:0 #ffffff, stop:1 #f0f3f7);border:1px solid #d8dee6;border-radius:8px;}"
+                "QLabel{color:#5c6b77;}");
         setStyleSheet("background:#f5f6f8;");
+
+        setSolid(m_series, QColor(0, 82, 217), 2);
+        setSolid(m_ma5Series, QColor(230, 126, 34), 2);
+        setSolid(m_ma20Series, QColor(155, 89, 182), 2);
+        setDot(m_yesterdaySeries, QColor(120, 120, 120), 1);
+        setDash(m_forecastSeries, QColor(231, 76, 60), 2);      // 预测高：红虚线
+        setDash(m_forecastLowSeries, QColor(39, 174, 96), 2);   // 预测低：绿虚线
+
+        if (m_currentSeries) {
+            m_currentSeries->setColor(QColor(255, 160, 160));
+            m_currentSeries->setBorderColor(QColor(220, 80, 80));
+        }
+        if (m_sideCurrentLabel)
+            m_sideCurrentLabel->setStyleSheet("color:#212529;font-size:16px;font-weight:bold;");
+        if (m_sidePredictLabel)
+            m_sidePredictLabel->setStyleSheet("color:#e74c3c;font-size:16px;font-weight:bold;");
+        if (m_sideHighLabel)
+            m_sideHighLabel->setStyleSheet("color:#e74c3c;font-size:16px;font-weight:bold;");
+        if (m_sideLowLabel)
+            m_sideLowLabel->setStyleSheet("color:#27ae60;font-size:16px;font-weight:bold;");
+        if (m_sideModeLabel)
+            m_sideModeLabel->setStyleSheet("color:#888;font-size:10px;");
+        if (m_sideHitRateLabel)
+            m_sideHitRateLabel->setStyleSheet("color:#0052d9;font-size:14px;font-weight:bold;");
     }
+
+    if (m_chart->legend()) {
+        m_chart->legend()->setLabelColor(dark ? QColor(220, 220, 220) : QColor(60, 60, 60));
+        m_chart->legend()->setBackgroundVisible(false);
+    }
+
     const bool showMa = AppSettings::instance().showMovingAverage() && isIntradayMode();
     if (m_ma5Series) m_ma5Series->setVisible(showMa);
     if (m_ma20Series) m_ma20Series->setVisible(showMa);
