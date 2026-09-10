@@ -84,6 +84,8 @@ public:
     void setDcaNote(const QString& note);
     QString dcaLastNotifiedDate() const; // yyyy-MM-dd
     void setDcaLastNotifiedDate(const QString& isoDate);
+    QString dcaLastExecutedDate() const;
+    void setDcaLastExecutedDate(const QString& isoDate);
 
     bool proxyEnabled() const;
     void setProxyEnabled(bool on);
@@ -158,6 +160,7 @@ private:
     int m_dcaDayOfMonth = 0;
     QString m_dcaNote;
     QString m_dcaLastNotifiedDate;
+    QString m_dcaLastExecutedDate;
     bool m_proxyEnabled = false;
     QString m_proxyHost;
     int m_proxyPort = 7890;

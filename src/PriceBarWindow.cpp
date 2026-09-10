@@ -189,6 +189,14 @@ void PriceBarWindow::setupTray()
     });
     menu->addAction(tr("分时曲线"), this, &PriceBarWindow::onChartClicked);
     menu->addAction(tr("今日摘要"), this, [this]() { showDailyReport(true); });
+    menu->addAction(tr("标记定投已执行"), this, [this]() {
+        const QString today = QDate::currentDate().toString(Qt::ISODate);
+        AppSettings::instance().setDcaLastExecutedDate(today);
+        AppSettings::instance().save();
+        if (m_trayIcon)
+            m_trayIcon->showMessage(tr("定投"), tr("已记录今日定投执行"),
+                                    QSystemTrayIcon::Information, 3000);
+    });
     menu->addAction(tr("关于"), this, &PriceBarWindow::showAbout);
     menu->addAction(tr("检查更新"), this, [this]() {
         auto* c = new UpdateChecker(this);
@@ -644,10 +652,12 @@ void PriceBarWindow::checkDcaReminder()
         return;
 
     const QString note = AppSettings::instance().dcaNote().trimmed();
-    const QString body = note.isEmpty()
+    QString body = note.isEmpty()
         ? tr("今天是定投日（每月 %1 日），记得买入积存金。").arg(day)
         : tr("今天是定投日（每月 %1 日）\n%2").arg(day).arg(note);
 
+    if (AppSettings::instance().dcaLastExecutedDate() == iso)
+        body += tr("\n（今日已标记执行）");
     m_trayIcon->showMessage(tr("定投提醒"), body, QSystemTrayIcon::Information, 8000);
     if (AppSettings::instance().alertSound())
         QApplication::beep();

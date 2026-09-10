@@ -12,92 +12,110 @@ bool ForecastTracker::isHit(double predicted, double actual) const
 {
     if (predicted <= 0.0 || actual <= 0.0)
         return false;
-    const double tol = qMax(0.25, predicted * 0.0004);
+    const double tol = qMax(0.30, predicted * 0.0005);
     return qAbs(actual - predicted) <= tol;
 }
 
-double ForecastTracker::priceNear(const QVector<QPair<QDateTime, double>>& pts,
-                                  const QDateTime& t, double fallback) const
+void ForecastTracker::recordDayRange(const QDateTime& madeAt, int horizonSec,
+                                     double predHigh, double predLow,
+                                     const QString& mode)
 {
-    if (pts.isEmpty())
-        return fallback;
-    int best = -1;
-    qint64 bestDist = 0;
-    const qint64 target = t.toSecsSinceEpoch();
-    for (int i = 0; i < pts.size(); ++i) {
-        const qint64 d = qAbs(pts.at(i).first.toSecsSinceEpoch() - target);
-        if (best < 0 || d < bestDist) {
-            best = i;
-            bestDist = d;
-        }
+    if (predHigh <= 0.0 || predLow <= 0.0 || predHigh < predLow || horizonSec <= 0)
+        return;
+    if (!m_pendingRanges.isEmpty()) {
+        const auto& last = m_pendingRanges.last();
+        if (last.madeAt.isValid() && last.madeAt.secsTo(madeAt) < 60)
+            return;
     }
-    // 到期点前后 90 秒内才采信历史点，否则用兜底现价
-    if (best >= 0 && bestDist <= 90)
-        return pts.at(best).second;
-    return fallback;
+    PendingRange p;
+    p.madeAt = madeAt;
+    p.matureAt = madeAt.addSecs(horizonSec);
+    p.predHigh = predHigh;
+    p.predLow = predLow;
+    p.mode = mode;
+    m_pendingRanges.append(p);
+    while (m_pendingRanges.size() > 100)
+        m_pendingRanges.removeFirst();
 }
 
 void ForecastTracker::recordPrediction(const QDateTime& madeAt, int horizonSec,
                                        double predictedPrice, double basePrice,
                                        const QString& mode)
 {
-    if (predictedPrice <= 0.0 || horizonSec <= 0)
+    Q_UNUSED(basePrice);
+    // 旧接口：无法拆高低，记为对称窄区间
+    if (predictedPrice <= 0.0)
         return;
-
-    if (!m_pending.isEmpty()) {
-        const auto& last = m_pending.last();
-        if (last.madeAt.isValid() && last.madeAt.secsTo(madeAt) < 30)
-            return;
-    }
-
-    Pending p;
-    p.madeAt = madeAt;
-    p.matureAt = madeAt.addSecs(horizonSec);
-    p.predictedPrice = predictedPrice;
-    p.basePrice = basePrice;
-    p.mode = mode;
-    m_pending.append(p);
-
-    while (m_pending.size() > 200)
-        m_pending.removeFirst();
+    recordDayRange(madeAt, horizonSec, predictedPrice, predictedPrice * 0.999, mode);
 }
 
 void ForecastTracker::evaluateWithActual(double actualPrice,
                                          const QVector<QPair<QDateTime, double>>& recentPoints,
                                          const QDateTime& now)
 {
-    if (actualPrice <= 0.0 || m_pending.isEmpty())
+    Q_UNUSED(recentPoints);
+    if (actualPrice <= 0.0)
+        return;
+    // 单点路径：用现价近似今高/低不准确，优先等 evaluateDayRange
+    double h = actualPrice, l = actualPrice;
+    for (const auto& pt : recentPoints) {
+        h = qMax(h, pt.second);
+        l = qMin(l, pt.second);
+    }
+    evaluateDayRange(h, l, now);
+}
+
+void ForecastTracker::evaluateDayRange(double actualHigh, double actualLow,
+                                       const QDateTime& now)
+{
+    if (actualHigh <= 0.0 || actualLow <= 0.0 || m_pendingRanges.isEmpty())
         return;
 
-    QVector<Pending> remain;
-    remain.reserve(m_pending.size());
-    for (const auto& p : m_pending) {
+    QVector<PendingRange> remain;
+    for (const auto& p : m_pendingRanges) {
         if (now < p.matureAt) {
             remain.append(p);
             continue;
         }
-        const double actual = priceNear(recentPoints, p.matureAt, actualPrice);
-        m_absErrorSum += qAbs(actual - p.predictedPrice);
-        if (isHit(p.predictedPrice, actual))
-            ++m_hits;
+        m_absErrorSum += qAbs(actualHigh - p.predHigh) + qAbs(actualLow - p.predLow);
+        m_errCount += 2;
+        if (isHit(p.predHigh, actualHigh))
+            ++m_highHits;
         else
-            ++m_misses;
+            ++m_highMisses;
+        if (isHit(p.predLow, actualLow))
+            ++m_lowHits;
+        else
+            ++m_lowMisses;
     }
-    m_pending.swap(remain);
+    m_pendingRanges.swap(remain);
 }
 
 double ForecastTracker::hitRatePercent() const
 {
-    const int n = m_hits + m_misses;
+    const int n = m_highHits + m_highMisses + m_lowHits + m_lowMisses;
     if (n <= 0)
         return 0.0;
-    return 100.0 * static_cast<double>(m_hits) / static_cast<double>(n);
+    return 100.0 * static_cast<double>(m_highHits + m_lowHits) / static_cast<double>(n);
+}
+
+double ForecastTracker::highHitRatePercent() const
+{
+    const int n = m_highHits + m_highMisses;
+    if (n <= 0) return 0.0;
+    return 100.0 * m_highHits / static_cast<double>(n);
+}
+
+double ForecastTracker::lowHitRatePercent() const
+{
+    const int n = m_lowHits + m_lowMisses;
+    if (n <= 0) return 0.0;
+    return 100.0 * m_lowHits / static_cast<double>(n);
 }
 
 double ForecastTracker::meanAbsError() const
 {
-    const int n = m_hits + m_misses;
-    if (n <= 0)
+    if (m_errCount <= 0)
         return 0.0;
-    return m_absErrorSum / static_cast<double>(n);
+    return m_absErrorSum / static_cast<double>(m_errCount);
 }

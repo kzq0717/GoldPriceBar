@@ -142,6 +142,10 @@ void AppSettings::setDcaNote(const QString& note)
 }
 
 QString AppSettings::dcaLastNotifiedDate() const { return m_dcaLastNotifiedDate; }
+QString AppSettings::dcaLastExecutedDate() const { return m_dcaLastExecutedDate; }
+void AppSettings::setDcaLastExecutedDate(const QString& iso)
+{ m_dcaLastExecutedDate = iso; }
+
 void AppSettings::setDcaLastNotifiedDate(const QString& isoDate)
 {
     if (m_dcaLastNotifiedDate != isoDate) {
@@ -252,6 +256,7 @@ void AppSettings::load()
     m_dcaDayOfMonth = s.value("dcaDayOfMonth", 0).toInt();
     m_dcaNote = s.value("dcaNote", "").toString();
     m_dcaLastNotifiedDate = s.value("dcaLastNotifiedDate", "").toString();
+    m_dcaLastExecutedDate = s.value("dcaLastExecutedDate", "").toString();
     m_proxyEnabled = s.value("proxyEnabled", false).toBool();
     m_proxyHost = s.value("proxyHost", "").toString();
     m_proxyPort = s.value("proxyPort", 7890).toInt();
@@ -297,6 +302,7 @@ void AppSettings::save()
     s.setValue("dcaDayOfMonth", m_dcaDayOfMonth);
     s.setValue("dcaNote", m_dcaNote);
     s.setValue("dcaLastNotifiedDate", m_dcaLastNotifiedDate);
+    s.setValue("dcaLastExecutedDate", m_dcaLastExecutedDate);
     s.setValue("proxyEnabled", m_proxyEnabled);
     s.setValue("proxyHost", m_proxyHost);
     s.setValue("proxyPort", m_proxyPort);

@@ -4,51 +4,67 @@
 #include <QDateTime>
 #include <QVector>
 #include <QPair>
+#include <QString>
 
 /**
- * @brief 记录预测并在到期后与真实价格比对，统计命中率
- * 命中：|实际 − 预测| <= max(0.25元, 预测价×0.04%)
- * 结算时优先使用「到期时刻附近」的历史点，避免用更晚的现价误判
+ * 日高低预测命中统计：
+ * - 到期后用「当日已实现最高/最低」与预测高/低比对
+ * - 命中容差：max(0.3元, 预测价×0.05%)
  */
 class ForecastTracker
 {
 public:
     static ForecastTracker& instance();
 
-    struct Pending {
+    struct PendingRange {
         QDateTime madeAt;
         QDateTime matureAt;
-        double predictedPrice = 0.0;
-        double basePrice = 0.0;
+        double predHigh = 0.0;
+        double predLow = 0.0;
         QString mode;
     };
 
+    void recordDayRange(const QDateTime& madeAt, int horizonSec,
+                        double predHigh, double predLow, const QString& mode);
+
+    /** 兼容旧调用：当作中点预测（尽量少用） */
     void recordPrediction(const QDateTime& madeAt, int horizonSec,
                           double predictedPrice, double basePrice,
                           const QString& mode);
 
-    /** 用分时点结算；actualPrice 作兜底 */
     void evaluateWithActual(double actualPrice,
                             const QVector<QPair<QDateTime, double>>& recentPoints,
                             const QDateTime& now = QDateTime::currentDateTime());
 
-    int totalEvaluated() const { return m_hits + m_misses; }
-    int hits() const { return m_hits; }
-    int misses() const { return m_misses; }
+    /** 用今高/今低结算区间预测 */
+    void evaluateDayRange(double actualHigh, double actualLow,
+                          const QDateTime& now = QDateTime::currentDateTime());
+
+    int totalEvaluated() const { return m_highHits + m_highMisses + m_lowHits + m_lowMisses; }
+    int hits() const { return m_highHits + m_lowHits; }
+    int misses() const { return m_highMisses + m_lowMisses; }
     double hitRatePercent() const;
-    double meanAbsError() const; // 平均绝对误差（元）
-    int pendingCount() const { return m_pending.size(); }
+
+    int highHits() const { return m_highHits; }
+    int highMisses() const { return m_highMisses; }
+    int lowHits() const { return m_lowHits; }
+    int lowMisses() const { return m_lowMisses; }
+    double highHitRatePercent() const;
+    double lowHitRatePercent() const;
+    double meanAbsError() const;
+    int pendingCount() const { return m_pendingRanges.size(); }
 
 private:
     ForecastTracker() = default;
     bool isHit(double predicted, double actual) const;
-    double priceNear(const QVector<QPair<QDateTime, double>>& pts,
-                     const QDateTime& t, double fallback) const;
 
-    QVector<Pending> m_pending;
-    int m_hits = 0;
-    int m_misses = 0;
+    QVector<PendingRange> m_pendingRanges;
+    int m_highHits = 0;
+    int m_highMisses = 0;
+    int m_lowHits = 0;
+    int m_lowMisses = 0;
     double m_absErrorSum = 0.0;
+    int m_errCount = 0;
 };
 
 #endif // FORECASTTRACKER_H

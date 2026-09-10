@@ -344,6 +344,10 @@ bool PriceService::applyPrice(double price, double change, const QString& name, 
     m_consecutiveFail = 0;
     m_lastSuccessMs = QDateTime::currentMSecsSinceEpoch();
     m_backupIndex = 0;
+    // 恢复用户设定刷新周期
+    if (m_timer && m_intervalMs > 0 && m_timer->interval() != m_intervalMs)
+        m_timer->setInterval(m_intervalMs);
+
 
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
     ExtremeDatabase::instance().upsertDailyBar(
@@ -381,6 +385,13 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
             m_consecutiveFail = 0;
         }
         emit fetchFailed(tr("数据源失败（积存金无可用备用国际源）"));
+        // 连续失败时自适应拉长刷新，减轻接口压力
+        if (m_timer && m_consecutiveFail >= 3) {
+            const int backoff = qMin(60000, m_intervalMs * (1 + m_consecutiveFail / 2));
+            if (m_timer->interval() < backoff)
+                m_timer->setInterval(backoff);
+        }
+
     };
 
     if (reply->error() != QNetworkReply::NoError) {

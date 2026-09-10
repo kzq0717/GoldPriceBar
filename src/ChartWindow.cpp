@@ -371,8 +371,15 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
   double high = 0.0, low = 0.0;
   HistoryCache::instance().todayHigh(high);
   HistoryCache::instance().todayLow(low);
-  if (price > 0.0)
-    ForecastTracker::instance().evaluateWithActual(price, m_plotPoints);
+  if (price > 0.0) {
+    double ah = 0.0, al = 0.0;
+    HistoryCache::instance().todayHigh(ah);
+    HistoryCache::instance().todayLow(al);
+    if (ah > 0.0 && al > 0.0)
+      ForecastTracker::instance().evaluateDayRange(ah, al);
+    else
+      ForecastTracker::instance().evaluateWithActual(price, m_plotPoints);
+  }
 
   updateSidePanelValues(
       price > 0 ? price
@@ -650,10 +657,8 @@ void ChartWindow::updateForecast() {
   }
 
   // 命中统计：登记「预测高」与「预测低」的均值，到期用今高/今低检验
-  const double mid = 0.5 * (predHigh + predLow);
-  ForecastTracker::instance().recordPrediction(
-      QDateTime::currentDateTime(), 3600, mid, m_plotPoints.last().second,
-      m_forecastModeTag);
+  ForecastTracker::instance().recordDayRange(
+      QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
 
   if (m_axisY) {
     qreal yMin = m_axisY->min();
@@ -722,10 +727,10 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
       m_sideHitRateLabel->setText(tr("--%"));
     } else {
       m_sideHitRateLabel->setText(
-          tr("%1% (%2/%3)\nMAE %4")
-              .arg(ft.hitRatePercent(), 0, 'f', 1)
-              .arg(ft.hits())
-              .arg(n)
+          tr("总%1% 高%2% 低%3%\nMAE %4")
+              .arg(ft.hitRatePercent(), 0, 'f', 0)
+              .arg(ft.highHitRatePercent(), 0, 'f', 0)
+              .arg(ft.lowHitRatePercent(), 0, 'f', 0)
               .arg(ft.meanAbsError(), 0, 'f', 2));
     }
   }
