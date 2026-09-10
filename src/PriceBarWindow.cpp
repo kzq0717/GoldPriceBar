@@ -27,6 +27,7 @@
 #include <QDesktopServices>
 #include <QDateTime>
 #include <QDate>
+#include <QtGlobal>
 
 PriceBarWindow::PriceBarWindow(QWidget* parent)
     : QWidget(parent)
@@ -61,6 +62,14 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
             this, &PriceBarWindow::onSettingsChanged);
 
     m_priceService->start();
+
+    if (!m_dcaTimer) {
+        m_dcaTimer = new QTimer(this);
+        m_dcaTimer->setInterval(60 * 1000);
+        connect(m_dcaTimer, &QTimer::timeout, this, &PriceBarWindow::checkDcaReminder);
+        m_dcaTimer->start();
+        QTimer::singleShot(5000, this, &PriceBarWindow::checkDcaReminder);
+    }
 
     // 初始位置：屏幕右上角附近
     if (QScreen* screen = QApplication::primaryScreen()) {
@@ -113,7 +122,13 @@ void PriceBarWindow::setupUi()
 
     m_secondaryNam = new QNetworkAccessManager(this);
     m_secondaryTimer = new QTimer(this);
-    m_secondaryTimer->setInterval(15000);
+    // 与主行情同一刷新周期（不再写死 15s）
+    {
+        int secMs = AppSettings::instance().refreshIntervalMs();
+        if (secMs < 1000)
+            secMs = 1000;
+        m_secondaryTimer->setInterval(secMs);
+    }
     connect(m_secondaryTimer, &QTimer::timeout, this, &PriceBarWindow::onSecondaryTimer);
 
     m_chartButton = new QToolButton(this);
@@ -255,7 +270,17 @@ void PriceBarWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
 void PriceBarWindow::onSettingsChanged()
 {
     applyOpacity();
-    m_priceService->setInterval(AppSettings::instance().refreshIntervalMs());
+    const int ms = AppSettings::instance().refreshIntervalMs();
+    m_priceService->setInterval(ms);
+    // 对照价与主行情使用相同刷新周期
+    if (m_secondaryTimer) {
+        const int secMs = qMax(1000, ms);
+        m_secondaryTimer->setInterval(secMs);
+        if (AppSettings::instance().showSecondaryPrice() && m_secondaryTimer->isActive()) {
+            // 立即按新周期拉一次，避免仍按旧间隔等待
+            onSecondaryTimer();
+        }
+    }
     // 切换数据源后清空当日缓存，避免浙商与伦敦金价格混在同一曲线
     HistoryCache::instance().clear();
     m_priceService->forceRefresh();
@@ -263,14 +288,7 @@ void PriceBarWindow::onSettingsChanged()
         updateAlertIndicator(m_lastPrice);
     updateSecondaryVisibility();
     setupHotkey();
-
-    m_dcaTimer = new QTimer(this);
-    m_dcaTimer->setInterval(60 * 1000); // 每分钟检查定投日
-    connect(m_dcaTimer, &QTimer::timeout, this, &PriceBarWindow::checkDcaReminder);
-    m_dcaTimer->start();
-    QTimer::singleShot(5000, this, &PriceBarWindow::checkDcaReminder);
     applyTheme();
-    setupHotkey();
 }
 
 void PriceBarWindow::mousePressEvent(QMouseEvent* event)
@@ -383,9 +401,15 @@ void PriceBarWindow::updateSecondaryVisibility()
         return;
     if (on) {
         m_secondaryLabel->show();
-        if (m_secondaryTimer && !m_secondaryTimer->isActive()) {
-            onSecondaryTimer();
-            m_secondaryTimer->start();
+        if (m_secondaryTimer) {
+            int secMs = AppSettings::instance().refreshIntervalMs();
+            if (secMs < 1000)
+                secMs = 1000;
+            m_secondaryTimer->setInterval(secMs);
+            if (!m_secondaryTimer->isActive()) {
+                onSecondaryTimer();
+                m_secondaryTimer->start();
+            }
         }
         setMinimumWidth(420);
     } else {
