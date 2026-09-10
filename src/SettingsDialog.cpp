@@ -132,6 +132,48 @@ void SettingsDialog::setupUi()
     m_dcaNoteEdit->setPlaceholderText(tr("可选备注，如：每月定投 500 元"));
     form->addRow(tr("定投备注："), m_dcaNoteEdit);
 
+    m_smartMaCheck = new QCheckBox(tr("智能预警：跌破 MA5日 或 显著偏离均线"), this);
+    form->addRow("", m_smartMaCheck);
+    m_smartPctCheck = new QCheckBox(tr("智能预警：近20日价格分位过高/过低"), this);
+    form->addRow("", m_smartPctCheck);
+    auto* pctLay = new QHBoxLayout;
+    m_pctLowSpin = new QSpinBox(this);
+    m_pctLowSpin->setRange(1, 49);
+    m_pctHighSpin = new QSpinBox(this);
+    m_pctHighSpin->setRange(51, 99);
+    pctLay->addWidget(new QLabel(tr("低分位≤"), this));
+    pctLay->addWidget(m_pctLowSpin);
+    pctLay->addWidget(new QLabel(tr("%  高分位≥"), this));
+    pctLay->addWidget(m_pctHighSpin);
+    pctLay->addWidget(new QLabel(tr("%"), this));
+    pctLay->addStretch();
+    form->addRow(tr("分位阈值："), pctLay);
+
+    m_posGramsSpin = new QDoubleSpinBox(this);
+    m_posGramsSpin->setRange(0, 99999);
+    m_posGramsSpin->setDecimals(3);
+    m_posGramsSpin->setSuffix(tr(" 克"));
+    form->addRow(tr("持仓克数："), m_posGramsSpin);
+    m_posCostSpin = new QDoubleSpinBox(this);
+    m_posCostSpin->setRange(0, 99999);
+    m_posCostSpin->setDecimals(2);
+    m_posCostSpin->setSuffix(tr(" 元/克"));
+    form->addRow(tr("持仓成本："), m_posCostSpin);
+
+    m_premiumCheck = new QCheckBox(tr("溢价监测：主价/对照价比值异常偏离"), this);
+    form->addRow("", m_premiumCheck);
+    m_premiumPctSpin = new QDoubleSpinBox(this);
+    m_premiumPctSpin->setRange(0.1, 50);
+    m_premiumPctSpin->setDecimals(1);
+    m_premiumPctSpin->setSuffix(tr(" %"));
+    form->addRow(tr("溢价偏离阈值："), m_premiumPctSpin);
+
+    m_dailyReportCheck = new QCheckBox(tr("每日收盘摘要（托盘）"), this);
+    form->addRow("", m_dailyReportCheck);
+    m_dailyReportTimeEdit = new QTimeEdit(this);
+    m_dailyReportTimeEdit->setDisplayFormat("HH:mm");
+    form->addRow(tr("摘要时刻："), m_dailyReportTimeEdit);
+
     m_proxyCheck = new QCheckBox(tr("启用 HTTP 代理（公司网络/科学上网）"), this);
     form->addRow("", m_proxyCheck);
     auto* proxyLay = new QHBoxLayout;
@@ -295,6 +337,16 @@ void SettingsDialog::loadFromSettings()
     m_proxyCheck->setChecked(settings.proxyEnabled());
     m_proxyHostEdit->setText(settings.proxyHost());
     m_proxyPortSpin->setValue(settings.proxyPort());
+    m_smartMaCheck->setChecked(settings.smartAlertMa());
+    m_smartPctCheck->setChecked(settings.smartAlertPercentile());
+    m_pctLowSpin->setValue(settings.percentileLow());
+    m_pctHighSpin->setValue(settings.percentileHigh());
+    m_posGramsSpin->setValue(settings.positionGrams());
+    m_posCostSpin->setValue(settings.positionCost());
+    m_premiumCheck->setChecked(settings.premiumAlertEnabled());
+    m_premiumPctSpin->setValue(settings.premiumThresholdPct());
+    m_dailyReportCheck->setChecked(settings.dailyReportEnabled());
+    m_dailyReportTimeEdit->setTime(settings.dailyReportTime());
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
@@ -349,6 +401,16 @@ void SettingsDialog::onAccept()
     settings.setProxyEnabled(m_proxyCheck->isChecked());
     settings.setProxyHost(m_proxyHostEdit->text().trimmed());
     settings.setProxyPort(m_proxyPortSpin->value());
+    settings.setSmartAlertMa(m_smartMaCheck->isChecked());
+    settings.setSmartAlertPercentile(m_smartPctCheck->isChecked());
+    settings.setPercentileLow(m_pctLowSpin->value());
+    settings.setPercentileHigh(m_pctHighSpin->value());
+    settings.setPositionGrams(m_posGramsSpin->value());
+    settings.setPositionCost(m_posCostSpin->value());
+    settings.setPremiumAlertEnabled(m_premiumCheck->isChecked());
+    settings.setPremiumThresholdPct(m_premiumPctSpin->value());
+    settings.setDailyReportEnabled(m_dailyReportCheck->isChecked());
+    settings.setDailyReportTime(m_dailyReportTimeEdit->time());
     settings.save();
 
     if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())

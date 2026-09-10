@@ -177,6 +177,52 @@ void AppSettings::applyNetworkProxy() const
     }
 }
 
+
+bool AppSettings::smartAlertMa() const { return m_smartAlertMa; }
+void AppSettings::setSmartAlertMa(bool on)
+{ if (m_smartAlertMa != on) { m_smartAlertMa = on; emit settingsChanged(); } }
+
+bool AppSettings::smartAlertPercentile() const { return m_smartAlertPercentile; }
+void AppSettings::setSmartAlertPercentile(bool on)
+{ if (m_smartAlertPercentile != on) { m_smartAlertPercentile = on; emit settingsChanged(); } }
+
+int AppSettings::percentileLow() const { return m_percentileLow; }
+void AppSettings::setPercentileLow(int v)
+{ v = qBound(1, v, 49); if (m_percentileLow != v) { m_percentileLow = v; emit settingsChanged(); } }
+
+int AppSettings::percentileHigh() const { return m_percentileHigh; }
+void AppSettings::setPercentileHigh(int v)
+{ v = qBound(51, v, 99); if (m_percentileHigh != v) { m_percentileHigh = v; emit settingsChanged(); } }
+
+double AppSettings::positionGrams() const { return m_positionGrams; }
+void AppSettings::setPositionGrams(double g)
+{ g = qMax(0.0, g); if (!qFuzzyCompare(m_positionGrams, g)) { m_positionGrams = g; emit settingsChanged(); } }
+
+double AppSettings::positionCost() const { return m_positionCost; }
+void AppSettings::setPositionCost(double c)
+{ c = qMax(0.0, c); if (!qFuzzyCompare(m_positionCost, c)) { m_positionCost = c; emit settingsChanged(); } }
+
+bool AppSettings::premiumAlertEnabled() const { return m_premiumAlertEnabled; }
+void AppSettings::setPremiumAlertEnabled(bool on)
+{ if (m_premiumAlertEnabled != on) { m_premiumAlertEnabled = on; emit settingsChanged(); } }
+
+double AppSettings::premiumThresholdPct() const { return m_premiumThresholdPct; }
+void AppSettings::setPremiumThresholdPct(double pct)
+{ pct = qBound(0.1, pct, 50.0); if (!qFuzzyCompare(m_premiumThresholdPct, pct)) { m_premiumThresholdPct = pct; emit settingsChanged(); } }
+
+bool AppSettings::dailyReportEnabled() const { return m_dailyReportEnabled; }
+void AppSettings::setDailyReportEnabled(bool on)
+{ if (m_dailyReportEnabled != on) { m_dailyReportEnabled = on; emit settingsChanged(); } }
+
+QTime AppSettings::dailyReportTime() const { return m_dailyReportTime; }
+void AppSettings::setDailyReportTime(const QTime& tm)
+{ if (tm.isValid() && m_dailyReportTime != tm) { m_dailyReportTime = tm; emit settingsChanged(); } }
+
+QString AppSettings::dailyReportLastDate() const { return m_dailyReportLastDate; }
+void AppSettings::setDailyReportLastDate(const QString& iso)
+{ m_dailyReportLastDate = iso; }
+
+
 void AppSettings::load()
 {
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
@@ -209,6 +255,18 @@ void AppSettings::load()
     m_proxyEnabled = s.value("proxyEnabled", false).toBool();
     m_proxyHost = s.value("proxyHost", "").toString();
     m_proxyPort = s.value("proxyPort", 7890).toInt();
+    m_smartAlertMa = s.value("smartAlertMa", true).toBool();
+    m_smartAlertPercentile = s.value("smartAlertPercentile", true).toBool();
+    m_percentileLow = s.value("percentileLow", 20).toInt();
+    m_percentileHigh = s.value("percentileHigh", 80).toInt();
+    m_positionGrams = s.value("positionGrams", 0.0).toDouble();
+    m_positionCost = s.value("positionCost", 0.0).toDouble();
+    m_premiumAlertEnabled = s.value("premiumAlertEnabled", true).toBool();
+    m_premiumThresholdPct = s.value("premiumThresholdPct", 2.0).toDouble();
+    m_dailyReportEnabled = s.value("dailyReportEnabled", true).toBool();
+    m_dailyReportTime = QTime::fromString(s.value("dailyReportTime", "15:05").toString(), "HH:mm");
+    if (!m_dailyReportTime.isValid()) m_dailyReportTime = QTime(15, 5);
+    m_dailyReportLastDate = s.value("dailyReportLastDate", "").toString();
     applyNetworkProxy();
 }
 
@@ -242,6 +300,17 @@ void AppSettings::save()
     s.setValue("proxyEnabled", m_proxyEnabled);
     s.setValue("proxyHost", m_proxyHost);
     s.setValue("proxyPort", m_proxyPort);
+    s.setValue("smartAlertMa", m_smartAlertMa);
+    s.setValue("smartAlertPercentile", m_smartAlertPercentile);
+    s.setValue("percentileLow", m_percentileLow);
+    s.setValue("percentileHigh", m_percentileHigh);
+    s.setValue("positionGrams", m_positionGrams);
+    s.setValue("positionCost", m_positionCost);
+    s.setValue("premiumAlertEnabled", m_premiumAlertEnabled);
+    s.setValue("premiumThresholdPct", m_premiumThresholdPct);
+    s.setValue("dailyReportEnabled", m_dailyReportEnabled);
+    s.setValue("dailyReportTime", m_dailyReportTime.toString("HH:mm"));
+    s.setValue("dailyReportLastDate", m_dailyReportLastDate);
     s.sync();
     applyNetworkProxy();
 }

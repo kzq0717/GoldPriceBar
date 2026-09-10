@@ -66,7 +66,18 @@ private:
     QCheckBox* m_proxyCheck = nullptr;
     QLineEdit* m_proxyHostEdit = nullptr;
     QSpinBox* m_proxyPortSpin = nullptr;
+    QCheckBox* m_smartMaCheck = nullptr;
+    QCheckBox* m_smartPctCheck = nullptr;
+    QSpinBox* m_pctLowSpin = nullptr;
+    QSpinBox* m_pctHighSpin = nullptr;
+    QDoubleSpinBox* m_posGramsSpin = nullptr;
+    QDoubleSpinBox* m_posCostSpin = nullptr;
+    QCheckBox* m_premiumCheck = nullptr;
+    QDoubleSpinBox* m_premiumPctSpin = nullptr;
+    QCheckBox* m_dailyReportCheck = nullptr;
+    QTimeEdit* m_dailyReportTimeEdit = nullptr;
 };
+
 
 
 

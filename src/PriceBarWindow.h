@@ -2,6 +2,8 @@
 #define PRICEBARWINDOW_H
 
 #include <QWidget>
+#include <QVector>
+#include <QDateTime>
 #include <QPoint>
 #include <QSystemTrayIcon>
 #include <QDateTime>
@@ -53,6 +55,15 @@ private:
     void updateAlertIndicator(double price);
     void maybeTrayNotify(AlertKind kind, double price);
     void updateSecondaryVisibility();
+    void updatePnLDisplay(double price);
+    void evaluateSmartAlerts(double price);
+    void evaluatePremium(double primaryPrice);
+    void checkDailyReport();
+    void showDailyReport(bool force = false);
+    QString buildDailyReportText() const;
+    double computeMa5() const;
+    double computePercentile(double price) const;
+
     void applyTheme();
     void showAbout();
     void toggleVisible();
@@ -64,6 +75,8 @@ private:
     QLabel* m_changeLabel = nullptr;
     QLabel* m_highLabel = nullptr;
     QLabel* m_secondaryLabel = nullptr; // 对照价（如伦敦金）
+    QLabel* m_pnlLabel = nullptr; // 持仓浮盈亏
+
     QLabel* m_alertDot = nullptr;
     QToolButton* m_chartButton = nullptr;
     QToolButton* m_settingsButton = nullptr;
@@ -84,6 +97,12 @@ private:
     bool m_alertLit = false;
     QDateTime m_lastHighNotify;
     QDateTime m_lastLowNotify;
+    QDateTime m_lastSmartNotify;
+    QDateTime m_lastPremiumNotify;
+    double m_lastSecondaryPrice = 0.0;
+    QVector<double> m_premiumRatios; // 近窗主/对照比值
+    QTimer* m_dailyReportTimer = nullptr;
+
     GlobalHotkey* m_hotkey = nullptr;
     QTimer* m_dcaTimer = nullptr;
 };

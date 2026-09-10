@@ -6,6 +6,7 @@
 #include "HistoryCache.h"
 #include "UpdateChecker.h"
 #include "GlobalHotkey.h"
+#include "ExtremeDatabase.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -28,6 +29,8 @@
 #include <QDateTime>
 #include <QDate>
 #include <QtGlobal>
+#include <QtMath>
+#include <algorithm>
 
 PriceBarWindow::PriceBarWindow(QWidget* parent)
     : QWidget(parent)
@@ -70,6 +73,12 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
         m_dcaTimer->start();
         QTimer::singleShot(5000, this, &PriceBarWindow::checkDcaReminder);
     }
+    if (!m_dailyReportTimer) {
+        m_dailyReportTimer = new QTimer(this);
+        m_dailyReportTimer->setInterval(30 * 1000);
+        connect(m_dailyReportTimer, &QTimer::timeout, this, &PriceBarWindow::checkDailyReport);
+        m_dailyReportTimer->start();
+    }
 
     // 初始位置：屏幕右上角附近
     if (QScreen* screen = QApplication::primaryScreen()) {
@@ -102,6 +111,11 @@ void PriceBarWindow::setupUi()
     m_secondaryLabel->setStyleSheet("color: #9b59b6; font-size: 11px;");
     m_secondaryLabel->setToolTip(tr("对照行情（伦敦金）"));
     m_secondaryLabel->hide();
+
+    m_pnlLabel = new QLabel(this);
+    m_pnlLabel->setStyleSheet("color: #f39c12; font-size: 11px;");
+    m_pnlLabel->setToolTip(tr("本地持仓浮盈亏（设置中填写克数与成本）"));
+    m_pnlLabel->hide();
 
     m_highLabel = new QLabel(tr("高 --.--"), this);
     m_highLabel->setStyleSheet("color: #e74c3c; font-size: 12px;");
@@ -151,6 +165,7 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_priceLabel);
     layout->addWidget(m_changeLabel);
     layout->addWidget(m_secondaryLabel);
+    layout->addWidget(m_pnlLabel);
     layout->addWidget(m_highLabel);
     layout->addWidget(m_alertDot);
     layout->addStretch();
@@ -173,6 +188,7 @@ void PriceBarWindow::setupTray()
         setVisible(!isVisible());
     });
     menu->addAction(tr("分时曲线"), this, &PriceBarWindow::onChartClicked);
+    menu->addAction(tr("今日摘要"), this, [this]() { showDailyReport(true); });
     menu->addAction(tr("关于"), this, &PriceBarWindow::showAbout);
     menu->addAction(tr("检查更新"), this, [this]() {
         auto* c = new UpdateChecker(this);
@@ -226,6 +242,9 @@ void PriceBarWindow::applyOpacity()
 void PriceBarWindow::onPriceUpdated(double price, double change, const QString& sourceName)
 {
     updatePriceDisplay(price, change, sourceName);
+    updatePnLDisplay(price);
+    evaluateSmartAlerts(price);
+    evaluatePremium(price);
 }
 
 void PriceBarWindow::onFetchFailed(const QString& error)
@@ -287,6 +306,8 @@ void PriceBarWindow::onSettingsChanged()
     if (m_lastPrice > 0.0)
         updateAlertIndicator(m_lastPrice);
     updateSecondaryVisibility();
+    if (m_lastPrice > 0.0)
+        updatePnLDisplay(m_lastPrice);
     setupHotkey();
     applyTheme();
 }
@@ -470,6 +491,9 @@ void PriceBarWindow::onSecondaryFinished(QNetworkReply* reply)
                                   : (name.contains(QStringLiteral("浙商")) ? tr("浙") : tr("对照"));
     if (m_secondaryLabel)
         m_secondaryLabel->setText(tr("%1 %2").arg(shortName).arg(price, 0, 'f', 2));
+    m_lastSecondaryPrice = price;
+    if (m_lastPrice > 0.0)
+        evaluatePremium(m_lastPrice);
 }
 
 void PriceBarWindow::onAlertBlinkTick()
@@ -632,3 +656,218 @@ void PriceBarWindow::checkDcaReminder()
     AppSettings::instance().save();
 }
 
+
+
+void PriceBarWindow::updatePnLDisplay(double price)
+{
+    if (!m_pnlLabel)
+        return;
+    const double grams = AppSettings::instance().positionGrams();
+    const double cost = AppSettings::instance().positionCost();
+    if (grams <= 0.0 || cost <= 0.0 || price <= 0.0) {
+        m_pnlLabel->hide();
+        m_pnlLabel->clear();
+        return;
+    }
+    const double pnl = (price - cost) * grams;
+    const double pct = (price - cost) / cost * 100.0;
+    m_pnlLabel->show();
+    const QString color = pnl >= 0 ? QStringLiteral("#2ecc71") : QStringLiteral("#e74c3c");
+    m_pnlLabel->setStyleSheet(QStringLiteral("color:%1;font-size:11px;font-weight:bold;").arg(color));
+    m_pnlLabel->setText(tr("盈 %1 (%2%)")
+                            .arg(pnl, 0, 'f', 1)
+                            .arg(pct, 0, 'f', 2)
+                            .replace(QStringLiteral("盈 -"), QStringLiteral("亏 ")));
+    if (pnl < 0)
+        m_pnlLabel->setText(tr("亏 %1 (%2%)").arg(-pnl, 0, 'f', 1).arg(pct, 0, 'f', 2));
+    else
+        m_pnlLabel->setText(tr("盈 %1 (+%2%)").arg(pnl, 0, 'f', 1).arg(pct, 0, 'f', 2));
+}
+
+double PriceBarWindow::computeMa5() const
+{
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, AppSettings::instance().dataSource() == QStringLiteral("ms") ? QStringLiteral("ms") : (AppSettings::instance().dataSource() == QStringLiteral("gj") ? QStringLiteral("gj") : QStringLiteral("zs")));
+    if (closes.size() < 5)
+        closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+    if (closes.size() < 5)
+        return 0.0;
+    double s = 0.0;
+    for (int i = closes.size() - 5; i < closes.size(); ++i)
+        s += closes.at(i).second;
+    return s / 5.0;
+}
+
+double PriceBarWindow::computePercentile(double price) const
+{
+    QString src = AppSettings::instance().dataSource();
+    if (src == QStringLiteral("xau")) src = QStringLiteral("gj");
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, src);
+    if (closes.size() < 5)
+        closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
+    if (closes.isEmpty() || price <= 0.0)
+        return 50.0;
+    int below = 0;
+    for (const auto& c : closes) {
+        if (c.second < price)
+            ++below;
+    }
+    return 100.0 * static_cast<double>(below) / static_cast<double>(closes.size());
+}
+
+void PriceBarWindow::evaluateSmartAlerts(double price)
+{
+    if (price <= 0.0 || AppSettings::instance().isInQuietHours())
+        return;
+
+    QStringList reasons;
+    if (AppSettings::instance().smartAlertMa()) {
+        const double ma5 = computeMa5();
+        if (ma5 > 0.0) {
+            // 跌破 MA5 超过 0.15% 视为偏弱；站上超过 0.15% 偏强（用 High 样式提示上破）
+            if (price < ma5 * 0.9985)
+                reasons << tr("跌破MA5日(%1)").arg(ma5, 0, 'f', 2);
+            else if (price > ma5 * 1.0015)
+                reasons << tr("站上MA5日(%1)").arg(ma5, 0, 'f', 2);
+        }
+    }
+    if (AppSettings::instance().smartAlertPercentile()) {
+        const double pct = computePercentile(price);
+        const int lo = AppSettings::instance().percentileLow();
+        const int hi = AppSettings::instance().percentileHigh();
+        if (pct <= lo)
+            reasons << tr("近20日分位偏低(%1%)").arg(pct, 0, 'f', 0);
+        else if (pct >= hi)
+            reasons << tr("近20日分位偏高(%1%)").arg(pct, 0, 'f', 0);
+    }
+    if (reasons.isEmpty())
+        return;
+
+    // 冷却：与预警共用 cooldown
+    const int cool = AppSettings::instance().alertCooldownSec();
+    const QDateTime now = QDateTime::currentDateTime();
+    if (m_lastSmartNotify.isValid() && m_lastSmartNotify.secsTo(now) < cool)
+        return;
+    m_lastSmartNotify = now;
+
+    // 闪点：分位高/站上均线偏红，其余偏绿
+    const bool bullish = reasons.join(QString()).contains(QStringLiteral("站上"))
+                         || reasons.join(QString()).contains(QStringLiteral("偏高"));
+    m_alertKind = bullish ? AlertKind::High : AlertKind::Low;
+    if (m_alertDot) {
+        m_alertDot->show();
+        if (!m_alertBlinkTimer->isActive())
+            m_alertBlinkTimer->start();
+    }
+    if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
+        m_trayIcon->showMessage(tr("智能预警"), reasons.join(QStringLiteral("；")),
+                                bullish ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information,
+                                5000);
+    }
+    if (AppSettings::instance().alertSound())
+        QApplication::beep();
+}
+
+void PriceBarWindow::evaluatePremium(double primaryPrice)
+{
+    if (!AppSettings::instance().premiumAlertEnabled())
+        return;
+    if (!AppSettings::instance().showSecondaryPrice())
+        return;
+    if (primaryPrice <= 0.0 || m_lastSecondaryPrice <= 0.0)
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+
+    const double ratio = primaryPrice / m_lastSecondaryPrice;
+    m_premiumRatios.append(ratio);
+    while (m_premiumRatios.size() > 40)
+        m_premiumRatios.removeFirst();
+    if (m_premiumRatios.size() < 8)
+        return;
+
+    double mean = 0.0;
+    for (double r : m_premiumRatios)
+        mean += r;
+    mean /= m_premiumRatios.size();
+    if (mean <= 0.0)
+        return;
+    const double devPct = qAbs(ratio - mean) / mean * 100.0;
+    const double thr = AppSettings::instance().premiumThresholdPct();
+    if (devPct < thr)
+        return;
+
+    const QDateTime now = QDateTime::currentDateTime();
+    const int cool = AppSettings::instance().alertCooldownSec();
+    if (m_lastPremiumNotify.isValid() && m_lastPremiumNotify.secsTo(now) < cool)
+        return;
+    m_lastPremiumNotify = now;
+
+    if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
+        m_trayIcon->showMessage(
+            tr("溢价监测"),
+            tr("主/对照比值 %1，相对近窗均值偏离 %2%（阈值 %3%）")
+                .arg(ratio, 0, 'f', 4)
+                .arg(devPct, 0, 'f', 2)
+                .arg(thr, 0, 'f', 1),
+            QSystemTrayIcon::Warning, 5000);
+    }
+}
+
+QString PriceBarWindow::buildDailyReportText() const
+{
+    double high = 0.0, low = 0.0;
+    HistoryCache::instance().todayHigh(high);
+    HistoryCache::instance().todayLow(low);
+    const double price = m_lastPrice;
+    QString lines;
+    lines += tr("【GoldPriceBar 今日摘要】\n");
+    lines += tr("现价：%1\n").arg(price > 0 ? QString::number(price, 'f', 2) : QStringLiteral("--"));
+    lines += tr("今高：%1  今低：%2\n")
+                 .arg(high > 0 ? QString::number(high, 'f', 2) : QStringLiteral("--"))
+                 .arg(low > 0 ? QString::number(low, 'f', 2) : QStringLiteral("--"));
+    if (high > 0 && low > 0)
+        lines += tr("振幅：%1 (%2%)\n")
+                     .arg(high - low, 0, 'f', 2)
+                     .arg(low > 0 ? (high - low) / low * 100.0 : 0.0, 0, 'f', 2);
+    const double grams = AppSettings::instance().positionGrams();
+    const double cost = AppSettings::instance().positionCost();
+    if (grams > 0 && cost > 0 && price > 0) {
+        const double pnl = (price - cost) * grams;
+        lines += tr("持仓浮盈亏：%1 元（%2 克）\n")
+                     .arg(pnl, 0, 'f', 1)
+                     .arg(grams, 0, 'f', 3);
+    }
+    if (m_lastSecondaryPrice > 0)
+        lines += tr("对照价：%1\n").arg(m_lastSecondaryPrice, 0, 'f', 2);
+    lines += tr("时间：%1").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+    return lines;
+}
+
+void PriceBarWindow::showDailyReport(bool force)
+{
+    const QString text = buildDailyReportText();
+    if (m_trayIcon) {
+        m_trayIcon->showMessage(tr("今日摘要"), text, QSystemTrayIcon::Information, 10000);
+    }
+    if (force) {
+        // 强制时也写日志感：用关于式对话框过长，托盘即可
+    }
+}
+
+void PriceBarWindow::checkDailyReport()
+{
+    if (!AppSettings::instance().dailyReportEnabled())
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+    const QTime target = AppSettings::instance().dailyReportTime();
+    const QTime now = QTime::currentTime();
+    if (now.hour() != target.hour() || now.minute() != target.minute())
+        return;
+    const QString today = QDate::currentDate().toString(Qt::ISODate);
+    if (AppSettings::instance().dailyReportLastDate() == today)
+        return;
+    AppSettings::instance().setDailyReportLastDate(today);
+    AppSettings::instance().save();
+    showDailyReport(false);
+}

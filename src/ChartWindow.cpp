@@ -625,6 +625,15 @@ void ChartWindow::updateForecast() {
   m_lastPredictPrice = predHigh; // 侧栏主数字：预测最高
   m_hasPredict = true;
   m_forecastModeTag = tr("本地·日高低");
+  // 可解释摘要（侧栏模式行）
+  {
+      double actH = 0, actL = 0;
+      HistoryCache::instance().todayHigh(actH);
+      HistoryCache::instance().todayLow(actL);
+      m_forecastModeTag = tr("日高低·已走振幅%1")
+                              .arg(qMax(0.0, actH - actL), 0, 'f', 2);
+  }
+
 
   // 水平虚线：从当日 0 点到 23:59
   const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));

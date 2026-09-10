@@ -94,6 +94,37 @@ public:
     /** 应用 QNetworkProxy::setApplicationProxy */
     void applyNetworkProxy() const;
 
+    /** 智能预警：相对 MA5日 / 近20日分位 */
+    bool smartAlertMa() const;
+    void setSmartAlertMa(bool on);
+    bool smartAlertPercentile() const;
+    void setSmartAlertPercentile(bool on);
+    int percentileLow() const;   // 0-50，默认 20
+    void setPercentileLow(int v);
+    int percentileHigh() const;  // 50-100，默认 80
+    void setPercentileHigh(int v);
+
+    /** 本地持仓：克数 + 成本价（元/克） */
+    double positionGrams() const;
+    void setPositionGrams(double g);
+    double positionCost() const;
+    void setPositionCost(double c);
+
+    /** 溢价监测：主/对照价比值偏离近窗均值超过阈值则提醒（百分比） */
+    bool premiumAlertEnabled() const;
+    void setPremiumAlertEnabled(bool on);
+    double premiumThresholdPct() const;
+    void setPremiumThresholdPct(double pct);
+
+    /** 收盘日报：每天指定时刻托盘摘要一次 */
+    bool dailyReportEnabled() const;
+    void setDailyReportEnabled(bool on);
+    QTime dailyReportTime() const;
+    void setDailyReportTime(const QTime& t);
+    QString dailyReportLastDate() const;
+    void setDailyReportLastDate(const QString& iso);
+
+
     void load();
     void save();
 
@@ -130,6 +161,18 @@ private:
     bool m_proxyEnabled = false;
     QString m_proxyHost;
     int m_proxyPort = 7890;
+    bool m_smartAlertMa = true;
+    bool m_smartAlertPercentile = true;
+    int m_percentileLow = 20;
+    int m_percentileHigh = 80;
+    double m_positionGrams = 0.0;
+    double m_positionCost = 0.0;
+    bool m_premiumAlertEnabled = true;
+    double m_premiumThresholdPct = 2.0;
+    bool m_dailyReportEnabled = true;
+    QTime m_dailyReportTime = QTime(15, 5);
+    QString m_dailyReportLastDate;
+
 };
 
 #endif // APPSETTINGS_H
