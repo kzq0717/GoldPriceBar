@@ -226,6 +226,13 @@ QString AppSettings::dailyReportLastDate() const { return m_dailyReportLastDate;
 void AppSettings::setDailyReportLastDate(const QString& iso)
 { m_dailyReportLastDate = iso; }
 
+bool AppSettings::eventAlertEnabled() const { return m_eventAlertEnabled; }
+void AppSettings::setEventAlertEnabled(bool on)
+{ if (m_eventAlertEnabled != on) { m_eventAlertEnabled = on; emit settingsChanged(); } }
+QString AppSettings::eventAlertLastKey() const { return m_eventAlertLastKey; }
+void AppSettings::setEventAlertLastKey(const QString& k) { m_eventAlertLastKey = k; }
+
+
 
 void AppSettings::load()
 {
@@ -272,6 +279,8 @@ void AppSettings::load()
     m_dailyReportTime = QTime::fromString(s.value("dailyReportTime", "15:05").toString(), "HH:mm");
     if (!m_dailyReportTime.isValid()) m_dailyReportTime = QTime(15, 5);
     m_dailyReportLastDate = s.value("dailyReportLastDate", "").toString();
+    m_eventAlertEnabled = s.value("eventAlertEnabled", true).toBool();
+    m_eventAlertLastKey = s.value("eventAlertLastKey", "").toString();
     applyNetworkProxy();
 }
 
@@ -317,6 +326,8 @@ void AppSettings::save()
     s.setValue("dailyReportEnabled", m_dailyReportEnabled);
     s.setValue("dailyReportTime", m_dailyReportTime.toString("HH:mm"));
     s.setValue("dailyReportLastDate", m_dailyReportLastDate);
+    s.setValue("eventAlertEnabled", m_eventAlertEnabled);
+    s.setValue("eventAlertLastKey", m_eventAlertLastKey);
     s.sync();
     applyNetworkProxy();
 }

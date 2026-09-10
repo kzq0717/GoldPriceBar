@@ -72,6 +72,8 @@ set(PROJECT_SOURCES
     src/UpdateChecker.cpp
     src/GlobalHotkey.h
     src/GlobalHotkey.cpp
+    src/EventCalendar.h
+    src/EventCalendar.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}

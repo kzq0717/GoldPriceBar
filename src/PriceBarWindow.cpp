@@ -7,6 +7,7 @@
 #include "UpdateChecker.h"
 #include "GlobalHotkey.h"
 #include "ExtremeDatabase.h"
+#include "EventCalendar.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -76,7 +77,11 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     if (!m_dailyReportTimer) {
         m_dailyReportTimer = new QTimer(this);
         m_dailyReportTimer->setInterval(30 * 1000);
-        connect(m_dailyReportTimer, &QTimer::timeout, this, &PriceBarWindow::checkDailyReport);
+        connect(m_dailyReportTimer, &QTimer::timeout, this, [this]() {
+            checkDailyReport();
+            checkEventAlerts();
+            updateNetworkHealth();
+        });
         m_dailyReportTimer->start();
     }
 
@@ -116,6 +121,10 @@ void PriceBarWindow::setupUi()
     m_pnlLabel->setStyleSheet("color: #f39c12; font-size: 11px;");
     m_pnlLabel->setToolTip(tr("本地持仓浮盈亏（设置中填写克数与成本）"));
     m_pnlLabel->hide();
+
+    m_healthLabel = new QLabel(QStringLiteral("●"), this);
+    m_healthLabel->setStyleSheet("color:#2ecc71;font-size:10px;");
+    m_healthLabel->setToolTip(tr("网络健康：绿=正常，黄=偶发失败，红=连续失败/退避中"));
 
     m_highLabel = new QLabel(tr("高 --.--"), this);
     m_highLabel->setStyleSheet("color: #e74c3c; font-size: 12px;");
@@ -166,6 +175,7 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_changeLabel);
     layout->addWidget(m_secondaryLabel);
     layout->addWidget(m_pnlLabel);
+    layout->addWidget(m_healthLabel);
     layout->addWidget(m_highLabel);
     layout->addWidget(m_alertDot);
     layout->addStretch();
@@ -189,6 +199,11 @@ void PriceBarWindow::setupTray()
     });
     menu->addAction(tr("分时曲线"), this, &PriceBarWindow::onChartClicked);
     menu->addAction(tr("今日摘要"), this, [this]() { showDailyReport(true); });
+    menu->addAction(tr("宏观日程"), this, [this]() {
+        if (m_trayIcon)
+            m_trayIcon->showMessage(tr("宏观日程"), EventCalendar::summaryNear(),
+                                    QSystemTrayIcon::Information, 12000);
+    });
     menu->addAction(tr("标记定投已执行"), this, [this]() {
         const QString today = QDate::currentDate().toString(Qt::ISODate);
         AppSettings::instance().setDcaLastExecutedDate(today);
@@ -253,10 +268,13 @@ void PriceBarWindow::onPriceUpdated(double price, double change, const QString& 
     updatePnLDisplay(price);
     evaluateSmartAlerts(price);
     evaluatePremium(price);
+    updateNetworkHealth();
 }
 
 void PriceBarWindow::onFetchFailed(const QString& error)
 {
+    updateNetworkHealth();
+
     m_priceLabel->setText(tr("--.--"));
     m_changeLabel->setText(error);
     m_changeLabel->setStyleSheet("color: #e67e22; font-size: 11px;");
@@ -880,4 +898,51 @@ void PriceBarWindow::checkDailyReport()
     AppSettings::instance().setDailyReportLastDate(today);
     AppSettings::instance().save();
     showDailyReport(false);
+}
+
+
+void PriceBarWindow::updateNetworkHealth()
+{
+    if (!m_healthLabel || !m_priceService)
+        return;
+    const int fails = m_priceService->consecutiveFail();
+    const qint64 lastOk = m_priceService->lastSuccessMs();
+    const qint64 age = lastOk > 0 ? (QDateTime::currentMSecsSinceEpoch() - lastOk) : -1;
+    const int cfg = m_priceService->configuredIntervalMs();
+    const int cur = m_priceService->currentIntervalMs();
+    QString tip = tr("配置刷新 %1 ms\n实际间隔 %2 ms\n连续失败 %3")
+                      .arg(cfg).arg(cur).arg(fails);
+    if (age >= 0)
+        tip += tr("\n距上次成功 %1 秒").arg(age / 1000);
+    if (EventCalendar::isHighImpactDay())
+        tip += tr("\n今日高波动日程：%1").arg(EventCalendar::pendingAlertText());
+    m_healthLabel->setToolTip(tip);
+
+    if (fails >= 5 || (age > 0 && age > qMax(30000LL, static_cast<qint64>(cfg) * 8))) {
+        m_healthLabel->setStyleSheet("color:#e74c3c;font-size:10px;");
+    } else if (fails >= 1 || cur > cfg) {
+        m_healthLabel->setStyleSheet("color:#f1c40f;font-size:10px;");
+    } else {
+        m_healthLabel->setStyleSheet("color:#2ecc71;font-size:10px;");
+    }
+}
+
+void PriceBarWindow::checkEventAlerts()
+{
+    if (!AppSettings::instance().eventAlertEnabled())
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+    const QString text = EventCalendar::pendingAlertText();
+    if (text.isEmpty())
+        return;
+    const QString key = QDate::currentDate().toString(Qt::ISODate) + QLatin1Char('|') + text;
+    if (AppSettings::instance().eventAlertLastKey() == key)
+        return;
+    AppSettings::instance().setEventAlertLastKey(key);
+    AppSettings::instance().save();
+    if (m_trayIcon) {
+        m_trayIcon->showMessage(tr("宏观日程"), text + tr("\n金价可能波动加大，注意风险。"),
+                                QSystemTrayIcon::Warning, 8000);
+    }
 }

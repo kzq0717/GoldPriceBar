@@ -76,6 +76,9 @@ private:
     QDoubleSpinBox* m_premiumPctSpin = nullptr;
     QCheckBox* m_dailyReportCheck = nullptr;
     QTimeEdit* m_dailyReportTimeEdit = nullptr;
+    QCheckBox* m_eventAlertCheck = nullptr;
+    QPushButton* m_suggestAlertBtn = nullptr;
+    QLabel* m_eventSummaryLabel = nullptr;
 };
 
 

@@ -25,6 +25,10 @@ public:
     double lastChange() const { return m_lastChange; }
     QString lastSourceName() const { return m_lastSourceName; }
     bool hasValidPrice() const { return m_hasValidPrice; }
+    int consecutiveFail() const { return m_consecutiveFail; }
+    qint64 lastSuccessMs() const { return m_lastSuccessMs; }
+    int configuredIntervalMs() const { return m_intervalMs; }
+    int currentIntervalMs() const { return m_timer ? m_timer->interval() : m_intervalMs; }
 
 signals:
     void priceUpdated(double price, double change, const QString& sourceName);

@@ -60,6 +60,9 @@ private:
     void evaluatePremium(double primaryPrice);
     void checkDailyReport();
     void showDailyReport(bool force = false);
+    void updateNetworkHealth();
+    void checkEventAlerts();
+
     QString buildDailyReportText() const;
     double computeMa5() const;
     double computePercentile(double price) const;
@@ -76,6 +79,8 @@ private:
     QLabel* m_highLabel = nullptr;
     QLabel* m_secondaryLabel = nullptr; // 对照价（如伦敦金）
     QLabel* m_pnlLabel = nullptr; // 持仓浮盈亏
+    QLabel* m_healthLabel = nullptr; // 网络健康
+
 
     QLabel* m_alertDot = nullptr;
     QToolButton* m_chartButton = nullptr;

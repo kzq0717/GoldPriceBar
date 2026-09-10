@@ -1,6 +1,11 @@
 #include "SettingsDialog.h"
 #include "AppSettings.h"
+#include "EventCalendar.h"
 #include "ExtremeDatabase.h"
+#include <QtMath>
+
+#include "ExtremeDatabase.h"
+#include <QtMath>
 #include "Logger.h"
 #include "UpdateChecker.h"
 
@@ -173,6 +178,42 @@ void SettingsDialog::setupUi()
     m_dailyReportTimeEdit = new QTimeEdit(this);
     m_dailyReportTimeEdit->setDisplayFormat("HH:mm");
     form->addRow(tr("摘要时刻："), m_dailyReportTimeEdit);
+
+    m_eventAlertCheck = new QCheckBox(tr("宏观日程提醒（非农/FOMC/CPI 等，本地表）"), this);
+    form->addRow("", m_eventAlertCheck);
+    m_eventSummaryLabel = new QLabel(EventCalendar::summaryNear(), this);
+    m_eventSummaryLabel->setWordWrap(true);
+    m_eventSummaryLabel->setStyleSheet("color:#888;font-size:11px;");
+    form->addRow(tr("近10日日程："), m_eventSummaryLabel);
+
+    m_suggestAlertBtn = new QPushButton(tr("按近20日波动建议高低预警"), this);
+    form->addRow("", m_suggestAlertBtn);
+    QObject::connect(m_suggestAlertBtn, &QPushButton::clicked, this, [this]() {
+        QString src = AppSettings::instance().dataSource();
+        if (src == QStringLiteral("xau")) src = QStringLiteral("gj");
+        auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(21, src);
+        if (closes.size() < 5)
+            closes = ExtremeDatabase::instance().loadRecentDailyCloses(21, QStringLiteral("gj"));
+        if (closes.size() < 5) {
+            m_eventSummaryLabel->setText(tr("日线样本不足，无法建议（请先运行积累或切换伦敦金）"));
+            return;
+        }
+        double sumRange = 0.0;
+        int n = 0;
+        for (int i = 1; i < closes.size(); ++i) {
+            sumRange += qAbs(closes.at(i).second - closes.at(i-1).second);
+            ++n;
+        }
+        const double avgMove = n > 0 ? sumRange / n : 0.0;
+        const double last = closes.last().second;
+        const double hi = last + avgMove * 0.8;
+        const double lo = last - avgMove * 0.8;
+        m_alertHighSpin->setValue(hi);
+        m_alertLowSpin->setValue(qMax(0.0, lo));
+        m_eventSummaryLabel->setText(
+            tr("建议高 %1 / 低 %2（近均日变动 %3）")
+                .arg(hi, 0, 'f', 2).arg(lo, 0, 'f', 2).arg(avgMove, 0, 'f', 2));
+    });
 
     m_proxyCheck = new QCheckBox(tr("启用 HTTP 代理（公司网络/科学上网）"), this);
     form->addRow("", m_proxyCheck);
@@ -347,6 +388,8 @@ void SettingsDialog::loadFromSettings()
     m_premiumPctSpin->setValue(settings.premiumThresholdPct());
     m_dailyReportCheck->setChecked(settings.dailyReportEnabled());
     m_dailyReportTimeEdit->setTime(settings.dailyReportTime());
+    m_eventAlertCheck->setChecked(settings.eventAlertEnabled());
+
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
     m_apiKeyEdit->setText(settings.xaiApiKey());
@@ -411,6 +454,8 @@ void SettingsDialog::onAccept()
     settings.setPremiumThresholdPct(m_premiumPctSpin->value());
     settings.setDailyReportEnabled(m_dailyReportCheck->isChecked());
     settings.setDailyReportTime(m_dailyReportTimeEdit->time());
+    settings.setEventAlertEnabled(m_eventAlertCheck->isChecked());
+
     settings.save();
 
     if (oldDbDir != settings.databaseDir() || !ExtremeDatabase::instance().isOpen())

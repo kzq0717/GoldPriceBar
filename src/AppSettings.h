@@ -126,6 +126,11 @@ public:
     QString dailyReportLastDate() const;
     void setDailyReportLastDate(const QString& iso);
 
+    bool eventAlertEnabled() const;
+    void setEventAlertEnabled(bool on);
+    QString eventAlertLastKey() const;
+    void setEventAlertLastKey(const QString& k);
+
 
     void load();
     void save();
@@ -175,6 +180,9 @@ private:
     bool m_dailyReportEnabled = true;
     QTime m_dailyReportTime = QTime(15, 5);
     QString m_dailyReportLastDate;
+    bool m_eventAlertEnabled = true;
+    QString m_eventAlertLastKey;
+
 
 };
 
