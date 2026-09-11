@@ -33,6 +33,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
 
 private slots:
     void onPriceUpdated(double price, double change, const QString& sourceName);

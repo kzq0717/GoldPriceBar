@@ -27,15 +27,56 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QApplication>
+#include <QIcon>
+#include <QScrollArea>
+#include <QFrame>
+#include <QFormLayout>
 #include <QMessageBox>
 
 SettingsDialog::SettingsDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("设置 - GoldPriceBarLite %1").arg(QApplication::applicationVersion()));
-    setMinimumWidth(460);
-    setMinimumHeight(700);
+    setMinimumWidth(520);
+    setMinimumHeight(640);
+    resize(560, 720);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
+    setWindowIcon(QIcon(QStringLiteral(":/app.png")));
+    setStyleSheet(
+        "QDialog { background: #f7f8fa; }"
+        "QLabel { font-size: 13px; color: #333; }"
+        "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {"
+        "  min-height: 30px;"
+        "  min-width: 120px;"
+        "  padding: 4px 10px;"
+        "  border: 1px solid #c5cdd8;"
+        "  border-radius: 6px;"
+        "  background: #ffffff;"
+        "  font-size: 13px;"
+        "}"
+        "QComboBox::drop-down { width: 28px; border: none; }"
+        "QComboBox QAbstractItemView {"
+        "  min-width: 160px;"
+        "  padding: 4px;"
+        "  selection-background-color: #0052d9;"
+        "}"
+        "QCheckBox { spacing: 8px; min-height: 26px; font-size: 13px; }"
+        "QPushButton {"
+        "  min-height: 34px;"
+        "  min-width: 100px;"
+        "  padding: 6px 16px;"
+        "  border-radius: 6px;"
+        "  border: 1px solid #c5cdd8;"
+        "  background: #ffffff;"
+        "  font-size: 13px;"
+        "}"
+        "QPushButton:hover { background: #eef3ff; border-color: #0052d9; }"
+        "QPushButton:default, QPushButton#okButton {"
+        "  background: #0052d9; color: white; border: none;"
+        "}"
+        "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #dde3ea; }"
+        "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #0052d9; }"
+    );
 
     setupUi();
     loadFromSettings();
@@ -44,10 +85,21 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 void SettingsDialog::setupUi()
 {
     auto* mainLayout = new QVBoxLayout(this);
-    auto* form = new QFormLayout;
-    form->setSpacing(10);
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto* formHost = new QWidget(scroll);
+    auto* form = new QFormLayout(formHost);
+    form->setContentsMargins(12, 12, 16, 12);
+    form->setSpacing(12);
+    form->setHorizontalSpacing(16);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
 
     m_intervalCombo = new QComboBox(this);
+    m_intervalCombo->setMinimumWidth(200);
+
     m_intervalCombo->addItem(tr("1 秒"), 1000);
     m_intervalCombo->addItem(tr("2 秒"), 2000);
     m_intervalCombo->addItem(tr("5 秒"), 5000);
@@ -56,6 +108,8 @@ void SettingsDialog::setupUi()
     form->addRow(tr("刷新频率："), m_intervalCombo);
 
     m_sourceCombo = new QComboBox(this);
+    m_sourceCombo->setMinimumWidth(200);
+
     m_sourceCombo->addItem(tr("浙商积存金"), "zs");
     m_sourceCombo->addItem(tr("民生积存金"), "ms");
     m_sourceCombo->addItem(tr("伦敦金 (XAU/USD)"), "gj");
@@ -286,7 +340,8 @@ void SettingsDialog::setupUi()
     m_autoStartCheck = new QCheckBox(tr("开机自动启动"), this);
     form->addRow("", m_autoStartCheck);
 
-    mainLayout->addLayout(form);
+    scroll->setWidget(formHost);
+    mainLayout->addWidget(scroll, 1);
 
     auto* hint = new QLabel(
         tr("高/低预警：0 表示关闭。触发后价格条在「高」与分时按钮之间闪烁色点。"

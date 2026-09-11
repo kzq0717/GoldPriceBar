@@ -78,6 +78,7 @@ set(PROJECT_SOURCES
 
 qt_add_executable(${PROJECT_NAME}
     ${PROJECT_SOURCES}
+    resources/resources.qrc
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

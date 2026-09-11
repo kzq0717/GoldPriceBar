@@ -13,6 +13,10 @@
 #include <QLabel>
 #include <QToolButton>
 #include <QMouseEvent>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QIcon>
 #include <QCloseEvent>
 #include <QMenu>
 #include <QApplication>
@@ -39,8 +43,9 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     setWindowFlags(Qt::FramelessWindowHint
                    | Qt::WindowStaysOnTopHint
                    | Qt::Tool);
-    setAttribute(Qt::WA_TranslucentBackground, false);
-    setFixedHeight(36);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setFixedHeight(40);
     setMinimumWidth(360);
 
     setupUi();
@@ -189,7 +194,15 @@ void PriceBarWindow::setupUi()
 void PriceBarWindow::setupTray()
 {
     m_trayIcon = new QSystemTrayIcon(this);
-    m_trayIcon->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+    {
+        const QIcon appIcon(QStringLiteral(":/app.png"));
+        if (!appIcon.isNull()) {
+            m_trayIcon->setIcon(appIcon);
+            setWindowIcon(appIcon);
+        } else {
+            m_trayIcon->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+        }
+    }
     m_trayIcon->setToolTip(tr("GoldPriceBarLite %1  |  Ctrl+Shift+G 显隐")
         .arg(QApplication::applicationVersion()));
 
@@ -201,8 +214,7 @@ void PriceBarWindow::setupTray()
     menu->addAction(tr("今日摘要"), this, [this]() { showDailyReport(true); });
     menu->addAction(tr("宏观日程"), this, [this]() {
         if (m_trayIcon)
-            m_trayIcon->showMessage(tr("宏观日程"), EventCalendar::summaryNear(),
-                                    QSystemTrayIcon::Information, 12000);
+            QMessageBox::information(this, tr("宏观日程"), EventCalendar::summaryNear());
     });
     menu->addAction(tr("标记定投已执行"), this, [this]() {
         const QString today = QDate::currentDate().toString(Qt::ISODate);
@@ -350,9 +362,18 @@ void PriceBarWindow::mousePressEvent(QMouseEvent* event)
 void PriceBarWindow::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_dragging && (event->buttons() & Qt::LeftButton)) {
-        move(event->globalPosition().toPoint() - m_dragOffset);
+        QPoint pos = event->globalPosition().toPoint() - m_dragOffset;
+        // 支持横向与纵向自由拖拽，并限制在可用屏幕内
+        if (QScreen* screen = QApplication::screenAt(event->globalPosition().toPoint())) {
+            const QRect geo = screen->availableGeometry();
+            pos.setX(qBound(geo.left(), pos.x(), geo.right() - width() + 1));
+            pos.setY(qBound(geo.top(), pos.y(), geo.bottom() - height() + 1));
+        }
+        move(pos);
         event->accept();
+        return;
     }
+    QWidget::mouseMoveEvent(event);
 }
 
 void PriceBarWindow::mouseReleaseEvent(QMouseEvent* event)
@@ -545,26 +566,45 @@ void PriceBarWindow::onAlertBlinkTick()
     }
 }
 
+void PriceBarWindow::paintEvent(QPaintEvent* event)
+{
+    Q_UNUSED(event);
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const bool dark = AppSettings::instance().darkTheme();
+    QPainterPath path;
+    const qreal r = 10.0;
+    path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), r, r);
+    QLinearGradient g(0, 0, width(), 0);
+    if (dark) {
+        g.setColorAt(0.0, QColor(26, 29, 35, 242));
+        g.setColorAt(1.0, QColor(37, 42, 51, 242));
+        p.fillPath(path, g);
+        p.setPen(QPen(QColor(61, 68, 80), 1.0));
+    } else {
+        g.setColorAt(0.0, QColor(255, 255, 255, 245));
+        g.setColorAt(1.0, QColor(240, 243, 247, 245));
+        p.fillPath(path, g);
+        p.setPen(QPen(QColor(216, 222, 230), 1.0));
+    }
+    p.drawPath(path);
+}
+
 void PriceBarWindow::applyTheme()
 {
     const bool dark = AppSettings::instance().darkTheme();
     if (dark) {
         setStyleSheet(
-            "PriceBarWindow {"
-            "  background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "    stop:0 #1a1d23, stop:1 #252a33);"
-            "  border: 1px solid #3d4450;"
-            "  border-radius: 8px;"
-            "}"
+            "PriceBarWindow { background: transparent; }"
             "QToolButton {"
             "  color: #e8eaed;"
             "  border: none;"
             "  font-size: 14px;"
             "  padding: 2px;"
+            "  border-radius: 6px;"
             "}"
             "QToolButton:hover {"
             "  background-color: rgba(255,255,255,28);"
-            "  border-radius: 5px;"
             "}"
         );
         if (m_sourceLabel)
@@ -577,20 +617,16 @@ void PriceBarWindow::applyTheme()
             m_secondaryLabel->setStyleSheet("color:#c792ea;font-size:11px;");
     } else {
         setStyleSheet(
-            "PriceBarWindow {"
-            "  background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "    stop:0 #f7f8fa, stop:1 #eef1f6);"
-            "  border: 1px solid #c5cdd8;"
-            "  border-radius: 8px;"
-            "}"
+            "PriceBarWindow { background: transparent; }"
             "QToolButton {"
             "  color: #333;"
             "  border: none;"
             "  font-size: 14px;"
+            "  padding: 2px;"
+            "  border-radius: 6px;"
             "}"
             "QToolButton:hover {"
             "  background-color: rgba(0,0,0,18);"
-            "  border-radius: 5px;"
             "}"
         );
         if (m_sourceLabel)
@@ -787,9 +823,10 @@ void PriceBarWindow::evaluateSmartAlerts(double price)
             m_alertBlinkTimer->start();
     }
     if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
-        m_trayIcon->showMessage(tr("智能预警"), reasons.join(QStringLiteral("；")),
+        const QString shortMsg = reasons.join(QStringLiteral(" · "));
+        m_trayIcon->showMessage(tr("智能预警"), shortMsg.left(80),
                                 bullish ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information,
-                                5000);
+                                3500);
     }
     if (AppSettings::instance().alertSound())
         QApplication::beep();
@@ -833,11 +870,8 @@ void PriceBarWindow::evaluatePremium(double primaryPrice)
     if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
         m_trayIcon->showMessage(
             tr("溢价监测"),
-            tr("主/对照比值 %1，相对近窗均值偏离 %2%（阈值 %3%）")
-                .arg(ratio, 0, 'f', 4)
-                .arg(devPct, 0, 'f', 2)
-                .arg(thr, 0, 'f', 1),
-            QSystemTrayIcon::Warning, 5000);
+            tr("比值偏离 %1%（阈 %2%）").arg(devPct, 0, 'f', 1).arg(thr, 0, 'f', 1),
+            QSystemTrayIcon::Warning, 3500);
     }
 }
 
@@ -873,12 +907,22 @@ QString PriceBarWindow::buildDailyReportText() const
 
 void PriceBarWindow::showDailyReport(bool force)
 {
+    // 托盘气泡易被截断/遮挡，强制时用简洁对话框
     const QString text = buildDailyReportText();
-    if (m_trayIcon) {
-        m_trayIcon->showMessage(tr("今日摘要"), text, QSystemTrayIcon::Information, 10000);
-    }
     if (force) {
-        // 强制时也写日志感：用关于式对话框过长，托盘即可
+        QMessageBox::information(this, tr("今日摘要"), text);
+        return;
+    }
+    if (m_trayIcon) {
+        // 短提示，详情用托盘菜单「今日摘要」
+        double high = 0, low = 0;
+        HistoryCache::instance().todayHigh(high);
+        HistoryCache::instance().todayLow(low);
+        const QString brief = tr("现 %1  高 %2  低 %3")
+                                  .arg(m_lastPrice > 0 ? QString::number(m_lastPrice, 'f', 2) : QStringLiteral("--"))
+                                  .arg(high > 0 ? QString::number(high, 'f', 2) : QStringLiteral("--"))
+                                  .arg(low > 0 ? QString::number(low, 'f', 2) : QStringLiteral("--"));
+        m_trayIcon->showMessage(tr("今日摘要"), brief, QSystemTrayIcon::Information, 4000);
     }
 }
 
@@ -942,7 +986,7 @@ void PriceBarWindow::checkEventAlerts()
     AppSettings::instance().setEventAlertLastKey(key);
     AppSettings::instance().save();
     if (m_trayIcon) {
-        m_trayIcon->showMessage(tr("宏观日程"), text + tr("\n金价可能波动加大，注意风险。"),
-                                QSystemTrayIcon::Warning, 8000);
+        m_trayIcon->showMessage(tr("宏观日程"), text.left(60),
+                                QSystemTrayIcon::Warning, 4000);
     }
 }
