@@ -38,6 +38,7 @@
 #include <QUrl>
 #include <QMessageBox>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QFrame>
 #include <QFormLayout>
 #include <QMessageBox>
@@ -220,8 +221,21 @@ void SettingsDialog::setupUi()
     form->addRow("", m_eventAlertCheck);
     m_eventSummaryLabel = new QLabel(EventCalendar::summaryNear(), this);
     m_eventSummaryLabel->setWordWrap(true);
-    m_eventSummaryLabel->setStyleSheet("font-size:11px;");
-    form->addRow(tr("近10日日程："), m_eventSummaryLabel);
+    m_eventSummaryLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    m_eventSummaryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_eventSummaryLabel->setStyleSheet("font-size:12px; padding: 6px;");
+    m_eventSummaryLabel->setMinimumWidth(280);
+    m_eventSummaryLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    // 嵌在滚动区，避免 Form 行高把多行日程裁成一条
+    auto* eventScroll = new QScrollArea(this);
+    eventScroll->setWidgetResizable(true);
+    eventScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    eventScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    eventScroll->setMinimumHeight(140);
+    eventScroll->setMaximumHeight(220);
+    eventScroll->setFrameShape(QFrame::StyledPanel);
+    eventScroll->setWidget(m_eventSummaryLabel);
+    form->addRow(tr("近10日日程："), eventScroll);
 
     m_suggestAlertBtn = new QPushButton(tr("按近20日波动建议高低预警"), this);
     m_suggestAlertBtn->setObjectName(QStringLiteral("wideAction"));
