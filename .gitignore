@@ -19,6 +19,10 @@ Makefile
 *.user
 *.ncb
 
+# Keep the shared VS Code Qt/CMake configuration under version control.
+!.vscode/
+!.vscode/settings.json
+
 # Binaries
 *.exe
 *.dll

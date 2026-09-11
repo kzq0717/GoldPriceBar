@@ -1,0 +1,13 @@
+{
+  "cmake.configureOnOpen": true,
+  "cmake.sourceDirectory": "${workspaceFolder}",
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "cmake.configureSettings": {
+    "QT6_ROOT_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
+    "CMAKE_PREFIX_PATH": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
+    "Qt6_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/lib/cmake/Qt6"
+  },
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "qtConfigure.qtDir": "D:\\InstallDir\\Qt6.7\\6.7.3\\msvc2022_64",
+  "qttools.searchMode": "path"
+}
