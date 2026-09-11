@@ -519,44 +519,62 @@ void SettingsDialog::onCheckUpdate()
 void SettingsDialog::applyDialogTheme()
 {
     const bool dark = AppSettings::instance().darkTheme();
+    const QString up = dark ? QStringLiteral(":/arrow_up_dark.png")
+                            : QStringLiteral(":/arrow_up.png");
+    const QString down = dark ? QStringLiteral(":/arrow_down_dark.png")
+                              : QStringLiteral(":/arrow_down.png");
 
-    const QString spinDark =
-        QStringLiteral(
-            "QSpinBox::up-button, QDoubleSpinBox::up-button {"
-            "  subcontrol-origin: border; subcontrol-position: top right;"
-            "  width: 22px; height: 15px;"
-            "  border-left: 1px solid #3d4450; border-bottom: 1px solid #3d4450;"
-            "  border-top-right-radius: 5px; background: #343b48;"
-            "}"
-            "QSpinBox::down-button, QDoubleSpinBox::down-button {"
-            "  subcontrol-origin: border; subcontrol-position: bottom right;"
-            "  width: 22px; height: 15px;"
-            "  border-left: 1px solid #3d4450;"
-            "  border-bottom-right-radius: 5px; background: #343b48;"
-            "}"
-            "QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,"
-            "QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: #4a5568; }"
-            "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { width: 9px; height: 9px; }"
-            "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { width: 9px; height: 9px; }");
+    // 显式 image，避免 stylesheet 把系统箭头“吃掉”
+    const QString spinArrows = QStringLiteral(
+        "QSpinBox::up-button, QDoubleSpinBox::up-button, QTimeEdit::up-button,"
+        "QDateTimeEdit::up-button {"
+        "  subcontrol-origin: border;"
+        "  subcontrol-position: top right;"
+        "  width: 24px;"
+        "  height: 16px;"
+        "  border: none;"
+        "  background: transparent;"
+        "}"
+        "QSpinBox::down-button, QDoubleSpinBox::down-button, QTimeEdit::down-button,"
+        "QDateTimeEdit::down-button {"
+        "  subcontrol-origin: border;"
+        "  subcontrol-position: bottom right;"
+        "  width: 24px;"
+        "  height: 16px;"
+        "  border: none;"
+        "  background: transparent;"
+        "}"
+        "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QTimeEdit::up-arrow,"
+        "QDateTimeEdit::up-arrow {"
+        "  image: url(%1);"
+        "  width: 12px; height: 12px;"
+        "}"
+        "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QTimeEdit::down-arrow,"
+        "QDateTimeEdit::down-arrow {"
+        "  image: url(%2);"
+        "  width: 12px; height: 12px;"
+        "}"
+        "QComboBox::drop-down {"
+        "  subcontrol-origin: padding;"
+        "  subcontrol-position: top right;"
+        "  width: 28px;"
+        "  border: none;"
+        "  background: transparent;"
+        "}"
+        "QComboBox::down-arrow {"
+        "  image: url(%2);"
+        "  width: 12px; height: 12px;"
+        "}")
+                                         .arg(up, down);
 
-    const QString spinLight =
-        QStringLiteral(
-            "QSpinBox::up-button, QDoubleSpinBox::up-button {"
-            "  subcontrol-origin: border; subcontrol-position: top right;"
-            "  width: 22px; height: 15px;"
-            "  border-left: 1px solid #c5cdd8; border-bottom: 1px solid #c5cdd8;"
-            "  border-top-right-radius: 5px; background: #eef1f5;"
-            "}"
-            "QSpinBox::down-button, QDoubleSpinBox::down-button {"
-            "  subcontrol-origin: border; subcontrol-position: bottom right;"
-            "  width: 22px; height: 15px;"
-            "  border-left: 1px solid #c5cdd8;"
-            "  border-bottom-right-radius: 5px; background: #eef1f5;"
-            "}"
-            "QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,"
-            "QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: #dce6f5; }"
-            "QSpinBox::up-arrow, QDoubleSpinBox::down-arrow,"
-            "QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow { width: 9px; height: 9px; }");
+    for (auto* sp : findChildren<QAbstractSpinBox*>()) {
+        sp->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
+        if (sp->minimumHeight() < 34)
+            sp->setMinimumHeight(34);
+    }
+    for (auto* cb : findChildren<QComboBox*>()) {
+        cb->setMinimumHeight(34);
+    }
 
     if (dark) {
         setStyleSheet(
@@ -564,15 +582,14 @@ void SettingsDialog::applyDialogTheme()
                 "QDialog, QScrollArea, QWidget#qt_scrollarea_viewport, QWidget#settingsFormHost {"
                 "  background: #1e222a; color: #e8eaed; }"
                 "QLabel { font-size: 13px; color: #cfd3dc; }"
-                "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {"
-                "  min-height: 34px; max-height: 36px;"
-                "  min-width: 100px; max-width: 280px;"
-                "  padding: 2px 26px 2px 8px;"
+                "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit, QDateTimeEdit {"
+                "  min-height: 34px; max-height: 38px;"
+                "  min-width: 110px; max-width: 280px;"
+                "  padding: 2px 28px 2px 10px;"
                 "  border: 1px solid #3d4450; border-radius: 6px;"
                 "  background: #2a303a; color: #e8eaed; font-size: 13px;"
                 "  selection-background-color: #0052d9; selection-color: #ffffff; }"
-                "QLineEdit, QComboBox { padding-right: 8px; max-width: 360px; }"
-                "QComboBox::drop-down { width: 26px; border: none; }"
+                "QLineEdit { padding-right: 10px; max-width: 360px; }"
                 "QComboBox QAbstractItemView {"
                 "  min-width: 160px; padding: 4px; background: #2a303a; color: #e8eaed;"
                 "  selection-background-color: #0052d9; border: 1px solid #3d4450; }"
@@ -590,20 +607,19 @@ void SettingsDialog::applyDialogTheme()
                 "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #3d4450; }"
                 "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #5b8def; }"
                 "QDialogButtonBox QPushButton { min-width: 72px; max-width: 100px; }")
-            + spinDark);
+            + spinArrows);
     } else {
         setStyleSheet(
             QStringLiteral(
                 "QDialog, QScrollArea, QWidget#settingsFormHost { background: #f7f8fa; color: #333; }"
                 "QLabel { font-size: 13px; color: #333; }"
-                "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {"
-                "  min-height: 34px; max-height: 36px;"
-                "  min-width: 100px; max-width: 280px;"
-                "  padding: 2px 26px 2px 8px;"
+                "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit, QDateTimeEdit {"
+                "  min-height: 34px; max-height: 38px;"
+                "  min-width: 110px; max-width: 280px;"
+                "  padding: 2px 28px 2px 10px;"
                 "  border: 1px solid #c5cdd8; border-radius: 6px;"
                 "  background: #ffffff; color: #1a1d23; font-size: 13px; }"
-                "QLineEdit, QComboBox { padding-right: 8px; max-width: 360px; }"
-                "QComboBox::drop-down { width: 26px; border: none; }"
+                "QLineEdit { padding-right: 10px; max-width: 360px; }"
                 "QComboBox QAbstractItemView {"
                 "  min-width: 160px; padding: 4px; background: #ffffff; color: #1a1d23;"
                 "  selection-background-color: #0052d9; selection-color: #ffffff; }"
@@ -621,6 +637,6 @@ void SettingsDialog::applyDialogTheme()
                 "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #dde3ea; }"
                 "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #0052d9; }"
                 "QDialogButtonBox QPushButton { min-width: 72px; max-width: 100px; }")
-            + spinLight);
+            + spinArrows);
     }
 }

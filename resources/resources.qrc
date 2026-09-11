@@ -5,5 +5,9 @@
         <file>app.ico</file>
         <file>app_32.png</file>
         <file>app_64.png</file>
+            <file>arrow_up.png</file>
+            <file>arrow_down.png</file>
+            <file>arrow_up_dark.png</file>
+            <file>arrow_down_dark.png</file>
     </qresource>
 </RCC>
