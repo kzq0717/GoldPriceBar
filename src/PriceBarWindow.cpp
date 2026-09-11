@@ -48,7 +48,7 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     // 高度随内容自适应，不再锁死；宽度可随对照/盈亏展开
-    setMinimumWidth(320);
+    setMinimumWidth(280);
     setMinimumHeight(36);
     setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
 
@@ -110,7 +110,7 @@ void PriceBarWindow::setupUi()
 {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(10, 4, 8, 4);
-    layout->setSpacing(8);
+    layout->setSpacing(6);
 
     m_sourceLabel = new QLabel(tr("浙商积存金"), this);
     m_sourceLabel->setStyleSheet("color: #cccccc; font-size: 12px;");
@@ -187,7 +187,8 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_healthLabel);
     layout->addWidget(m_highLabel);
     layout->addWidget(m_alertDot);
-    layout->addStretch();
+    // 不用 stretch，避免警示点与分时按钮之间大块留白；宽度随内容收紧
+    layout->addSpacing(4);
     layout->addWidget(m_chartButton);
     layout->addWidget(m_settingsButton);
 
@@ -456,12 +457,14 @@ void PriceBarWindow::relayoutBar()
     if (!layout())
         return;
     layout()->activate();
+    layout()->invalidate();
     const QSize sh = layout()->sizeHint().expandedTo(layout()->minimumSize());
+    // 紧贴内容，不人为加宽
     const int h = qMax(36, sh.height());
-    const int w = qMax(320, sh.width());
+    const int w = qMax(280, sh.width());
     setMinimumSize(w, h);
-    setMaximumHeight(QWIDGETSIZE_MAX);
-    resize(qMax(width(), w), h);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    resize(w, h);
 }
 
 void PriceBarWindow::closeEvent(QCloseEvent* event)
@@ -559,14 +562,14 @@ void PriceBarWindow::updateSecondaryVisibility()
                 m_secondaryTimer->start();
             }
         }
-        setMinimumWidth(400);
+        setMinimumWidth(280);
         relayoutBar();
     } else {
         m_secondaryLabel->hide();
         m_secondaryLabel->clear();
         if (m_secondaryTimer)
             m_secondaryTimer->stop();
-        setMinimumWidth(320);
+        setMinimumWidth(280);
         relayoutBar();
     }
 }
