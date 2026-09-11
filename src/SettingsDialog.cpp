@@ -29,6 +29,14 @@
 #include <QUrl>
 #include <QApplication>
 #include <QIcon>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QUrl>
+#include <QMessageBox>
 #include <QScrollArea>
 #include <QFrame>
 #include <QFormLayout>
@@ -298,20 +306,41 @@ void SettingsDialog::setupUi()
     form->addRow(tr("价格预测："), forecastLayout);
     connect(m_forecastSlider, &QSlider::valueChanged, this, &SettingsDialog::onForecastSliderChanged);
 
+    m_providerLabel = new QLabel(tr("大模型提供方："), this);
+    m_providerCombo = new QComboBox(this);
+    m_providerCombo->setMinimumWidth(200);
+    m_providerCombo->addItem(tr("xAI (Grok)"), QStringLiteral("xai"));
+    m_providerCombo->addItem(tr("Google Gemini"), QStringLiteral("gemini"));
+    form->addRow(m_providerLabel, m_providerCombo);
+    connect(m_providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsDialog::onProviderChanged);
+
     m_apiKeyEdit = new QLineEdit(this);
     m_apiKeyEdit->setEchoMode(QLineEdit::Password);
-    m_apiKeyEdit->setPlaceholderText(tr("xAI API Key（console.x.ai）"));
+    m_apiKeyEdit->setPlaceholderText(tr("API Key"));
     m_apiKeyLabel = new QLabel(tr("API Key："), this);
     form->addRow(m_apiKeyLabel, m_apiKeyEdit);
+    connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this]() {
+        if (!m_apiKeyEdit->text().trimmed().isEmpty()
+            && m_forecastSlider && m_forecastSlider->value() == 1)
+            onRefreshModels();
+    });
 
     m_modelCombo = new QComboBox(this);
     m_modelCombo->setEditable(true);
-    m_modelCombo->addItem(QStringLiteral("grok-4.6"));
-    m_modelCombo->addItem(QStringLiteral("grok-4.5"));
-    m_modelCombo->addItem(QStringLiteral("grok-3-mini"));
-    m_modelCombo->addItem(QStringLiteral("grok-3"));
+    m_modelCombo->setMinimumWidth(200);
     m_modelLabel = new QLabel(tr("模型："), this);
-    form->addRow(m_modelLabel, m_modelCombo);
+    auto* modelLay = new QHBoxLayout;
+    modelLay->addWidget(m_modelCombo, 1);
+    m_refreshModelsBtn = new QPushButton(tr("拉取模型"), this);
+    m_refreshModelsBtn->setObjectName(QStringLiteral("wideAction"));
+    m_refreshModelsBtn->setToolTip(tr("使用当前 API Key 从服务商拉取可用模型列表"));
+    modelLay->addWidget(m_refreshModelsBtn);
+    form->addRow(m_modelLabel, modelLay);
+    connect(m_refreshModelsBtn, &QPushButton::clicked, this, &SettingsDialog::onRefreshModels);
+
+    m_modelsNam = new QNetworkAccessManager(this);
+    fillDefaultModels();
 
     m_autoStartCheck = new QCheckBox(tr("开机自动启动"), this);
     form->addRow("", m_autoStartCheck);
@@ -421,6 +450,12 @@ void SettingsDialog::loadFromSettings()
 
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
+    {
+        const int pi = m_providerCombo->findData(settings.llmProvider());
+        m_providerCombo->setCurrentIndex(pi >= 0 ? pi : 0);
+    }
+    updateApiKeyPlaceholder();
+    fillDefaultModels();
     m_apiKeyEdit->setText(settings.xaiApiKey());
 
     const QString model = settings.xaiModel();
@@ -515,6 +550,182 @@ void SettingsDialog::onCheckUpdate()
     checker->check(this, false);
 }
 
+
+void SettingsDialog::fillDefaultModels()
+{
+    if (!m_modelCombo || !m_providerCombo)
+        return;
+    const QString cur = m_modelCombo->currentText();
+    m_modelCombo->clear();
+    const QString prov = m_providerCombo->currentData().toString();
+    if (prov == QStringLiteral("gemini")) {
+        m_modelCombo->addItem(QStringLiteral("gemini-2.0-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-2.0-flash-lite"));
+        m_modelCombo->addItem(QStringLiteral("gemini-1.5-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-1.5-pro"));
+        m_modelCombo->addItem(QStringLiteral("gemini-2.5-flash-preview-05-20"));
+    } else {
+        m_modelCombo->addItem(QStringLiteral("grok-4.6"));
+        m_modelCombo->addItem(QStringLiteral("grok-4.5"));
+        m_modelCombo->addItem(QStringLiteral("grok-3-mini"));
+        m_modelCombo->addItem(QStringLiteral("grok-3"));
+    }
+    if (!cur.isEmpty()) {
+        int i = m_modelCombo->findText(cur);
+        if (i >= 0)
+            m_modelCombo->setCurrentIndex(i);
+        else
+            m_modelCombo->setEditText(cur);
+    }
+}
+
+void SettingsDialog::updateApiKeyPlaceholder()
+{
+    if (!m_apiKeyEdit || !m_providerCombo)
+        return;
+    if (m_providerCombo->currentData().toString() == QStringLiteral("gemini"))
+        m_apiKeyEdit->setPlaceholderText(tr("Gemini API Key（aistudio.google.com）"));
+    else
+        m_apiKeyEdit->setPlaceholderText(tr("xAI API Key（console.x.ai）"));
+}
+
+void SettingsDialog::onProviderChanged(int)
+{
+    updateApiKeyPlaceholder();
+    fillDefaultModels();
+    if (!m_apiKeyEdit->text().trimmed().isEmpty() && m_forecastSlider
+        && m_forecastSlider->value() == 1)
+        onRefreshModels();
+}
+
+void SettingsDialog::onRefreshModels()
+{
+    if (!m_modelsNam || !m_apiKeyEdit)
+        return;
+    const QString key = m_apiKeyEdit->text().trimmed();
+    if (key.isEmpty()) {
+        QMessageBox::information(this, tr("拉取模型"), tr("请先填写 API Key"));
+        return;
+    }
+    if (m_modelsReply) {
+        m_modelsReply->abort();
+        m_modelsReply->deleteLater();
+        m_modelsReply.clear();
+    }
+
+    const QString prov = m_providerCombo->currentData().toString();
+    QNetworkRequest req;
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                     QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(20000);
+    req.setHeader(QNetworkRequest::UserAgentHeader,
+                  QStringLiteral("GoldPriceBarLite/0.7.7"));
+
+    if (prov == QStringLiteral("gemini")) {
+        const QUrl url(QStringLiteral(
+            "https://generativelanguage.googleapis.com/v1beta/models?key=%1&pageSize=100")
+                           .arg(QString::fromUtf8(QUrl::toPercentEncoding(key))));
+        req.setUrl(url);
+        m_modelsReply = m_modelsNam->get(req);
+    } else {
+        req.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/models")));
+        req.setRawHeader("Authorization",
+                         QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+        m_modelsReply = m_modelsNam->get(req);
+    }
+    if (m_refreshModelsBtn)
+        m_refreshModelsBtn->setEnabled(false);
+    connect(m_modelsReply, &QNetworkReply::finished, this,
+            &SettingsDialog::onModelsListFinished);
+}
+
+void SettingsDialog::onModelsListFinished()
+{
+    if (m_refreshModelsBtn)
+        m_refreshModelsBtn->setEnabled(true);
+    QNetworkReply* reply = m_modelsReply;
+    if (!reply)
+        reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply)
+        return;
+    if (m_modelsReply.data() == reply)
+        m_modelsReply.clear();
+
+    const QByteArray raw = reply->readAll();
+    const auto err = reply->error();
+    const QString errStr = reply->errorString();
+    reply->deleteLater();
+
+    if (err != QNetworkReply::NoError) {
+        QMessageBox::warning(this, tr("拉取模型"),
+                             tr("请求失败：%1").arg(errStr));
+        return;
+    }
+
+    QJsonParseError pe{};
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &pe);
+    if (pe.error != QJsonParseError::NoError) {
+        QMessageBox::warning(this, tr("拉取模型"), tr("JSON 解析失败"));
+        return;
+    }
+
+    QStringList models;
+    const QString prov = m_providerCombo->currentData().toString();
+    if (prov == QStringLiteral("gemini")) {
+        const QJsonArray arr = doc.object().value(QStringLiteral("models")).toArray();
+        for (const QJsonValue& v : arr) {
+            const QJsonObject o = v.toObject();
+            const QJsonArray methods = o.value(QStringLiteral("supportedGenerationMethods")).toArray();
+            bool canGen = false;
+            for (const QJsonValue& m : methods) {
+                if (m.toString() == QStringLiteral("generateContent")) {
+                    canGen = true;
+                    break;
+                }
+            }
+            if (!canGen)
+                continue;
+            QString name = o.value(QStringLiteral("name")).toString();
+            if (name.startsWith(QStringLiteral("models/")))
+                name = name.mid(7);
+            if (!name.isEmpty())
+                models.append(name);
+        }
+    } else {
+        // OpenAI-style: { data: [ { id: "grok-..." } ] }
+        QJsonArray arr = doc.object().value(QStringLiteral("data")).toArray();
+        if (arr.isEmpty() && doc.isArray())
+            arr = doc.array();
+        for (const QJsonValue& v : arr) {
+            const QString id = v.toObject().value(QStringLiteral("id")).toString();
+            if (!id.isEmpty())
+                models.append(id);
+        }
+    }
+
+    models.removeDuplicates();
+    models.sort();
+    if (models.isEmpty()) {
+        QMessageBox::information(this, tr("拉取模型"),
+                                 tr("未解析到可用模型，已保留默认列表"));
+        fillDefaultModels();
+        return;
+    }
+
+    const QString keep = m_modelCombo->currentText();
+    m_modelCombo->clear();
+    for (const QString& m : models)
+        m_modelCombo->addItem(m);
+    int i = m_modelCombo->findText(keep);
+    if (i >= 0)
+        m_modelCombo->setCurrentIndex(i);
+    else if (!keep.isEmpty())
+        m_modelCombo->setEditText(keep);
+
+    QMessageBox::information(this, tr("拉取模型"),
+                             tr("已加载 %1 个模型").arg(models.size()));
+}
 
 void SettingsDialog::applyDialogTheme()
 {

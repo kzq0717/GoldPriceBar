@@ -43,6 +43,19 @@ void AppSettings::setXaiApiKey(const QString& key)
 { if (m_xaiApiKey != key) { m_xaiApiKey = key; emit settingsChanged(); } }
 
 QString AppSettings::xaiModel() const { return m_xaiModel; }
+
+QString AppSettings::llmProvider() const { return m_llmProvider; }
+void AppSettings::setLlmProvider(const QString& provider)
+{
+    QString p = provider.trimmed().toLower();
+    if (p != QStringLiteral("gemini"))
+        p = QStringLiteral("xai");
+    if (m_llmProvider != p) {
+        m_llmProvider = p;
+        emit settingsChanged();
+    }
+}
+
 void AppSettings::setXaiModel(const QString& model)
 {
     const QString m = model.isEmpty() ? QStringLiteral("grok-4.6") : model;
@@ -245,6 +258,9 @@ void AppSettings::load()
     m_forecastOnline     = s.value("forecastOnline", false).toBool();
     m_xaiApiKey          = s.value("xaiApiKey", "").toString();
     m_xaiModel           = s.value("xaiModel", "grok-4.6").toString();
+    m_llmProvider        = s.value("llmProvider", "xai").toString();
+    if (m_llmProvider != QStringLiteral("gemini"))
+        m_llmProvider = QStringLiteral("xai");
     m_databaseDir        = s.value("databaseDir", "").toString().trimmed();
     m_alertHigh          = s.value("alertHigh", 0.0).toDouble();
     m_alertLow           = s.value("alertLow", 0.0).toDouble();
@@ -295,6 +311,7 @@ void AppSettings::save()
     s.setValue("forecastOnline", m_forecastOnline);
     s.setValue("xaiApiKey", m_xaiApiKey);
     s.setValue("xaiModel", m_xaiModel);
+    s.setValue("llmProvider", m_llmProvider);
     s.setValue("databaseDir", m_databaseDir);
     s.setValue("alertHigh", m_alertHigh);
     s.setValue("alertLow", m_alertLow);

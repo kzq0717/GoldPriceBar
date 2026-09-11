@@ -389,7 +389,10 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
   const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
   if (m_lastForecastMs == 0 ||
       (nowMs - m_lastForecastMs) >= kForecastIntervalMs) {
-    updateForecast();
+    if (AppSettings::instance().forecastOnline())
+      requestOnlineForecast();
+    else
+      updateForecast();
   }
 }
 
@@ -738,8 +741,110 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
 }
 
 void ChartWindow::requestOnlineForecast() {
-  // 已改为「预测当日最高/最低」，不再请求 2 分钟路径；统一本地日高低模型
-  updateForecast();
+  if (!AppSettings::instance().forecastOnline()) {
+    updateForecast();
+    return;
+  }
+  if (m_pendingForecast)
+    return;
+  if (m_plotPoints.isEmpty()) {
+    updateForecast();
+    return;
+  }
+  if (!m_network)
+    m_network = new QNetworkAccessManager(this);
+
+  const QString apiKey = AppSettings::instance().xaiApiKey().trimmed();
+  if (apiKey.isEmpty()) {
+    updateForecast();
+    return;
+  }
+
+  // 构造摘要
+  const int n = m_plotPoints.size();
+  const int take = qMin(30, n);
+  QString seriesText;
+  for (int i = n - take; i < n; ++i) {
+    const auto& pt = m_plotPoints.at(i);
+    seriesText += QStringLiteral("%1 %2\n")
+                      .arg(pt.first.toString(QStringLiteral("HH:mm")))
+                      .arg(pt.second, 0, 'f', 2);
+  }
+  double actH = 0, actL = 0;
+  HistoryCache::instance().todayHigh(actH);
+  HistoryCache::instance().todayLow(actL);
+  const double lastPrice = m_plotPoints.last().second;
+  const QString src = currentTypeCode();
+  const QString provider = AppSettings::instance().llmProvider();
+  QString model = AppSettings::instance().xaiModel().trimmed();
+  if (model.isEmpty())
+    model = (provider == QStringLiteral("gemini")) ? QStringLiteral("gemini-2.0-flash")
+                                                   : QStringLiteral("grok-4.6");
+
+  const QString systemPrompt = QStringLiteral(
+      "你是黄金短线分析助手。根据用户提供的今日分时与已出现高低，估计「当日剩余时段」可能达到的最高价与最低价。"
+      "只输出一个 JSON 对象，不要 Markdown。格式："
+      "{\"pred_high\":0.0,\"pred_low\":0.0,\"brief\":\"一句话理由\"}。"
+      "pred_high 不得低于已出现今高，pred_low 不得高于已出现今低；幅度应克制，避免极端跳跃。这不是投资建议。");
+
+  const QString userPrompt =
+      QStringLiteral("品种:%1\n现价:%2\n已出现今高:%3 今低:%4\n最近分时:\n%5\n请给出今日预测最高/最低 JSON。")
+          .arg(src)
+          .arg(lastPrice, 0, 'f', 2)
+          .arg(actH > 0 ? actH : lastPrice, 0, 'f', 2)
+          .arg(actL > 0 ? actL : lastPrice, 0, 'f', 2)
+          .arg(seriesText);
+
+  QNetworkRequest request;
+  request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.7.7"));
+  request.setTransferTimeout(30000);
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
+
+  QNetworkReply* reply = nullptr;
+  if (provider == QStringLiteral("gemini")) {
+    if (model.startsWith(QStringLiteral("models/")))
+      model = model.mid(7);
+    const QUrl url(QStringLiteral(
+        "https://generativelanguage.googleapis.com/v1beta/models/%1:generateContent?key=%2")
+                       .arg(model, QString::fromUtf8(QUrl::toPercentEncoding(apiKey))));
+    request.setUrl(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    QJsonObject body;
+    QJsonArray contents;
+    QJsonObject userMsg;
+    userMsg.insert(QStringLiteral("role"), QStringLiteral("user"));
+    QJsonArray parts;
+    parts.append(QJsonObject{{QStringLiteral("text"), systemPrompt + QStringLiteral("\n\n") + userPrompt}});
+    userMsg.insert(QStringLiteral("parts"), parts);
+    contents.append(userMsg);
+    body.insert(QStringLiteral("contents"), contents);
+    QJsonObject genCfg;
+    genCfg.insert(QStringLiteral("temperature"), 0.2);
+    genCfg.insert(QStringLiteral("maxOutputTokens"), 400);
+    body.insert(QStringLiteral("generationConfig"), genCfg);
+    reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+  } else {
+    request.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/chat/completions")));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
+    QJsonObject body;
+    body.insert(QStringLiteral("model"), model);
+    body.insert(QStringLiteral("temperature"), 0.2);
+    body.insert(QStringLiteral("max_tokens"), 400);
+    QJsonArray messages;
+    messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
+                                {QStringLiteral("content"), systemPrompt}});
+    messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                {QStringLiteral("content"), userPrompt}});
+    body.insert(QStringLiteral("messages"), messages);
+    reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+  }
+
+  m_pendingForecast = reply;
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    onOnlineForecastFinished(reply);
+  });
 }
 
 void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
@@ -747,8 +852,123 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     return;
   if (m_pendingForecast.data() == reply)
     m_pendingForecast.clear();
+
+  auto fallback = [this](const QString& tag) {
+    m_forecastModeTag = tag;
+    updateForecast();
+  };
+
+  if (reply->error() != QNetworkReply::NoError) {
+    const QString err = reply->errorString();
+    reply->deleteLater();
+    fallback(tr("在线失败·本地"));
+    Q_UNUSED(err);
+    return;
+  }
+
+  const QByteArray raw = reply->readAll();
   reply->deleteLater();
-  updateForecast();
+
+  QJsonParseError pe{};
+  const QJsonDocument doc = QJsonDocument::fromJson(raw, &pe);
+  if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+    fallback(tr("解析失败·本地"));
+    return;
+  }
+
+  // 取出模型文本
+  QString content;
+  const QJsonObject root = doc.object();
+  if (root.contains(QStringLiteral("candidates"))) {
+    // Gemini
+    const QJsonArray cands = root.value(QStringLiteral("candidates")).toArray();
+    if (!cands.isEmpty()) {
+      const QJsonArray parts = cands.at(0).toObject()
+                                   .value(QStringLiteral("content")).toObject()
+                                   .value(QStringLiteral("parts")).toArray();
+      if (!parts.isEmpty())
+        content = parts.at(0).toObject().value(QStringLiteral("text")).toString();
+    }
+  } else if (root.contains(QStringLiteral("choices"))) {
+    content = root.value(QStringLiteral("choices")).toArray().at(0).toObject()
+                  .value(QStringLiteral("message")).toObject()
+                  .value(QStringLiteral("content")).toString();
+  }
+
+  content = content.trimmed();
+  // 剥离可能的 ```json 包裹
+  if (content.startsWith(QStringLiteral("```"))) {
+    const int nl = content.indexOf(QLatin1Char('\n'));
+    if (nl > 0)
+      content = content.mid(nl + 1);
+    if (content.endsWith(QStringLiteral("```")))
+      content.chop(3);
+    content = content.trimmed();
+  }
+
+  QJsonParseError pe2{};
+  QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
+  if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
+    // 尝试截取第一个 { ... }
+    const int a = content.indexOf(QLatin1Char('{'));
+    const int b = content.lastIndexOf(QLatin1Char('}'));
+    if (a >= 0 && b > a)
+      jdoc = QJsonDocument::fromJson(content.mid(a, b - a + 1).toUtf8(), &pe2);
+  }
+  if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
+    fallback(tr("JSON无效·本地"));
+    return;
+  }
+
+  const QJsonObject jo = jdoc.object();
+  double predHigh = jo.value(QStringLiteral("pred_high")).toDouble();
+  double predLow = jo.value(QStringLiteral("pred_low")).toDouble();
+  if (predHigh <= 0 || predLow <= 0 || predHigh < predLow) {
+    fallback(tr("数值无效·本地"));
+    return;
+  }
+
+  double actH = 0, actL = 0;
+  HistoryCache::instance().todayHigh(actH);
+  HistoryCache::instance().todayLow(actL);
+  if (actH > 0)
+    predHigh = qMax(predHigh, actH);
+  if (actL > 0)
+    predLow = qMin(predLow, actL);
+
+  m_lastPredictHigh = predHigh;
+  m_lastPredictLow = predLow;
+  m_lastPredictPrice = predHigh;
+  m_hasPredict = true;
+  const QString brief = jo.value(QStringLiteral("brief")).toString();
+  const QString prov = AppSettings::instance().llmProvider();
+  m_forecastModeTag = (prov == QStringLiteral("gemini") ? tr("Gemini") : tr("Grok"))
+                      + (brief.isEmpty() ? QString() : QStringLiteral("·") + brief.left(24));
+
+  if (m_forecastSeries) {
+    m_forecastSeries->clear();
+    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+    m_forecastSeries->append(t0.toMSecsSinceEpoch(), predHigh);
+    m_forecastSeries->append(t1.toMSecsSinceEpoch(), predHigh);
+  }
+  if (m_forecastLowSeries) {
+    m_forecastLowSeries->clear();
+    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+    m_forecastLowSeries->append(t0.toMSecsSinceEpoch(), predLow);
+    m_forecastLowSeries->append(t1.toMSecsSinceEpoch(), predLow);
+  }
+
+  ForecastTracker::instance().recordDayRange(
+      QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
+
+  m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
+  double high = 0, low = 0;
+  HistoryCache::instance().todayHigh(high);
+  HistoryCache::instance().todayLow(low);
+  const double cur = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
+  updateSidePanelValues(cur, predHigh, true, high, low, m_forecastModeTag);
 }
 
 void ChartWindow::updateHighLowMarkers() {

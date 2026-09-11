@@ -33,6 +33,10 @@ public:
     QString xaiModel() const;
     void setXaiModel(const QString& model);
 
+    /** 大模型提供方：xai | gemini */
+    QString llmProvider() const;
+    void setLlmProvider(const QString& provider);
+
     QString databaseDir() const;
     void setDatabaseDir(const QString& dir);
     QString resolvedDatabaseDir() const;
@@ -149,6 +153,7 @@ private:
     bool m_forecastOnline = false;
     QString m_xaiApiKey;
     QString m_xaiModel = "grok-4.6";
+    QString m_llmProvider = "xai";
     QString m_databaseDir;
     double m_alertHigh = 0.0;
     double m_alertLow = 0.0;

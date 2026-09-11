@@ -2,6 +2,7 @@
 #define SETTINGSDIALOG_H
 
 #include <QDialog>
+#include <QPointer>
 
 class QComboBox;
 class QSlider;
@@ -27,12 +28,17 @@ private slots:
     void onForecastSliderChanged(int value);
     void onExitApp();
     void onCheckUpdate();
+    void onProviderChanged(int index);
+    void onRefreshModels();
+    void onModelsListFinished();
 
 private:
     void setupUi();
     void loadFromSettings();
     void updateForecastUiState();
     void applyDialogTheme();
+    void fillDefaultModels();
+    void updateApiKeyPlaceholder();
 
     QComboBox* m_intervalCombo = nullptr;
     QComboBox* m_sourceCombo = nullptr;
@@ -42,10 +48,15 @@ private:
 
     QSlider* m_forecastSlider = nullptr;
     QLabel* m_forecastModeLabel = nullptr;
+    QComboBox* m_providerCombo = nullptr;
+    QLabel* m_providerLabel = nullptr;
     QLineEdit* m_apiKeyEdit = nullptr;
     QComboBox* m_modelCombo = nullptr;
     QLabel* m_apiKeyLabel = nullptr;
     QLabel* m_modelLabel = nullptr;
+    QPushButton* m_refreshModelsBtn = nullptr;
+    class QNetworkAccessManager* m_modelsNam = nullptr;
+    QPointer<class QNetworkReply> m_modelsReply;
 
     QLineEdit* m_dbDirEdit = nullptr;
     QPushButton* m_dbDirBrowseBtn = nullptr;
