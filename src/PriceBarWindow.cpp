@@ -10,10 +10,12 @@
 #include "EventCalendar.h"
 
 #include <QHBoxLayout>
+#include <QSizePolicy>
 #include <QLabel>
 #include <QToolButton>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QIcon>
@@ -45,8 +47,10 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
                    | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
-    setFixedHeight(40);
-    setMinimumWidth(360);
+    // 高度随内容自适应，不再锁死；宽度可随对照/盈亏展开
+    setMinimumWidth(320);
+    setMinimumHeight(36);
+    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
 
     setupUi();
     setupTray();
@@ -188,6 +192,8 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_settingsButton);
 
     applyTheme();
+    installDragFilter();
+    relayoutBar();
     setupHotkey();
 }
 
@@ -356,15 +362,19 @@ void PriceBarWindow::mousePressEvent(QMouseEvent* event)
         m_dragging = true;
         m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
         event->accept();
+        return;
     }
+    QWidget::mousePressEvent(event);
 }
 
 void PriceBarWindow::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_dragging && (event->buttons() & Qt::LeftButton)) {
         QPoint pos = event->globalPosition().toPoint() - m_dragOffset;
-        // 支持横向与纵向自由拖拽，并限制在可用屏幕内
-        if (QScreen* screen = QApplication::screenAt(event->globalPosition().toPoint())) {
+        QScreen* screen = QApplication::screenAt(event->globalPosition().toPoint());
+        if (!screen)
+            screen = QApplication::primaryScreen();
+        if (screen) {
             const QRect geo = screen->availableGeometry();
             pos.setX(qBound(geo.left(), pos.x(), geo.right() - width() + 1));
             pos.setY(qBound(geo.top(), pos.y(), geo.bottom() - height() + 1));
@@ -378,10 +388,80 @@ void PriceBarWindow::mouseMoveEvent(QMouseEvent* event)
 
 void PriceBarWindow::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton) {
+    if (event->button() == Qt::LeftButton && m_dragging) {
         m_dragging = false;
         event->accept();
+        return;
     }
+    QWidget::mouseReleaseEvent(event);
+}
+
+bool PriceBarWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // 子控件（标签/按钮）会抢走鼠标，导致只能点空白处拖、纵向几乎拖不动
+    if (event->type() == QEvent::MouseButtonPress
+        || event->type() == QEvent::MouseMove
+        || event->type() == QEvent::MouseButtonRelease) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        // 工具按钮左键交给自身点击；其余区域一律用于拖动
+        const bool isToolBtn = qobject_cast<QToolButton*>(watched) != nullptr;
+        if (isToolBtn && event->type() == QEvent::MouseButtonPress
+            && me->button() == Qt::LeftButton) {
+            return QWidget::eventFilter(watched, event);
+        }
+        if (event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+            m_dragging = true;
+            m_dragOffset = me->globalPosition().toPoint() - frameGeometry().topLeft();
+            return true;
+        }
+        if (event->type() == QEvent::MouseMove && m_dragging
+            && (me->buttons() & Qt::LeftButton)) {
+            QPoint pos = me->globalPosition().toPoint() - m_dragOffset;
+            QScreen* screen = QApplication::screenAt(me->globalPosition().toPoint());
+            if (!screen)
+                screen = QApplication::primaryScreen();
+            if (screen) {
+                const QRect geo = screen->availableGeometry();
+                pos.setX(qBound(geo.left(), pos.x(), geo.right() - width() + 1));
+                pos.setY(qBound(geo.top(), pos.y(), geo.bottom() - height() + 1));
+            }
+            move(pos);
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonRelease && me->button() == Qt::LeftButton) {
+            if (m_dragging) {
+                m_dragging = false;
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void PriceBarWindow::installDragFilter()
+{
+    const auto kids = findChildren<QWidget*>();
+    for (QWidget* w : kids) {
+        if (w == this)
+            continue;
+        w->installEventFilter(this);
+        // 标签不抢焦点，便于拖动
+        if (qobject_cast<QLabel*>(w))
+            w->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    }
+}
+
+void PriceBarWindow::relayoutBar()
+{
+    if (!layout())
+        return;
+    layout()->activate();
+    const QSize sh = layout()->sizeHint().expandedTo(layout()->minimumSize());
+    const int h = qMax(36, sh.height());
+    const int w = qMax(320, sh.width());
+    setMinimumSize(w, h);
+    setMaximumHeight(QWIDGETSIZE_MAX);
+    resize(qMax(width(), w), h);
 }
 
 void PriceBarWindow::closeEvent(QCloseEvent* event)
@@ -479,13 +559,15 @@ void PriceBarWindow::updateSecondaryVisibility()
                 m_secondaryTimer->start();
             }
         }
-        setMinimumWidth(420);
+        setMinimumWidth(400);
+        relayoutBar();
     } else {
         m_secondaryLabel->hide();
         m_secondaryLabel->clear();
         if (m_secondaryTimer)
             m_secondaryTimer->stop();
-        setMinimumWidth(360);
+        setMinimumWidth(320);
+        relayoutBar();
     }
 }
 
@@ -746,6 +828,7 @@ void PriceBarWindow::updatePnLDisplay(double price)
         m_pnlLabel->setText(tr("亏 %1 (%2%)").arg(-pnl, 0, 'f', 1).arg(pct, 0, 'f', 2));
     else
         m_pnlLabel->setText(tr("盈 %1 (+%2%)").arg(pnl, 0, 'f', 1).arg(pct, 0, 'f', 2));
+    relayoutBar();
 }
 
 double PriceBarWindow::computeMa5() const

@@ -34,6 +34,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onPriceUpdated(double price, double change, const QString& sourceName);
@@ -63,6 +64,9 @@ private:
     void showDailyReport(bool force = false);
     void updateNetworkHealth();
     void checkEventAlerts();
+    void installDragFilter();
+    void relayoutBar();
+
 
     QString buildDailyReportText() const;
     double computeMa5() const;

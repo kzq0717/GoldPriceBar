@@ -42,44 +42,9 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     resize(560, 720);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     setWindowIcon(QIcon(QStringLiteral(":/app.png")));
-    setStyleSheet(
-        "QDialog { background: #f7f8fa; }"
-        "QLabel { font-size: 13px; color: #333; }"
-        "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {"
-        "  min-height: 30px;"
-        "  min-width: 120px;"
-        "  padding: 4px 10px;"
-        "  border: 1px solid #c5cdd8;"
-        "  border-radius: 6px;"
-        "  background: #ffffff;"
-        "  font-size: 13px;"
-        "}"
-        "QComboBox::drop-down { width: 28px; border: none; }"
-        "QComboBox QAbstractItemView {"
-        "  min-width: 160px;"
-        "  padding: 4px;"
-        "  selection-background-color: #0052d9;"
-        "}"
-        "QCheckBox { spacing: 8px; min-height: 26px; font-size: 13px; }"
-        "QPushButton {"
-        "  min-height: 34px;"
-        "  min-width: 100px;"
-        "  padding: 6px 16px;"
-        "  border-radius: 6px;"
-        "  border: 1px solid #c5cdd8;"
-        "  background: #ffffff;"
-        "  font-size: 13px;"
-        "}"
-        "QPushButton:hover { background: #eef3ff; border-color: #0052d9; }"
-        "QPushButton:default, QPushButton#okButton {"
-        "  background: #0052d9; color: white; border: none;"
-        "}"
-        "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #dde3ea; }"
-        "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #0052d9; }"
-    );
-
     setupUi();
     loadFromSettings();
+    applyDialogTheme();
 }
 
 void SettingsDialog::setupUi()
@@ -89,6 +54,7 @@ void SettingsDialog::setupUi()
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     auto* formHost = new QWidget(scroll);
+    formHost->setObjectName(QStringLiteral("settingsFormHost"));
     auto* form = new QFormLayout(formHost);
     form->setContentsMargins(12, 12, 16, 12);
     form->setSpacing(12);
@@ -155,7 +121,7 @@ void SettingsDialog::setupUi()
     m_secondaryPriceCheck = new QCheckBox(tr("词条显示对照价（主源非伦敦金时显示伦敦金）"), this);
     form->addRow("", m_secondaryPriceCheck);
 
-    m_darkThemeCheck = new QCheckBox(tr("深色主题（价格条 / 分时窗口）"), this);
+    m_darkThemeCheck = new QCheckBox(tr("深色主题（价格条 / 分时 / 设置）"), this);
     form->addRow("", m_darkThemeCheck);
 
     m_maCheck = new QCheckBox(tr("分时显示均线 MA5日 / MA20日（近5/20个交易日收盘）"), this);
@@ -237,7 +203,7 @@ void SettingsDialog::setupUi()
     form->addRow("", m_eventAlertCheck);
     m_eventSummaryLabel = new QLabel(EventCalendar::summaryNear(), this);
     m_eventSummaryLabel->setWordWrap(true);
-    m_eventSummaryLabel->setStyleSheet("color:#888;font-size:11px;");
+    m_eventSummaryLabel->setStyleSheet("font-size:11px;");
     form->addRow(tr("近10日日程："), m_eventSummaryLabel);
 
     m_suggestAlertBtn = new QPushButton(tr("按近20日波动建议高低预警"), this);
@@ -302,7 +268,7 @@ void SettingsDialog::setupUi()
 
     auto* forecastLayout = new QHBoxLayout;
     auto* localLbl = new QLabel(tr("本地"), this);
-    localLbl->setStyleSheet("color:#666;font-size:11px;");
+    localLbl->setStyleSheet("font-size:11px;");
     m_forecastSlider = new QSlider(Qt::Horizontal, this);
     m_forecastSlider->setRange(0, 1);
     m_forecastSlider->setPageStep(1);
@@ -310,7 +276,7 @@ void SettingsDialog::setupUi()
     m_forecastSlider->setValue(0);
     m_forecastSlider->setFixedWidth(80);
     auto* onlineLbl = new QLabel(tr("大模型"), this);
-    onlineLbl->setStyleSheet("color:#666;font-size:11px;");
+    onlineLbl->setStyleSheet("font-size:11px;");
     m_forecastModeLabel = new QLabel(tr("本地推演"), this);
     m_forecastModeLabel->setStyleSheet("color:#0052d9;font-size:12px;font-weight:bold;");
     forecastLayout->addWidget(localLbl);
@@ -348,7 +314,7 @@ void SettingsDialog::setupUi()
            "退出可直接点下方「退出软件」。"),
         this);
     hint->setWordWrap(true);
-    hint->setStyleSheet("color:#888;font-size:11px;");
+    hint->setStyleSheet("font-size:11px;");
     mainLayout->addWidget(hint);
     mainLayout->addStretch();
 
@@ -357,9 +323,7 @@ void SettingsDialog::setupUi()
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* exitBtn = new QPushButton(tr("退出软件"), this);
-    exitBtn->setStyleSheet(
-        "QPushButton{color:#c0392b;font-weight:bold;padding:6px 14px;}"
-        "QPushButton:hover{background:#fdecea;}");
+    exitBtn->setObjectName(QStringLiteral("exitButton"));
     connect(exitBtn, &QPushButton::clicked, this, &SettingsDialog::onExitApp);
 
     auto* logBtn = new QPushButton(tr("打开日志目录"), this);
@@ -539,4 +503,67 @@ void SettingsDialog::onCheckUpdate()
 {
     auto* checker = new UpdateChecker(this);
     checker->check(this, false);
+}
+
+
+void SettingsDialog::applyDialogTheme()
+{
+    const bool dark = AppSettings::instance().darkTheme();
+    if (dark) {
+        setStyleSheet(
+            "QDialog, QScrollArea, QWidget#qt_scrollarea_viewport, QWidget#settingsFormHost { background: #1e222a; color: #e8eaed; }"
+            "QLabel { font-size: 13px; color: #cfd3dc; }"
+            "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {"
+            "  min-height: 32px; min-width: 120px; padding: 4px 10px;"
+            "  border: 1px solid #3d4450; border-radius: 6px;"
+            "  background: #2a303a; color: #e8eaed; font-size: 13px;"
+            "  selection-background-color: #0052d9; selection-color: #ffffff;"
+            "}"
+            "QComboBox::drop-down { width: 28px; border: none; }"
+            "QComboBox QAbstractItemView {"
+            "  min-width: 160px; padding: 4px; background: #2a303a; color: #e8eaed;"
+            "  selection-background-color: #0052d9; border: 1px solid #3d4450;"
+            "}"
+            "QCheckBox { spacing: 8px; min-height: 26px; font-size: 13px; color: #e8eaed; }"
+            "QCheckBox::indicator { width: 16px; height: 16px; }"
+            "QPushButton {"
+            "  min-height: 34px; min-width: 100px; padding: 6px 16px; border-radius: 6px;"
+            "  border: 1px solid #4a5160; background: #2f3642; color: #e8eaed; font-size: 13px;"
+            "}"
+            "QPushButton:hover { background: #3a4250; border-color: #5b8def; }"
+            "QPushButton:default { background: #0052d9; color: white; border: none; }"
+            "QPushButton#exitButton { color: #ff8a80; font-weight: bold; border-color: #5c2b2b; }"
+            "QPushButton#exitButton:hover { background: #4a2222; }"
+            "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #3d4450; }"
+            "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #5b8def; }"
+            "QDialogButtonBox QPushButton { min-width: 88px; }"
+        );
+    } else {
+        setStyleSheet(
+            "QDialog, QScrollArea, QWidget#settingsFormHost { background: #f7f8fa; color: #333; }"
+            "QLabel { font-size: 13px; color: #333; }"
+            "QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {"
+            "  min-height: 32px; min-width: 120px; padding: 4px 10px;"
+            "  border: 1px solid #c5cdd8; border-radius: 6px;"
+            "  background: #ffffff; color: #1a1d23; font-size: 13px;"
+            "}"
+            "QComboBox::drop-down { width: 28px; border: none; }"
+            "QComboBox QAbstractItemView {"
+            "  min-width: 160px; padding: 4px; background: #ffffff; color: #1a1d23;"
+            "  selection-background-color: #0052d9; selection-color: #ffffff;"
+            "}"
+            "QCheckBox { spacing: 8px; min-height: 26px; font-size: 13px; color: #333; }"
+            "QPushButton {"
+            "  min-height: 34px; min-width: 100px; padding: 6px 16px; border-radius: 6px;"
+            "  border: 1px solid #c5cdd8; background: #ffffff; color: #1a1d23; font-size: 13px;"
+            "}"
+            "QPushButton:hover { background: #eef3ff; border-color: #0052d9; }"
+            "QPushButton:default { background: #0052d9; color: white; border: none; }"
+            "QPushButton#exitButton { color: #c0392b; font-weight: bold; }"
+            "QPushButton#exitButton:hover { background: #fdecea; }"
+            "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #dde3ea; }"
+            "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #0052d9; }"
+            "QDialogButtonBox QPushButton { min-width: 88px; }"
+        );
+    }
 }

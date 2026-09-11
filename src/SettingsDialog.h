@@ -32,6 +32,7 @@ private:
     void setupUi();
     void loadFromSettings();
     void updateForecastUiState();
+    void applyDialogTheme();
 
     QComboBox* m_intervalCombo = nullptr;
     QComboBox* m_sourceCombo = nullptr;
