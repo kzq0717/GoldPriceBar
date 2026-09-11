@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     QApplication::setApplicationName("GoldPriceBarLite");
-    QApplication::setApplicationVersion("0.7.7");
+    QApplication::setApplicationVersion("0.7.8");
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app.png")));
     QApplication::setOrganizationName("GoldPriceBarLite");
     QApplication::setOrganizationDomain("local");

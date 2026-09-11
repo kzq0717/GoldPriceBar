@@ -239,7 +239,7 @@ void ChartWindow::setupChart() {
   body->addWidget(m_chartView, 1);
 
   m_sidePanel = new QFrame(this);
-  m_sidePanel->setFixedWidth(140);
+  m_sidePanel->setFixedWidth(132);
   // 垂直扩展，高度与左侧 chartView 对齐
   m_sidePanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   m_sidePanel->setMinimumHeight(0);
@@ -271,26 +271,24 @@ void ChartWindow::setupChart() {
   m_sideCurrentLabel = mkValue(tr("--.--"), "#212529");
   sideLay->addWidget(m_sideCurrentLabel);
 
-  sideLay->addWidget(mkTitle(tr("预测今日高低")));
+  sideLay->addWidget(mkTitle(tr("预测高低")));
   m_sidePredictLabel = mkValue(tr("--.--"), "#e74c3c");
   sideLay->addWidget(m_sidePredictLabel);
 
-  m_sideModeLabel = new QLabel(tr("模式: 本地"), m_sidePanel);
+  m_sideModeLabel = new QLabel(tr("本地"), m_sidePanel);
   m_sideModeLabel->setStyleSheet("color:#888;font-size:10px;");
   m_sideModeLabel->setWordWrap(true);
   sideLay->addWidget(m_sideModeLabel);
 
-  sideLay->addWidget(mkTitle(tr("预测命中率")));
-  m_sideHitRateLabel = mkValue(tr("--%"), "#0052d9");
-  m_sideHitRateLabel->setStyleSheet("color:#0052d9;font-size:14px;font-weight:bold;");
-  sideLay->addWidget(m_sideHitRateLabel);
+  // 命中率等次要信息不再占右侧栏
+  m_sideHitRateLabel = nullptr;
 
   sideLay->addSpacing(6);
-  sideLay->addWidget(mkTitle(tr("今日最高")));
+  sideLay->addWidget(mkTitle(tr("今高")));
   m_sideHighLabel = mkValue(tr("--.--"), "#e74c3c");
   sideLay->addWidget(m_sideHighLabel);
 
-  sideLay->addWidget(mkTitle(tr("今日最低")));
+  sideLay->addWidget(mkTitle(tr("今低")));
   m_sideLowLabel = mkValue(tr("--.--"), "#27ae60");
   sideLay->addWidget(m_sideLowLabel);
 
@@ -613,16 +611,23 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
 }
 
 void ChartWindow::updateForecast() {
+  if (!isIntradayMode() || m_plotPoints.isEmpty()) {
+    m_hasPredict = false;
+    return;
+  }
+
+  // 大模型模式：走在线请求（带 Key）；本地模式才清线重算
+  if (AppSettings::instance().forecastOnline()
+      && !AppSettings::instance().xaiApiKey().trimmed().isEmpty()) {
+    requestOnlineForecast();
+    return;
+  }
+
   m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
   if (m_forecastSeries)
     m_forecastSeries->clear();
   if (m_forecastLowSeries)
     m_forecastLowSeries->clear();
-
-  if (!isIntradayMode() || m_plotPoints.isEmpty()) {
-    m_hasPredict = false;
-    return;
-  }
 
   double predHigh = 0.0, predLow = 0.0;
   if (!computeDayRangeForecast(predHigh, predLow)) {
@@ -632,16 +637,17 @@ void ChartWindow::updateForecast() {
 
   m_lastPredictHigh = predHigh;
   m_lastPredictLow = predLow;
-  m_lastPredictPrice = predHigh; // 侧栏主数字：预测最高
+  m_lastPredictPrice = predHigh;
   m_hasPredict = true;
-  m_forecastModeTag = tr("本地·日高低");
-  // 可解释摘要（侧栏模式行）
   {
       double actH = 0, actL = 0;
       HistoryCache::instance().todayHigh(actH);
       HistoryCache::instance().todayLow(actL);
-      m_forecastModeTag = tr("日高低·已走振幅%1")
+      m_forecastModeTag = tr("本地 · 振幅%1")
                               .arg(qMax(0.0, actH - actL), 0, 'f', 2);
+      if (!AppSettings::instance().xaiApiKey().trimmed().isEmpty()
+          && !AppSettings::instance().forecastOnline())
+        m_forecastModeTag = tr("本地（请开启「大模型」开关）");
   }
 
 
@@ -682,9 +688,7 @@ void ChartWindow::updateForecast() {
 void ChartWindow::applyForecastPoints(
     const QVector<QPair<QDateTime, double>> &forecast, const QString &modeTag) {
   Q_UNUSED(forecast);
-  // 在线路径若仍返回点列，统一改回「日高低」本地模型，避免 2 分钟路径残留
-  m_forecastModeTag = modeTag.isEmpty() ? tr("本地·日高低") : modeTag;
-  updateForecast();
+  Q_UNUSED(modeTag);
 }
 
 void ChartWindow::updateSidePanelValues(double current, double predict,
@@ -719,31 +723,18 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
     else
       m_sideLowLabel->setText(tr("--.--"));
   }
-  if (m_sideModeLabel)
-    m_sideModeLabel->setText(
-        tr("模式: %1").arg(modeTag.isEmpty() ? tr("本地") : modeTag));
-
-  if (m_sideHitRateLabel) {
-    auto& ft = ForecastTracker::instance();
-    const int n = ft.totalEvaluated();
-    if (n <= 0) {
-      m_sideHitRateLabel->setText(tr("--%"));
-    } else {
-      m_sideHitRateLabel->setText(
-          tr("总%1% 高%2% 低%3%\nMAE %4")
-              .arg(ft.hitRatePercent(), 0, 'f', 0)
-              .arg(ft.highHitRatePercent(), 0, 'f', 0)
-              .arg(ft.lowHitRatePercent(), 0, 'f', 0)
-              .arg(ft.meanAbsError(), 0, 'f', 2));
-    }
+  if (m_sideModeLabel) {
+    QString tag = modeTag.isEmpty() ? tr("本地") : modeTag;
+    if (tag.size() > 28)
+      tag = tag.left(28) + QStringLiteral("…");
+    m_sideModeLabel->setText(tag);
   }
 
 }
 
 void ChartWindow::requestOnlineForecast() {
   if (!AppSettings::instance().forecastOnline()) {
-    updateForecast();
-    return;
+    return; // 由 updateForecast 本地分支处理
   }
   if (m_pendingForecast)
     return;
@@ -756,9 +747,33 @@ void ChartWindow::requestOnlineForecast() {
 
   const QString apiKey = AppSettings::instance().xaiApiKey().trimmed();
   if (apiKey.isEmpty()) {
-    updateForecast();
+    Logger::warn(QStringLiteral("Online forecast: empty API key, fallback local"));
+    // 避免递归：临时按本地算
+    const bool was = AppSettings::instance().forecastOnline();
+    Q_UNUSED(was);
+    // 直接本地算法
+    double ph = 0, pl = 0;
+    if (computeDayRangeForecast(ph, pl)) {
+      m_lastPredictHigh = ph;
+      m_lastPredictLow = pl;
+      m_hasPredict = true;
+      m_forecastModeTag = tr("无Key·本地");
+      m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
+      double high = 0, low = 0;
+      HistoryCache::instance().todayHigh(high);
+      HistoryCache::instance().todayLow(low);
+      updateSidePanelValues(m_plotPoints.last().second, ph, true, high, low, m_forecastModeTag);
+    }
     return;
   }
+
+  if (m_sidePredictLabel)
+    m_sidePredictLabel->setText(tr("请求中…"));
+  if (m_sideModeLabel)
+    m_sideModeLabel->setText(tr("大模型…"));
+  Logger::info(QStringLiteral("Online forecast request provider=%1 model=%2")
+                   .arg(AppSettings::instance().llmProvider(),
+                        AppSettings::instance().xaiModel()));
 
   // 构造摘要
   const int n = m_plotPoints.size();
@@ -854,8 +869,41 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     m_pendingForecast.clear();
 
   auto fallback = [this](const QString& tag) {
+    Logger::warn(QStringLiteral("Online forecast fallback: %1").arg(tag));
+    double ph = 0, pl = 0;
+    if (!computeDayRangeForecast(ph, pl)) {
+      m_hasPredict = false;
+      if (m_sidePredictLabel)
+        m_sidePredictLabel->setText(tr("--.--"));
+      if (m_sideModeLabel)
+        m_sideModeLabel->setText(tag);
+      return;
+    }
+    m_lastPredictHigh = ph;
+    m_lastPredictLow = pl;
+    m_lastPredictPrice = ph;
+    m_hasPredict = true;
     m_forecastModeTag = tag;
-    updateForecast();
+    m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_forecastSeries) {
+      m_forecastSeries->clear();
+      const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+      const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+      m_forecastSeries->append(t0.toMSecsSinceEpoch(), ph);
+      m_forecastSeries->append(t1.toMSecsSinceEpoch(), ph);
+    }
+    if (m_forecastLowSeries) {
+      m_forecastLowSeries->clear();
+      const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+      const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+      m_forecastLowSeries->append(t0.toMSecsSinceEpoch(), pl);
+      m_forecastLowSeries->append(t1.toMSecsSinceEpoch(), pl);
+    }
+    double high = 0, low = 0;
+    HistoryCache::instance().todayHigh(high);
+    HistoryCache::instance().todayLow(low);
+    updateSidePanelValues(m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second,
+                          ph, true, high, low, tag);
   };
 
   if (reply->error() != QNetworkReply::NoError) {
