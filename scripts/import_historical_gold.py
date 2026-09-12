@@ -2,14 +2,15 @@
 """
 导入往年黄金日线到 gold_extremes.db 的 daily_bars，并写入单位 unit。
 
-默认 FreeGoldAPI → source=gj, unit=USD/oz
+【重要】默认库路径必须与客户端一致：
+  Windows Qt AppDataLocation =
+    %APPDATA%\\GoldPriceBarLite\\GoldPriceBarLite\\gold_extremes.db
+  （组织名 + 应用名 均为 GoldPriceBarLite）
 
-换算为积存金常用「元/克」：
-  python import_historical_gold.py --to-cny-g --fx 7.25 --source zs
-  公式: CNY/g = USD/oz * fx / 31.1034768
+若在设置里自定义了「数据库目录」，请用：
+  python import_historical_gold.py --db "你的目录\\gold_extremes.db"
 
-也可同时保留两种：
-  python import_historical_gold.py --prefer freegold
+换算元/克：
   python import_historical_gold.py --to-cny-g --fx 7.25 --source zs
 """
 from __future__ import annotations
@@ -27,13 +28,24 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-UA = "GoldPriceBarLite-HistoryImport/0.8.3"
+UA = "GoldPriceBarLite-HistoryImport/0.8.6"
 OZ_TO_G = 31.1034768
 
 
 def default_db_path() -> Path:
+    """与 Qt QStandardPaths::AppDataLocation + gold_extremes.db 对齐。"""
     if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA") or str(Path.home())
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        # OrganizationName / ApplicationName 均为 GoldPriceBarLite
+        return Path(base) / "GoldPriceBarLite" / "GoldPriceBarLite" / "gold_extremes.db"
+    xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(xdg) / "GoldPriceBarLite" / "GoldPriceBarLite" / "gold_extremes.db"
+
+
+def legacy_db_path() -> Path:
+    """旧脚本曾用的路径（少一层目录），导入后可提示迁移。"""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
         return Path(base) / "GoldPriceBarLite" / "gold_extremes.db"
     xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(xdg) / "GoldPriceBarLite" / "gold_extremes.db"
@@ -76,6 +88,7 @@ def upsert_bar(
     unit: str,
 ) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # 避免部分 SQLite 对 ON CONFLICT 中 MAX/MIN 支持差异，分两步
     conn.execute(
         """
         INSERT INTO daily_bars
@@ -84,11 +97,18 @@ def upsert_bar(
         ON CONFLICT(trade_date, source) DO UPDATE SET
           close_price=excluded.close_price,
           unit=excluded.unit,
-          high_price=MAX(daily_bars.high_price, excluded.close_price),
-          low_price=MIN(daily_bars.low_price, excluded.close_price),
           updated_at=excluded.updated_at
         """,
         (day, source, close, close, close, close, now, unit),
+    )
+    conn.execute(
+        """
+        UPDATE daily_bars SET
+          high_price = CASE WHEN high_price < ? THEN ? ELSE high_price END,
+          low_price  = CASE WHEN low_price <= 0 OR low_price > ? THEN ? ELSE low_price END
+        WHERE trade_date=? AND source=?
+        """,
+        (close, close, close, close, day, source),
     )
 
 
@@ -128,14 +148,12 @@ def fetch_stooq_xauusd(min_year: int, apikey: str | None) -> list[tuple[str, flo
         raw = http_get(url, timeout=60).decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         print(f"  Stooq HTTP {e.code}: {e.reason}")
-        if e.code == 404:
-            print("  需要 --stooq-apikey（Stooq 2026 起常要求密钥）")
         return []
     except Exception as e:
         print(f"  Stooq failed: {e}")
         return []
     if raw.lstrip().startswith("<!") or "<html" in raw[:200].lower():
-        print("  Stooq 返回 HTML 而非 CSV，跳过")
+        print("  Stooq 返回 HTML，跳过")
         return []
     rows: list[tuple[str, float]] = []
     for r in csv.DictReader(io.StringIO(raw)):
@@ -155,34 +173,50 @@ def fetch_stooq_xauusd(min_year: int, apikey: str | None) -> list[tuple[str, flo
     return rows
 
 
+def verify(conn: sqlite3.Connection, source: str) -> None:
+    cur = conn.execute(
+        "SELECT COUNT(*), MIN(trade_date), MAX(trade_date), unit FROM daily_bars WHERE source=? GROUP BY unit",
+        (source,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        print(f"[校验] source={source} → 0 行（写入失败或查错库）")
+        return
+    for cnt, d0, d1, unit in rows:
+        print(f"[校验] source={source} unit={unit or '(空)'} → {cnt} 行, {d0} ~ {d1}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Import historical gold into daily_bars with unit")
-    ap.add_argument("--db", type=Path, default=None)
-    ap.add_argument("--source", default="gj", help="写入 source 标签（默认 gj）")
+    ap.add_argument("--db", type=Path, default=None, help="完整路径到 gold_extremes.db")
+    ap.add_argument("--source", default="gj")
     ap.add_argument("--min-year", type=int, default=1990)
     ap.add_argument("--prefer", choices=("stooq", "freegold", "both"), default="freegold")
     ap.add_argument("--stooq-apikey", default=None)
-    ap.add_argument(
-        "--to-cny-g",
-        action="store_true",
-        help="将 USD/oz 换算为约元/克后写入（需 --fx）",
-    )
-    ap.add_argument(
-        "--fx",
-        type=float,
-        default=7.25,
-        help="美元兑人民币中间价近似，用于 --to-cny-g（默认 7.25）",
-    )
-    ap.add_argument(
-        "--unit",
-        default=None,
-        help="强制 unit 字段；默认 USD/oz 或 CNY/g",
-    )
+    ap.add_argument("--to-cny-g", action="store_true")
+    ap.add_argument("--fx", type=float, default=7.25)
+    ap.add_argument("--unit", default=None)
     args = ap.parse_args()
 
     db_path = args.db or default_db_path()
+    db_path = db_path.resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Database: {db_path}")
+    print(f"  (客户端默认也是此路径；若设置里改过「数据库目录」，请用 --db 指定)")
+
+    leg = legacy_db_path()
+    if leg.exists() and leg.resolve() != db_path and not args.db:
+        try:
+            n_legacy = sqlite3.connect(str(leg)).execute(
+                "SELECT COUNT(*) FROM daily_bars"
+            ).fetchone()[0]
+        except Exception:
+            n_legacy = "?"
+        print(
+            f"注意: 发现旧路径库 {leg}（约 {n_legacy} 行 daily_bars）。\n"
+            f"      旧脚本写在这里，客户端读的是新路径，所以界面里像「没数据」。\n"
+            f"      本次将写入正确路径；需要的话可自行合并两库。"
+        )
 
     series: dict[str, float] = {}
     if args.prefer in ("freegold", "both"):
@@ -198,14 +232,14 @@ def main() -> int:
 
     if args.to_cny_g:
         unit = args.unit or "CNY/g"
-        print(f"Converting USD/oz → CNY/g with fx={args.fx}, unit={unit}")
-        converted: dict[str, float] = {}
-        for d, usd_oz in series.items():
-            cny_g = usd_oz * args.fx / OZ_TO_G
-            if cny_g > 0:
-                converted[d] = cny_g
-        series = converted
-        print(f"  sample last: {sorted(series.items())[-1]}")
+        print(f"Converting USD/oz → CNY/g with fx={args.fx}")
+        series = {
+            d: (usd * args.fx / OZ_TO_G)
+            for d, usd in series.items()
+            if usd * args.fx / OZ_TO_G > 0
+        }
+        sample = sorted(series.items())[-1]
+        print(f"  sample: {sample[0]} → {sample[1]:.4f} {unit}")
     else:
         unit = args.unit or "USD/oz"
 
@@ -217,10 +251,12 @@ def main() -> int:
         n += 1
         if n % 500 == 0:
             conn.commit()
+            print(f"  ... committed {n}")
     conn.commit()
-    conn.close()
     print(f"Upserted {n} rows source={args.source} unit={unit}")
-    print("Done.")
+    verify(conn, args.source)
+    conn.close()
+    print("Done. 重启 GoldPriceBarLite 后查看分时均线/月份曲线。")
     return 0
 
 
