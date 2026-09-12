@@ -430,15 +430,6 @@ void SettingsDialog::onCategoryChanged(int row)
         m_stack->setCurrentIndex(row);
 }
 
-ew QHBoxLayout;
-    bottom->addWidget(exitBtn);
-    bottom->addWidget(logBtn);
-    bottom->addWidget(updateBtn);
-    bottom->addStretch();
-    bottom->addWidget(buttons);
-    mainLayout->addLayout(bottom);
-}
-
 void SettingsDialog::updateForecastUiState()
 {
     const bool online = m_forecastSlider->value() >= 1;
