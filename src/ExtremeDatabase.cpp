@@ -342,6 +342,38 @@ bool ExtremeDatabase::refreshDailyBarFromPoints(const QDate& tradeDate, const QS
 }
 
 
+
+QVector<QPair<QDateTime, double>> ExtremeDatabase::loadMonthCloses(int year, int month,
+                                                                   const QString& source) const
+{
+    QVector<QPair<QDateTime, double>> out;
+    if (!m_open || year < 1970 || month < 1 || month > 12)
+        return out;
+
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QString prefix = QStringLiteral("%1-%2")
+                               .arg(year, 4, 10, QChar('0'))
+                               .arg(month, 2, 10, QChar('0'));
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT trade_date, close_price FROM daily_bars "
+        "WHERE source=? AND trade_date LIKE ? AND close_price>0 "
+        "ORDER BY trade_date ASC"));
+    q.addBindValue(src);
+    q.addBindValue(prefix + QStringLiteral("-%"));
+    if (!q.exec())
+        return out;
+    while (q.next()) {
+        const QDate d = QDate::fromString(q.value(0).toString(), Qt::ISODate);
+        const double c = q.value(1).toDouble();
+        if (!d.isValid() || c <= 0.0)
+            continue;
+        out.append({QDateTime(d, QTime(12, 0)), c});
+    }
+    return out;
+}
+
 bool ExtremeDatabase::monthRange(int year, int month, const QString& source,
                                  double& outHigh, double& outLow, int& outDays) const
 {
