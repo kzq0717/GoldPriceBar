@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-导入往年黄金日线到 gold_extremes.db 的 daily_bars，并写入单位 unit。
+导入往年黄金日线到 gold_extremes.db（daily_bars + unit）。
 
-【重要】默认库路径必须与客户端一致：
-  Windows Qt AppDataLocation =
-    %APPDATA%\\GoldPriceBarLite\\GoldPriceBarLite\\gold_extremes.db
-  （组织名 + 应用名 均为 GoldPriceBarLite）
+数据库路径优先级（无需手动 --db）：
+  1) 命令行 --db（可选覆盖）
+  2) 客户端配置文件中的 databaseDir
+     Windows: %APPDATA%\\GoldPriceBarLite\\GoldPriceBarLite.ini
+     键名: databaseDir=（目录，文件名为 gold_extremes.db）
+  3) Qt 默认 AppData：
+     %APPDATA%\\GoldPriceBarLite\\GoldPriceBarLite\\gold_extremes.db
 
-若在设置里自定义了「数据库目录」，请用：
-  python import_historical_gold.py --db "你的目录\\gold_extremes.db"
-
-换算元/克：
+示例：
+  python import_historical_gold.py --min-year 1990 --source gj
   python import_historical_gold.py --to-cny-g --fx 7.25 --source zs
 """
 from __future__ import annotations
 
 import argparse
+import configparser
 import csv
 import io
 import json
@@ -30,25 +32,115 @@ from pathlib import Path
 
 UA = "GoldPriceBarLite-HistoryImport/0.8.6"
 OZ_TO_G = 31.1034768
+ORG = "GoldPriceBarLite"
+APP = "GoldPriceBarLite"
+DB_NAME = "gold_extremes.db"
+
+
+def windows_appdata() -> Path:
+    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(base)
 
 
 def default_db_path() -> Path:
-    """与 Qt QStandardPaths::AppDataLocation + gold_extremes.db 对齐。"""
+    """与 Qt QStandardPaths::AppDataLocation 对齐。"""
     if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        # OrganizationName / ApplicationName 均为 GoldPriceBarLite
-        return Path(base) / "GoldPriceBarLite" / "GoldPriceBarLite" / "gold_extremes.db"
+        return windows_appdata() / ORG / APP / DB_NAME
     xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(xdg) / "GoldPriceBarLite" / "GoldPriceBarLite" / "gold_extremes.db"
+    return Path(xdg) / ORG / APP / DB_NAME
 
 
-def legacy_db_path() -> Path:
-    """旧脚本曾用的路径（少一层目录），导入后可提示迁移。"""
+def candidate_ini_paths() -> list[Path]:
+    """Qt IniFormat + UserScope 常见位置。"""
+    paths: list[Path] = []
     if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / "GoldPriceBarLite" / "gold_extremes.db"
-    xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(xdg) / "GoldPriceBarLite" / "gold_extremes.db"
+        ad = windows_appdata()
+        paths += [
+            ad / ORG / f"{APP}.ini",
+            ad / ORG / APP / f"{APP}.ini",
+            ad / f"{ORG}.ini",
+        ]
+    else:
+        conf = Path.home() / ".config"
+        paths += [
+            conf / ORG / f"{APP}.conf",
+            conf / ORG / f"{APP}.ini",
+            conf / f"{ORG}.conf",
+        ]
+    # 项目内可选本地配置（若用户拷贝）
+    here = Path(__file__).resolve().parent.parent
+    paths += [
+        here / f"{APP}.ini",
+        here / "config.ini",
+        here / "GoldPriceBar.ini",
+    ]
+    return paths
+
+
+def read_database_dir_from_ini(ini: Path) -> str | None:
+    """
+    读取 databaseDir。兼容：
+      databaseDir=D:/Company/SK
+      [General] databaseDir=...
+      %General]\\ndatabaseDir=...  (Qt 有时用)
+    """
+    try:
+        text = ini.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    # 快速扫描：databaseDir=
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith(";") or s.startswith("#"):
+            continue
+        if s.lower().startswith("databasedir"):
+            # databaseDir=value 或 databaseDir = value
+            if "=" in s:
+                val = s.split("=", 1)[1].strip().strip('"').strip("'")
+                if val:
+                    return val
+
+    # configparser（可能丢 Qt 特殊段名，作补充）
+    cp = configparser.ConfigParser()
+    try:
+        cp.read_string("[General]\n" + text if not text.lstrip().startswith("[") else text)
+    except configparser.Error:
+        return None
+    for section in cp.sections():
+        for key, val in cp.items(section):
+            if key.lower() == "databasedir" and val.strip():
+                return val.strip().strip('"').strip("'")
+    return None
+
+
+def resolve_db_path(cli_db: Path | None) -> Path:
+    if cli_db is not None:
+        p = cli_db.expanduser().resolve()
+        print(f"使用命令行 --db: {p}")
+        return p
+
+    for ini in candidate_ini_paths():
+        if not ini.is_file():
+            continue
+        raw = read_database_dir_from_ini(ini)
+        if not raw:
+            continue
+        raw_path = Path(raw).expanduser()
+        # 配置可能是目录或完整 db 文件
+        if raw_path.suffix.lower() == ".db":
+            db = raw_path.resolve()
+        else:
+            db = (raw_path / DB_NAME).resolve()
+        print(f"从配置读取 databaseDir: {ini}")
+        print(f"  databaseDir = {raw}")
+        print(f"  → 数据库文件: {db}")
+        return db
+
+    db = default_db_path().resolve()
+    print(f"未找到配置中的 databaseDir，使用默认: {db}")
+    print(f"  已扫描: {', '.join(str(p) for p in candidate_ini_paths() if p.parent.exists() or p.exists())}")
+    return db
 
 
 def http_get(url: str, timeout: int = 120) -> bytes:
@@ -80,15 +172,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def upsert_bar(
-    conn: sqlite3.Connection,
-    day: str,
-    source: str,
-    close: float,
-    unit: str,
-) -> None:
+def upsert_bar(conn: sqlite3.Connection, day: str, source: str, close: float, unit: str) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # 避免部分 SQLite 对 ON CONFLICT 中 MAX/MIN 支持差异，分两步
     conn.execute(
         """
         INSERT INTO daily_bars
@@ -146,9 +231,6 @@ def fetch_stooq_xauusd(min_year: int, apikey: str | None) -> list[tuple[str, flo
     print("Downloading Stooq XAUUSD ...")
     try:
         raw = http_get(url, timeout=60).decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        print(f"  Stooq HTTP {e.code}: {e.reason}")
-        return []
     except Exception as e:
         print(f"  Stooq failed: {e}")
         return []
@@ -175,20 +257,21 @@ def fetch_stooq_xauusd(min_year: int, apikey: str | None) -> list[tuple[str, flo
 
 def verify(conn: sqlite3.Connection, source: str) -> None:
     cur = conn.execute(
-        "SELECT COUNT(*), MIN(trade_date), MAX(trade_date), unit FROM daily_bars WHERE source=? GROUP BY unit",
+        "SELECT COUNT(*), MIN(trade_date), MAX(trade_date), IFNULL(unit,'') "
+        "FROM daily_bars WHERE source=? GROUP BY unit",
         (source,),
     )
     rows = cur.fetchall()
     if not rows:
-        print(f"[校验] source={source} → 0 行（写入失败或查错库）")
+        print(f"[校验] source={source} → 0 行")
         return
     for cnt, d0, d1, unit in rows:
         print(f"[校验] source={source} unit={unit or '(空)'} → {cnt} 行, {d0} ~ {d1}")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Import historical gold into daily_bars with unit")
-    ap.add_argument("--db", type=Path, default=None, help="完整路径到 gold_extremes.db")
+    ap = argparse.ArgumentParser(description="Import historical gold; DB path from app config")
+    ap.add_argument("--db", type=Path, default=None, help="可选：覆盖配置中的库路径")
     ap.add_argument("--source", default="gj")
     ap.add_argument("--min-year", type=int, default=1990)
     ap.add_argument("--prefer", choices=("stooq", "freegold", "both"), default="freegold")
@@ -198,33 +281,16 @@ def main() -> int:
     ap.add_argument("--unit", default=None)
     args = ap.parse_args()
 
-    db_path = args.db or default_db_path()
-    db_path = db_path.resolve()
+    db_path = resolve_db_path(args.db)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Database: {db_path}")
-    print(f"  (客户端默认也是此路径；若设置里改过「数据库目录」，请用 --db 指定)")
-
-    leg = legacy_db_path()
-    if leg.exists() and leg.resolve() != db_path and not args.db:
-        try:
-            n_legacy = sqlite3.connect(str(leg)).execute(
-                "SELECT COUNT(*) FROM daily_bars"
-            ).fetchone()[0]
-        except Exception:
-            n_legacy = "?"
-        print(
-            f"注意: 发现旧路径库 {leg}（约 {n_legacy} 行 daily_bars）。\n"
-            f"      旧脚本写在这里，客户端读的是新路径，所以界面里像「没数据」。\n"
-            f"      本次将写入正确路径；需要的话可自行合并两库。"
-        )
 
     series: dict[str, float] = {}
     if args.prefer in ("freegold", "both"):
-        for d, p in fetch_freegoldapi(args.min_year):
-            series[d] = p
+        for d, px in fetch_freegoldapi(args.min_year):
+            series[d] = px
     if args.prefer in ("stooq", "both"):
-        for d, p in fetch_stooq_xauusd(args.min_year, args.stooq_apikey):
-            series[d] = p
+        for d, px in fetch_stooq_xauusd(args.min_year, args.stooq_apikey):
+            series[d] = px
 
     if not series:
         print("No data fetched.")
@@ -233,13 +299,9 @@ def main() -> int:
     if args.to_cny_g:
         unit = args.unit or "CNY/g"
         print(f"Converting USD/oz → CNY/g with fx={args.fx}")
-        series = {
-            d: (usd * args.fx / OZ_TO_G)
-            for d, usd in series.items()
-            if usd * args.fx / OZ_TO_G > 0
-        }
-        sample = sorted(series.items())[-1]
-        print(f"  sample: {sample[0]} → {sample[1]:.4f} {unit}")
+        series = {d: usd * args.fx / OZ_TO_G for d, usd in series.items() if usd > 0}
+        last = sorted(series.items())[-1]
+        print(f"  sample: {last[0]} → {last[1]:.4f} {unit}")
     else:
         unit = args.unit or "USD/oz"
 
@@ -253,10 +315,11 @@ def main() -> int:
             conn.commit()
             print(f"  ... committed {n}")
     conn.commit()
-    print(f"Upserted {n} rows source={args.source} unit={unit}")
+    print(f"Upserted {n} rows → {db_path}")
+    print(f"  source={args.source} unit={unit}")
     verify(conn, args.source)
     conn.close()
-    print("Done. 重启 GoldPriceBarLite 后查看分时均线/月份曲线。")
+    print("Done. 重启客户端后生效。")
     return 0
 
 
