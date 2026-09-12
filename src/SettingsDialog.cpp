@@ -138,7 +138,7 @@ void SettingsDialog::setupUi()
     m_darkThemeCheck = new QCheckBox(tr("深色主题（价格条 / 分时 / 设置）"), this);
     form->addRow("", m_darkThemeCheck);
 
-    m_maCheck = new QCheckBox(tr("分时显示均线 MA5日 / MA20日（近5/20个交易日收盘）"), this);
+    m_maCheck = new QCheckBox(tr("分时显示均线（优先日线MA5/MA20；无同价单位日线时用分时滚动均线）"), this);
     form->addRow("", m_maCheck);
 
     m_alertSoundCheck = new QCheckBox(tr("预警时系统提示音"), this);

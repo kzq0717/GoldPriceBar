@@ -1617,15 +1617,7 @@ void ChartWindow::updateMovingAverages()
     if (!show)
         return;
 
-    // 真正的「5日线 / 20日线」：基于本地 daily_bars 收盘价的 SMA
-    // 优先当前数据源；不足时回退 gj（freegoldapi 历史写入）
-    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, currentTypeCode());
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, QStringLiteral("gj"));
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, QStringLiteral("xau"));
-
-    auto sma = [](const QVector<QPair<QDate, double>>& c, int n) -> double {
+    auto smaDaily = [](const QVector<QPair<QDate, double>>& c, int n) -> double {
         if (c.size() < n)
             return 0.0;
         double s = 0.0;
@@ -1634,38 +1626,119 @@ void ChartWindow::updateMovingAverages()
         return s / static_cast<double>(n);
     };
 
-    const double ma5 = sma(closes, 5);
-    const double ma20 = sma(closes, 20);
+    const double lastPx = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
+    const QString code = currentTypeCode();
 
-    // 在分时图上画水平参考线（当日全天同一日线均价值）
-    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-    const qint64 x0 = t0.toMSecsSinceEpoch();
-    const qint64 x1 = t1.toMSecsSinceEpoch();
+    // 1) 同品种日线均线（水平参考）
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, code);
+    double d5 = smaDaily(closes, 5);
+    double d20 = smaDaily(closes, 20);
 
-    if (ma5 > 0.0) {
-        m_ma5Series->append(x0, ma5);
-        m_ma5Series->append(x1, ma5);
+    // 尺度校验：与现价偏差过大视为单位不一致（如 USD/oz vs 元/克），丢弃
+    auto scaleOk = [lastPx](double ma) {
+        if (ma <= 0.0 || lastPx <= 0.0)
+            return false;
+        const double r = ma / lastPx;
+        return r > 0.55 && r < 1.8;
+    };
+    const bool useDaily = scaleOk(d5) || scaleOk(d20);
+    if (!useDaily) {
+        d5 = 0.0;
+        d20 = 0.0;
+        // 不同源的日线不混用，避免画出远离分时的“假均线”
     }
-    if (ma20 > 0.0) {
-        m_ma20Series->append(x0, ma20);
-        m_ma20Series->append(x1, ma20);
+
+    qreal yMin = m_axisY ? m_axisY->min() : 0;
+    qreal yMax = m_axisY ? m_axisY->max() : 0;
+    bool have = false;
+
+    if (useDaily && (d5 > 0.0 || d20 > 0.0)) {
+        m_ma5Series->setName(tr("MA5日"));
+        m_ma20Series->setName(tr("MA20日"));
+        const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+        const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+        const qint64 x0 = t0.toMSecsSinceEpoch();
+        const qint64 x1 = t1.toMSecsSinceEpoch();
+        if (scaleOk(d5)) {
+            m_ma5Series->append(x0, d5);
+            m_ma5Series->append(x1, d5);
+            yMin = qMin(yMin, d5);
+            yMax = qMax(yMax, d5);
+            have = true;
+        }
+        if (scaleOk(d20)) {
+            m_ma20Series->append(x0, d20);
+            m_ma20Series->append(x1, d20);
+            yMin = qMin(yMin, d20);
+            yMax = qMax(yMax, d20);
+            have = true;
+        }
+    } else if (m_plotPoints.size() >= 5) {
+        // 2) 回退：当日分时滚动均线（与现价同单位，一定能看见）
+        m_ma5Series->setName(tr("MA5"));
+        m_ma20Series->setName(tr("MA20"));
+        const int n = m_plotPoints.size();
+        // 降采样，最多画约 400 点
+        const int step = qMax(1, n / 400);
+        for (int i = 0; i < n; i += step) {
+            const auto& pt = m_plotPoints.at(i);
+            const qint64 x = pt.first.toMSecsSinceEpoch();
+            // 窗口：按点数近似 5/20（有足够点时）
+            auto winAvg = [&](int win) -> double {
+                if (i + 1 < win)
+                    return 0.0;
+                double s = 0.0;
+                for (int j = i - win + 1; j <= i; ++j)
+                    s += m_plotPoints.at(j).second;
+                return s / static_cast<double>(win);
+            };
+            const double a5 = winAvg(5);
+            const double a20 = winAvg(20);
+            if (a5 > 0.0) {
+                m_ma5Series->append(x, a5);
+                yMin = qMin(yMin, a5);
+                yMax = qMax(yMax, a5);
+                have = true;
+            }
+            if (a20 > 0.0) {
+                m_ma20Series->append(x, a20);
+                yMin = qMin(yMin, a20);
+                yMax = qMax(yMax, a20);
+                have = true;
+            }
+        }
+        // 保证最后一个点
+        if (n > 0 && (n - 1) % step != 0) {
+            const int i = n - 1;
+            const qint64 x = m_plotPoints.at(i).first.toMSecsSinceEpoch();
+            auto winAvg = [&](int win) -> double {
+                if (i + 1 < win)
+                    return 0.0;
+                double s = 0.0;
+                for (int j = i - win + 1; j <= i; ++j)
+                    s += m_plotPoints.at(j).second;
+                return s / static_cast<double>(win);
+            };
+            const double a5 = winAvg(5);
+            const double a20 = winAvg(20);
+            if (a5 > 0.0)
+                m_ma5Series->append(x, a5);
+            if (a20 > 0.0)
+                m_ma20Series->append(x, a20);
+        }
     }
 
-    // 把均线纳入 Y 轴范围：在 updateSeries 已算过 min/max，这里仅补充显示
-    if ((ma5 > 0.0 || ma20 > 0.0) && m_axisY) {
-        qreal yMin = m_axisY->min();
-        qreal yMax = m_axisY->max();
-        if (ma5 > 0.0) {
-            yMin = qMin(yMin, ma5);
-            yMax = qMax(yMax, ma5);
-        }
-        if (ma20 > 0.0) {
-            yMin = qMin(yMin, ma20);
-            yMax = qMax(yMax, ma20);
-        }
-        const qreal m = (yMax - yMin) * 0.05;
+    if (have && m_axisY && yMax > yMin) {
+        const qreal m = (yMax - yMin) * 0.05 + 0.05;
         m_axisY->setRange(yMin - m, yMax + m);
+    }
+
+    // 保证挂轴（个别 Qt 版本 clear 后需重新 attach）
+    if (m_chart && m_axisX && m_axisY) {
+        m_ma5Series->attachAxis(m_axisX);
+        m_ma5Series->attachAxis(m_axisY);
+        m_ma20Series->attachAxis(m_axisX);
+        m_ma20Series->attachAxis(m_axisY);
     }
 }
 
