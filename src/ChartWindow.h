@@ -73,6 +73,8 @@ private:
     void setForecastVisible(bool on);
     void applyChartTheme();
     void updateMovingAverages();
+    void updateClockAndAdvice();
+    QString buildAdviceText(double price) const;
     void updateYesterdayOverlay();
     void onSmoothTick();
     void onPulseTick();
@@ -104,6 +106,10 @@ private:
     QLabel* m_sideLowLabel = nullptr;
     QLabel* m_sideModeLabel = nullptr;
     QLabel* m_sideHitRateLabel = nullptr;
+    QLabel* m_sideClockLabel = nullptr;
+    QLabel* m_sideSessionLabel = nullptr;
+    QLabel* m_sideAdviceLabel = nullptr;
+    QTimer* m_clockTimer = nullptr;
 
     QNetworkAccessManager* m_network = nullptr;
     QPointer<QNetworkReply> m_pendingChart;

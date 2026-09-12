@@ -4,6 +4,8 @@
 #include "Logger.h"
 #include "ForecastTracker.h"
 #include "HistoryCache.h"
+#include "TradingSession.h"
+#include "EventCalendar.h"
 
 
 #include <QBrush>
@@ -68,6 +70,12 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
   m_smoothTimer = new QTimer(this);
   m_smoothTimer->setInterval(33); // ~30fps 平滑插值
   connect(m_smoothTimer, &QTimer::timeout, this, &ChartWindow::onSmoothTick);
+
+  m_clockTimer = new QTimer(this);
+  m_clockTimer->setInterval(1000);
+  connect(m_clockTimer, &QTimer::timeout, this, &ChartWindow::updateClockAndAdvice);
+  m_clockTimer->start();
+  QTimer::singleShot(0, this, &ChartWindow::updateClockAndAdvice);
 
   m_pulseTimer = new QTimer(this);
   m_pulseTimer->setInterval(450);
@@ -267,6 +275,16 @@ void ChartWindow::setupChart() {
     return l;
   };
 
+  m_sideClockLabel = new QLabel(QDateTime::currentDateTime().toString("HH:mm:ss"), m_sidePanel);
+  m_sideClockLabel->setStyleSheet("color:#0052d9;font-size:16px;font-weight:bold;");
+  m_sideClockLabel->setAlignment(Qt::AlignCenter);
+  sideLay->addWidget(m_sideClockLabel);
+  m_sideSessionLabel = new QLabel(tr("—"), m_sidePanel);
+  m_sideSessionLabel->setStyleSheet("color:#888;font-size:11px;");
+  m_sideSessionLabel->setWordWrap(true);
+  m_sideSessionLabel->setAlignment(Qt::AlignCenter);
+  sideLay->addWidget(m_sideSessionLabel);
+
   sideLay->addWidget(mkTitle(tr("当前价")));
   m_sideCurrentLabel = mkValue(tr("--.--"), "#212529");
   sideLay->addWidget(m_sideCurrentLabel);
@@ -392,6 +410,7 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
     else
       updateForecast();
   }
+  updateClockAndAdvice();
 }
 
 void ChartWindow::setCurrentMarker(qint64 xMs, double y, bool startPulse)
@@ -548,9 +567,8 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
     if (actHigh <= 0.0) actHigh = lastPrice;
     if (actLow <= 0.0) actLow = lastPrice;
 
-    // 近窗波动
     const int n = m_plotPoints.size();
-    const int w = qMin(40, n);
+    const int w = qMin(30, n);
     double mean = 0.0;
     for (int i = n - w; i < n; ++i)
         mean += m_plotPoints.at(i).second;
@@ -561,49 +579,30 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
         var += d * d;
     }
     const double stdev = qSqrt(var / static_cast<double>(qMax(1, w - 1)));
-    const double rangeSoFar = qMax(0.0, actHigh - actLow);
+    const double rangeSoFar = qMax(0.01, actHigh - actLow);
 
-    // 时间进度：按自然日 0~24h（金价近 24h 交易），剩余越多扩张越大
     const QTime nowT = QTime::currentTime();
-    const double dayFrac = (nowT.msecsSinceStartOfDay()) / (24.0 * 3600.0 * 1000.0);
-    const double remain = qBound(0.05, 1.0 - dayFrac, 1.0);
-    // 平方根时间：波动大致按 sqrt(剩余占比) 缩放已实现振幅
+    const double dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+    const double remain = qBound(0.08, 1.0 - dayFrac, 1.0);
     const double timeScale = qSqrt(remain);
 
-    // 参考：近 20 日均振幅（若有）
-    double histRange = 0.0;
-    const auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(21, currentTypeCode());
-    if (closes.size() >= 5) {
-        // 用收盘价序列的近窗极差近似
-        double mn = closes.first().second, mx = mn;
-        for (const auto& c : closes) {
-            mn = qMin(mn, c.second);
-            mx = qMax(mx, c.second);
-        }
-        histRange = (mx - mn) / qMax(1, closes.size() / 5); // 粗略日均波段
-    }
-
-    // 基础扩张：max(2.5*stdev, 0.35*已走振幅, 0.25*历史日波段)
-    double expand = qMax(2.5 * stdev, 0.35 * rangeSoFar);
-    if (histRange > 0.0)
-        expand = qMax(expand, 0.25 * histRange);
-    expand *= (0.55 + 0.45 * timeScale); // 早盘扩张更大，尾盘收敛
-
-    // 硬顶：相对现价
-    const double hard = lastPrice * 0.012; // 1.2%
+    // 保守扩张：紧贴已实现区间与近窗波动，避免预测线大幅偏离分时
+    double expand = qMax(1.0 * stdev, 0.12 * rangeSoFar);
+    expand *= (0.35 + 0.40 * timeScale);
+    const double hard = lastPrice * 0.0045;
     expand = qMin(expand, hard);
-    expand = qMax(expand, lastPrice * 0.0008); // 至少约 0.08%
+    expand = qMin(expand, rangeSoFar * 0.55 + stdev);
+    expand = qMax(expand, lastPrice * 0.0003);
 
-    outPredHigh = actHigh + expand * remain;
-    outPredLow = actLow - expand * remain;
-    // 预测高不得低于已现高/现价；预测低不得高于已现低/现价
-    outPredHigh = qMax(outPredHigh, qMax(actHigh, lastPrice));
-    outPredLow = qMin(outPredLow, qMin(actLow, lastPrice));
-    // 再夹一次总宽度
-    if (outPredHigh - outPredLow > hard * 2.0) {
-        const double mid = 0.5 * (outPredHigh + outPredLow);
-        outPredHigh = mid + hard;
-        outPredLow = mid - hard;
+    outPredHigh = qMax(actHigh, lastPrice) + expand * 0.55;
+    outPredLow = qMin(actLow, lastPrice) - expand * 0.55;
+    outPredHigh = qMax(outPredHigh, actHigh);
+    outPredLow = qMin(outPredLow, actLow);
+    const double maxWidth = qMin(hard * 1.6, rangeSoFar * 1.35 + 2.0 * stdev);
+    if (outPredHigh - outPredLow > maxWidth) {
+        const double mid = lastPrice;
+        outPredHigh = qMin(outPredHigh, mid + maxWidth * 0.55);
+        outPredLow = qMax(outPredLow, mid - maxWidth * 0.55);
         outPredHigh = qMax(outPredHigh, actHigh);
         outPredLow = qMin(outPredLow, actLow);
     }
@@ -983,6 +982,16 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     predHigh = qMax(predHigh, actH);
   if (actL > 0)
     predLow = qMin(predLow, actL);
+  if (!m_plotPoints.isEmpty()) {
+    const double px = m_plotPoints.last().second;
+    const double hard = px * 0.006;
+    predHigh = qMin(predHigh, qMax(actH > 0 ? actH : px, px) + hard);
+    predLow = qMax(predLow, qMin(actL > 0 ? actL : px, px) - hard);
+    if (predHigh < predLow) {
+      predHigh = qMax(actH > 0 ? actH : px, px);
+      predLow = qMin(actL > 0 ? actL : px, px);
+    }
+  }
 
   m_lastPredictHigh = predHigh;
   m_lastPredictLow = predLow;
@@ -1524,6 +1533,10 @@ void ChartWindow::applyChartTheme()
             m_sideLowLabel->setStyleSheet("color:#69f0ae;font-size:16px;font-weight:bold;");
         if (m_sideModeLabel)
             m_sideModeLabel->setStyleSheet("color:#9aa0a6;font-size:10px;");
+        if (m_sideClockLabel)
+            m_sideClockLabel->setStyleSheet("color:#82b1ff;font-size:16px;font-weight:bold;");
+        if (m_sideAdviceLabel)
+            m_sideAdviceLabel->setStyleSheet("color:#b0b8c4;font-size:11px;");
         if (m_sideHitRateLabel)
             m_sideHitRateLabel->setStyleSheet("color:#82b1ff;font-size:14px;font-weight:bold;");
     } else {
@@ -1568,6 +1581,10 @@ void ChartWindow::applyChartTheme()
             m_sideLowLabel->setStyleSheet("color:#27ae60;font-size:16px;font-weight:bold;");
         if (m_sideModeLabel)
             m_sideModeLabel->setStyleSheet("color:#888;font-size:10px;");
+        if (m_sideClockLabel)
+            m_sideClockLabel->setStyleSheet("color:#0052d9;font-size:16px;font-weight:bold;");
+        if (m_sideAdviceLabel)
+            m_sideAdviceLabel->setStyleSheet("color:#666;font-size:11px;");
         if (m_sideHitRateLabel)
             m_sideHitRateLabel->setStyleSheet("color:#0052d9;font-size:14px;font-weight:bold;");
     }
@@ -1670,4 +1687,75 @@ void ChartWindow::updateYesterdayOverlay()
         const QDateTime mapped(today, tm);
         m_yesterdaySeries->append(mapped.toMSecsSinceEpoch(), p.second);
     }
+}
+
+
+QString ChartWindow::buildAdviceText(double price) const
+{
+    const QString src = AppSettings::instance().dataSource();
+    QStringList tips;
+
+    if (!TradingSession::isTradingNow(src)) {
+        tips << tr("【时段】当前不在示意交易时间内，不宜下单；仅可观望。");
+        tips << TradingSession::hoursDescription(src);
+    } else {
+        tips << tr("【时段】处于示意交易时段。");
+    }
+
+    const QString ev = EventCalendar::pendingAlertText();
+    if (!ev.isEmpty())
+        tips << tr("【宏观】%1，波动可能放大，注意风险。").arg(ev);
+
+    if (price > 0.0) {
+        QString code = src;
+        if (code == QStringLiteral("xau")) code = QStringLiteral("gj");
+        auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, code);
+        if (closes.size() < 5)
+            closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
+        if (closes.size() >= 5) {
+            double s5 = 0.0;
+            const int k = qMin(5, closes.size());
+            for (int i = closes.size() - k; i < closes.size(); ++i)
+                s5 += closes.at(i).second;
+            const double ma5 = s5 / k;
+            int below = 0;
+            for (const auto& c : closes)
+                if (c.second < price) ++below;
+            const double pct = 100.0 * below / closes.size();
+            if (price < ma5 * 0.998)
+                tips << tr("【技术】现价低于近5日均线，偏谨慎。");
+            else if (price > ma5 * 1.002)
+                tips << tr("【技术】现价高于近5日均线，追高需谨慎。");
+            if (pct <= 20)
+                tips << tr("【位置】处近20日偏低分位，仅作区间参考。");
+            else if (pct >= 80)
+                tips << tr("【位置】处近20日偏高分位，注意回撤风险。");
+        }
+    }
+
+    tips << tr("以上仅为软件规则提示，不构成投资建议。");
+    return tips.join(QStringLiteral("\n"));
+}
+
+void ChartWindow::updateClockAndAdvice()
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    if (m_sideClockLabel)
+        m_sideClockLabel->setText(now.toString(QStringLiteral("HH:mm:ss")));
+
+    const QString src = AppSettings::instance().dataSource();
+    const bool open = TradingSession::isTradingNow(src, now);
+    if (m_sideSessionLabel) {
+        m_sideSessionLabel->setText(TradingSession::statusText(src, now));
+        m_sideSessionLabel->setStyleSheet(
+            open ? QStringLiteral("color:#27ae60;font-size:11px;font-weight:bold;")
+                 : QStringLiteral("color:#e67e22;font-size:11px;font-weight:bold;"));
+        m_sideSessionLabel->setToolTip(TradingSession::hoursDescription(src));
+    }
+
+    double price = 0.0;
+    if (!m_plotPoints.isEmpty())
+        price = m_plotPoints.last().second;
+    if (m_sideAdviceLabel)
+        m_sideAdviceLabel->setText(buildAdviceText(price));
 }

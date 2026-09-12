@@ -74,6 +74,8 @@ set(PROJECT_SOURCES
     src/GlobalHotkey.cpp
     src/EventCalendar.h
     src/EventCalendar.cpp
+    src/TradingSession.h
+    src/TradingSession.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}
