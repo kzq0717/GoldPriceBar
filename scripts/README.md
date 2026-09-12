@@ -33,3 +33,12 @@ python scripts/import_historical_gold.py --db /path/to/gold_extremes.db
 | intraday_samples / daily_bars / daily_extremes | 原有分时与日线 |
 
 下阶段再拆无 Qt 的 SDK；本阶段仅扩库与导入脚本。
+
+
+## Stooq 404 说明
+
+自约 2026 年起，Stooq 历史 CSV 直链常要求 **apikey**，匿名访问可能返回 **HTTP 404** 或 HTML 页。
+
+- 申请：浏览器打开 https://stooq.com/q/d/?s=xauusd ，按页面获取 apikey  
+- 使用：`python scripts/import_historical_gold.py --prefer both --stooq-apikey YOUR_KEY`  
+- **仅用 FreeGoldAPI 已成功写入时，可忽略 Stooq 错误**（脚本默认 `--prefer freegold`）。
