@@ -252,12 +252,8 @@ void ChartWindow::setupChart() {
   m_sidePanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   m_sidePanel->setMinimumHeight(0);
   m_sidePanel->setStyleSheet(
-      "QFrame{"
-      "  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-      "    stop:0 #ffffff, stop:1 #f0f3f7);"
-      "  border: 1px solid #d8dee6;"
-      "  border-radius: 8px;"
-      "}");
+      "QFrame{background:#161b27;border:1px solid #2a3347;border-radius:14px;}"
+      "QLabel{color:#8b93a7;}");
   auto *sideLay = new QVBoxLayout(m_sidePanel);
   sideLay->setContentsMargins(12, 16, 12, 16);
   sideLay->setSpacing(8);
@@ -1499,28 +1495,28 @@ void ChartWindow::applyChartTheme()
     };
 
     if (dark) {
-        m_chart->setBackgroundBrush(QBrush(QColor(28, 31, 38)));
-        m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(34, 38, 46)));
-        m_chart->setTitleBrush(QBrush(QColor(230, 230, 230)));
+        m_chart->setBackgroundBrush(QBrush(QColor(15, 18, 28)));
+        m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(22, 27, 40)));
+        m_chart->setTitleBrush(QBrush(QColor(232, 234, 237)));
         if (m_axisX) {
-            m_axisX->setLabelsColor(QColor(180, 180, 180));
-            m_axisX->setGridLineColor(QColor(55, 60, 70));
-            m_axisX->setTitleBrush(QBrush(QColor(180, 180, 180)));
+            m_axisX->setLabelsColor(QColor(139, 147, 167));
+            m_axisX->setGridLineColor(QColor(42, 51, 71));
+            m_axisX->setTitleBrush(QBrush(QColor(139, 147, 167)));
         }
         if (m_axisY) {
-            m_axisY->setLabelsColor(QColor(180, 180, 180));
-            m_axisY->setGridLineColor(QColor(55, 60, 70));
-            m_axisY->setTitleBrush(QBrush(QColor(180, 180, 180)));
+            m_axisY->setLabelsColor(QColor(139, 147, 167));
+            m_axisY->setGridLineColor(QColor(42, 51, 71));
+            m_axisY->setTitleBrush(QBrush(QColor(139, 147, 167)));
         }
         if (m_sidePanel)
             m_sidePanel->setStyleSheet(
-                "QFrame{background:#252a33;border:1px solid #3d4450;border-radius:8px;}"
-                "QLabel{color:#e8eaed;}");
+                "QFrame{background:#161b27;border:1px solid #2a3347;border-radius:14px;}"
+                "QLabel{color:#8b93a7;}");
         setStyleSheet("background:#1a1d23;");
 
-        setSolid(m_series, QColor(64, 158, 255), 2);           // 实际：亮蓝
-        setSolid(m_ma5Series, QColor(255, 167, 38), 2);         // MA5日：亮橙
-        setSolid(m_ma20Series, QColor(186, 104, 200), 2);       // MA20日：亮紫
+        setSolid(m_series, QColor(110, 168, 254), 2);           // 实际：亮蓝
+        setSolid(m_ma5Series, QColor(61, 214, 140), 2);         // MA5日：亮橙
+        setSolid(m_ma20Series, QColor(167, 139, 250), 2);       // MA20日：亮紫
         setDot(m_yesterdaySeries, QColor(120, 144, 156), 1);    // 昨日：蓝灰点线（非白）
         setDash(m_forecastSeries, QColor(255, 82, 82), 2);      // 预测高：鲜红虚线
         setDash(m_forecastLowSeries, QColor(0, 230, 118), 2);   // 预测低：鲜绿虚线
@@ -1540,9 +1536,9 @@ void ChartWindow::applyChartTheme()
         if (m_sideModeLabel)
             m_sideModeLabel->setStyleSheet("color:#9aa0a6;font-size:10px;");
         if (m_sideClockLabel)
-            m_sideClockLabel->setStyleSheet("color:#82b1ff;font-size:16px;font-weight:bold;");
+            m_sideClockLabel->setStyleSheet("color:#6ea8fe;font-size:18px;font-weight:700;");
         if (m_sideAdviceLabel)
-            m_sideAdviceLabel->setStyleSheet("color:#b0b8c4;font-size:11px;");
+            m_sideAdviceLabel->setStyleSheet("color:#8b93a7;font-size:11px;line-height:1.3;");
         if (m_sideHitRateLabel)
             m_sideHitRateLabel->setStyleSheet("color:#82b1ff;font-size:14px;font-weight:bold;");
     } else {

@@ -681,21 +681,29 @@ void PriceBarWindow::paintEvent(QPaintEvent* event)
     p.setRenderHint(QPainter::Antialiasing, true);
     const bool dark = AppSettings::instance().darkTheme();
     QPainterPath path;
-    const qreal r = 10.0;
-    path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), r, r);
-    QLinearGradient g(0, 0, width(), 0);
+    const qreal r = 14.0;
+    const QRectF rr = QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0);
+    path.addRoundedRect(rr, r, r);
     if (dark) {
-        g.setColorAt(0.0, QColor(26, 29, 35, 242));
-        g.setColorAt(1.0, QColor(37, 42, 51, 242));
+        // Dashboard 卡片：深色底 + 细描边 + 轻微内高光
+        QLinearGradient g(0, 0, 0, height());
+        g.setColorAt(0.0, QColor(26, 32, 48, 250));
+        g.setColorAt(1.0, QColor(18, 22, 34, 250));
         p.fillPath(path, g);
-        p.setPen(QPen(QColor(61, 68, 80), 1.0));
+        p.setPen(QPen(QColor(55, 65, 90, 200), 1.0));
+        p.drawPath(path);
+        // 顶部细高光
+        QPainterPath hi;
+        hi.addRoundedRect(rr.adjusted(1, 1, -1, -rr.height() * 0.55), r - 1, r - 1);
+        p.fillPath(hi, QColor(255, 255, 255, 8));
     } else {
-        g.setColorAt(0.0, QColor(255, 255, 255, 245));
-        g.setColorAt(1.0, QColor(240, 243, 247, 245));
+        QLinearGradient g(0, 0, 0, height());
+        g.setColorAt(0.0, QColor(255, 255, 255, 250));
+        g.setColorAt(1.0, QColor(243, 246, 251, 250));
         p.fillPath(path, g);
-        p.setPen(QPen(QColor(216, 222, 230), 1.0));
+        p.setPen(QPen(QColor(210, 218, 232), 1.0));
+        p.drawPath(path);
     }
-    p.drawPath(path);
 }
 
 void PriceBarWindow::applyTheme()
@@ -705,49 +713,68 @@ void PriceBarWindow::applyTheme()
         setStyleSheet(
             "PriceBarWindow { background: transparent; }"
             "QToolButton {"
-            "  color: #e8eaed;"
+            "  color: #c5cbe0;"
             "  border: none;"
-            "  font-size: 14px;"
-            "  padding: 2px;"
-            "  border-radius: 6px;"
+            "  font-size: 13px;"
+            "  padding: 4px 6px;"
+            "  border-radius: 8px;"
             "}"
             "QToolButton:hover {"
-            "  background-color: rgba(255,255,255,28);"
+            "  background-color: rgba(91,141,239,40);"
+            "  color: #ffffff;"
             "}"
+            "QLabel { background: transparent; }"
         );
         if (m_sourceLabel)
-            m_sourceLabel->setStyleSheet("color:#9aa0a6;font-size:12px;");
+            m_sourceLabel->setStyleSheet("color:#8b93a7;font-size:11px;letter-spacing:0.3px;");
         if (m_priceLabel)
-            m_priceLabel->setStyleSheet("color:#ffffff;font-size:16px;font-weight:bold;");
+            m_priceLabel->setStyleSheet(
+                "color:#f2f4f8;font-size:17px;font-weight:700;font-family:'Segoe UI','Microsoft YaHei UI';");
         if (m_highLabel)
-            m_highLabel->setStyleSheet("color:#ff6b6b;font-size:12px;");
+            m_highLabel->setStyleSheet("color:#ff7b72;font-size:12px;font-weight:600;");
         if (m_secondaryLabel)
-            m_secondaryLabel->setStyleSheet("color:#c792ea;font-size:11px;");
+            m_secondaryLabel->setStyleSheet("color:#a78bfa;font-size:11px;");
+        if (m_pnlLabel)
+            m_pnlLabel->setStyleSheet("color:#f0b429;font-size:11px;font-weight:600;");
+        if (m_healthLabel)
+            m_healthLabel->setStyleSheet("color:#3dd68c;font-size:10px;");
+        if (m_changeLabel) {
+            const QString c = m_changeLabel->styleSheet();
+            Q_UNUSED(c);
+        }
     } else {
         setStyleSheet(
             "PriceBarWindow { background: transparent; }"
             "QToolButton {"
-            "  color: #333;"
+            "  color: #3d4a5c;"
             "  border: none;"
-            "  font-size: 14px;"
-            "  padding: 2px;"
-            "  border-radius: 6px;"
+            "  font-size: 13px;"
+            "  padding: 4px 6px;"
+            "  border-radius: 8px;"
             "}"
             "QToolButton:hover {"
-            "  background-color: rgba(0,0,0,18);"
+            "  background-color: rgba(0,82,217,20);"
+            "  color: #0052d9;"
             "}"
+            "QLabel { background: transparent; }"
         );
         if (m_sourceLabel)
-            m_sourceLabel->setStyleSheet("color:#5c6b77;font-size:12px;");
+            m_sourceLabel->setStyleSheet("color:#6b7c8f;font-size:11px;");
         if (m_priceLabel)
-            m_priceLabel->setStyleSheet("color:#1a1d23;font-size:16px;font-weight:bold;");
+            m_priceLabel->setStyleSheet(
+                "color:#0f172a;font-size:17px;font-weight:700;font-family:'Segoe UI','Microsoft YaHei UI';");
         if (m_highLabel)
-            m_highLabel->setStyleSheet("color:#c0392b;font-size:12px;");
+            m_highLabel->setStyleSheet("color:#e11d48;font-size:12px;font-weight:600;");
         if (m_secondaryLabel)
-            m_secondaryLabel->setStyleSheet("color:#8e44ad;font-size:11px;");
+            m_secondaryLabel->setStyleSheet("color:#7c3aed;font-size:11px;");
+        if (m_pnlLabel)
+            m_pnlLabel->setStyleSheet("color:#d97706;font-size:11px;font-weight:600;");
+        if (m_healthLabel)
+            m_healthLabel->setStyleSheet("color:#059669;font-size:10px;");
     }
-    applyOpacity();
+    update();
 }
+
 
 void PriceBarWindow::mouseDoubleClickEvent(QMouseEvent* event)
 {
