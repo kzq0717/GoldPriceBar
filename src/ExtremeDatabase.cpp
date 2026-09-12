@@ -109,6 +109,73 @@ bool ExtremeDatabase::ensureSchema()
         qWarning() << "CREATE daily_bars failed:" << q.lastError().text();
         return false;
     }
+
+    // ---- 建模扩展表 ----
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS quote_samples ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  ts TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  price REAL NOT NULL,"
+        "  change_pct REAL,"
+        "  UNIQUE(ts, source)"
+        ")"));
+    q.exec(QStringLiteral(
+        "CREATE INDEX IF NOT EXISTS idx_quote_samples_src_ts ON quote_samples(source, ts)"));
+
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS secondary_quotes ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  ts TEXT NOT NULL,"
+        "  primary_source TEXT NOT NULL,"
+        "  primary_price REAL NOT NULL,"
+        "  secondary_source TEXT NOT NULL,"
+        "  secondary_price REAL NOT NULL,"
+        "  ratio REAL,"
+        "  UNIQUE(ts, primary_source, secondary_source)"
+        ")"));
+
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS forecast_logs ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  made_at TEXT NOT NULL,"
+        "  mature_at TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  mode TEXT,"
+        "  pred_high REAL NOT NULL,"
+        "  pred_low REAL NOT NULL,"
+        "  base_price REAL,"
+        "  actual_high REAL,"
+        "  actual_low REAL,"
+        "  settled INTEGER DEFAULT 0,"
+        "  settled_at TEXT"
+        ")"));
+    q.exec(QStringLiteral(
+        "CREATE INDEX IF NOT EXISTS idx_forecast_unsettled ON forecast_logs(settled, mature_at)"));
+
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS alert_events ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  ts TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  kind TEXT NOT NULL,"
+        "  price REAL,"
+        "  threshold REAL,"
+        "  note TEXT"
+        ")"));
+    q.exec(QStringLiteral(
+        "CREATE INDEX IF NOT EXISTS idx_alert_ts ON alert_events(ts)"));
+
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS session_marks ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  ts TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  is_open INTEGER NOT NULL,"
+        "  status TEXT,"
+        "  UNIQUE(ts, source)"
+        ")"));
+
     return true;
 }
 
@@ -453,6 +520,162 @@ bool ExtremeDatabase::upsertHistoricalClose(const QDate& tradeDate, const QStrin
     q.addBindValue(now);
     if (!q.exec()) {
         qWarning() << "upsertHistoricalClose failed:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+
+bool ExtremeDatabase::insertQuoteSample(const QDateTime& ts, const QString& source,
+                                        double price, double change)
+{
+    if (!m_open || price <= 0.0 || source.isEmpty())
+        return false;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastQuoteSampleMs > 0 && (nowMs - m_lastQuoteSampleMs) < kQuoteSampleIntervalMs)
+        return false;
+    m_lastQuoteSampleMs = nowMs;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO quote_samples (ts, source, price, change_pct) "
+        "VALUES (?, ?, ?, ?)"));
+    q.addBindValue(ts.toString(Qt::ISODate));
+    q.addBindValue(source);
+    q.addBindValue(price);
+    q.addBindValue(change);
+    if (!q.exec()) {
+        qWarning() << "insertQuoteSample:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool ExtremeDatabase::insertSecondaryQuote(const QDateTime& ts, const QString& primarySource,
+                                           double primaryPrice, const QString& secondarySource,
+                                           double secondaryPrice)
+{
+    if (!m_open || primaryPrice <= 0.0 || secondaryPrice <= 0.0)
+        return false;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastSecondaryMs > 0 && (nowMs - m_lastSecondaryMs) < kSecondarySampleIntervalMs)
+        return false;
+    m_lastSecondaryMs = nowMs;
+
+    const double ratio = primaryPrice / secondaryPrice;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO secondary_quotes "
+        "(ts, primary_source, primary_price, secondary_source, secondary_price, ratio) "
+        "VALUES (?, ?, ?, ?, ?, ?)"));
+    q.addBindValue(ts.toString(Qt::ISODate));
+    q.addBindValue(primarySource);
+    q.addBindValue(primaryPrice);
+    q.addBindValue(secondarySource);
+    q.addBindValue(secondaryPrice);
+    q.addBindValue(ratio);
+    if (!q.exec()) {
+        qWarning() << "insertSecondaryQuote:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString& source,
+                                          const QString& mode, double predHigh, double predLow,
+                                          double basePrice)
+{
+    if (!m_open || predHigh <= 0.0 || predLow <= 0.0)
+        return 0;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT INTO forecast_logs "
+        "(made_at, mature_at, source, mode, pred_high, pred_low, base_price, settled) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0)"));
+    q.addBindValue(madeAt.toString(Qt::ISODate));
+    q.addBindValue(madeAt.addSecs(3600).toString(Qt::ISODate));
+    q.addBindValue(source);
+    q.addBindValue(mode);
+    q.addBindValue(predHigh);
+    q.addBindValue(predLow);
+    q.addBindValue(basePrice);
+    if (!q.exec()) {
+        qWarning() << "insertForecastLog:" << q.lastError().text();
+        return 0;
+    }
+    return q.lastInsertId().toLongLong();
+}
+
+int ExtremeDatabase::settleForecasts(const QString& source, double actualHigh, double actualLow,
+                                     const QDateTime& now)
+{
+    if (!m_open || actualHigh <= 0.0 || actualLow <= 0.0)
+        return 0;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "UPDATE forecast_logs SET actual_high=?, actual_low=?, settled=1, settled_at=? "
+        "WHERE settled=0 AND source=? AND mature_at<=?"));
+    q.addBindValue(actualHigh);
+    q.addBindValue(actualLow);
+    q.addBindValue(now.toString(Qt::ISODate));
+    q.addBindValue(source);
+    q.addBindValue(now.toString(Qt::ISODate));
+    if (!q.exec()) {
+        qWarning() << "settleForecasts:" << q.lastError().text();
+        return 0;
+    }
+    return q.numRowsAffected();
+}
+
+bool ExtremeDatabase::insertAlertEvent(const QDateTime& ts, const QString& source,
+                                       const QString& kind, double price, double threshold,
+                                       const QString& note)
+{
+    if (!m_open || kind.isEmpty())
+        return false;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT INTO alert_events (ts, source, kind, price, threshold, note) "
+        "VALUES (?, ?, ?, ?, ?, ?)"));
+    q.addBindValue(ts.toString(Qt::ISODate));
+    q.addBindValue(source);
+    q.addBindValue(kind);
+    q.addBindValue(price);
+    q.addBindValue(threshold);
+    q.addBindValue(note);
+    if (!q.exec()) {
+        qWarning() << "insertAlertEvent:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool ExtremeDatabase::insertSessionMark(const QDateTime& ts, const QString& source,
+                                        bool isOpen, const QString& status)
+{
+    if (!m_open)
+        return false;
+    const QString key = source + QLatin1Char('|') + (isOpen ? QStringLiteral("1") : QStringLiteral("0"))
+                        + QLatin1Char('|') + status;
+    if (m_lastSessionKey == key)
+        return false;
+    m_lastSessionKey = key;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO session_marks (ts, source, is_open, status) VALUES (?, ?, ?, ?)"));
+    q.addBindValue(ts.toString(Qt::ISODate));
+    q.addBindValue(source);
+    q.addBindValue(isOpen ? 1 : 0);
+    q.addBindValue(status);
+    if (!q.exec()) {
+        qWarning() << "insertSessionMark:" << q.lastError().text();
         return false;
     }
     return true;

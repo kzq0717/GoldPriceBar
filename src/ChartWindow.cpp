@@ -667,6 +667,9 @@ void ChartWindow::updateForecast() {
   // 命中统计：登记「预测高」与「预测低」的均值，到期用今高/今低检验
   ForecastTracker::instance().recordDayRange(
       QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
+  ExtremeDatabase::instance().insertForecastLog(
+      QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag,
+      predHigh, predLow, m_plotPoints.last().second);
 
   if (m_axisY) {
     qreal yMin = m_axisY->min();
@@ -1019,6 +1022,9 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
 
   ForecastTracker::instance().recordDayRange(
       QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
+  ExtremeDatabase::instance().insertForecastLog(
+      QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag,
+      predHigh, predLow, m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second);
 
   m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
   double high = 0, low = 0;
@@ -1746,11 +1752,13 @@ void ChartWindow::updateClockAndAdvice()
     const QString src = AppSettings::instance().dataSource();
     const bool open = TradingSession::isTradingNow(src, now);
     if (m_sideSessionLabel) {
-        m_sideSessionLabel->setText(TradingSession::statusText(src, now));
+        const QString st = TradingSession::statusText(src, now);
+        m_sideSessionLabel->setText(st);
         m_sideSessionLabel->setStyleSheet(
             open ? QStringLiteral("color:#27ae60;font-size:11px;font-weight:bold;")
                  : QStringLiteral("color:#e67e22;font-size:11px;font-weight:bold;"));
         m_sideSessionLabel->setToolTip(TradingSession::hoursDescription(src));
+        ExtremeDatabase::instance().insertSessionMark(now, src, open, st);
     }
 
     double price = 0.0;

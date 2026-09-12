@@ -288,6 +288,16 @@ void PriceBarWindow::onPriceUpdated(double price, double change, const QString& 
     evaluateSmartAlerts(price);
     evaluatePremium(price);
     updateNetworkHealth();
+    {
+        const QString src = AppSettings::instance().dataSource();
+        ExtremeDatabase::instance().insertQuoteSample(
+            QDateTime::currentDateTime(), src, price, change);
+        double ah = 0, al = 0;
+        HistoryCache::instance().todayHigh(ah);
+        HistoryCache::instance().todayLow(al);
+        if (ah > 0 && al > 0)
+            ExtremeDatabase::instance().settleForecasts(src, ah, al);
+    }
 }
 
 void PriceBarWindow::onFetchFailed(const QString& error)
@@ -541,6 +551,14 @@ void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
     m_trayIcon->showMessage(title, body, QSystemTrayIcon::Warning, 5000);
     if (AppSettings::instance().alertSound())
         QApplication::beep();
+    ExtremeDatabase::instance().insertAlertEvent(
+        QDateTime::currentDateTime(),
+        AppSettings::instance().dataSource(),
+        kind == AlertKind::High ? QStringLiteral("high") : QStringLiteral("low"),
+        price,
+        kind == AlertKind::High ? AppSettings::instance().alertHigh()
+                                : AppSettings::instance().alertLow(),
+        body);
 }
 
 
@@ -624,8 +642,13 @@ void PriceBarWindow::onSecondaryFinished(QNetworkReply* reply)
     if (m_secondaryLabel)
         m_secondaryLabel->setText(tr("%1 %2").arg(shortName).arg(price, 0, 'f', 2));
     m_lastSecondaryPrice = price;
-    if (m_lastPrice > 0.0)
+    if (m_lastPrice > 0.0) {
         evaluatePremium(m_lastPrice);
+        ExtremeDatabase::instance().insertSecondaryQuote(
+            QDateTime::currentDateTime(),
+            AppSettings::instance().dataSource(), m_lastPrice,
+            QStringLiteral("gj"), price);
+    }
 }
 
 void PriceBarWindow::onAlertBlinkTick()
@@ -914,6 +937,11 @@ void PriceBarWindow::evaluateSmartAlerts(double price)
                                 bullish ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information,
                                 3500);
     }
+    ExtremeDatabase::instance().insertAlertEvent(
+        QDateTime::currentDateTime(),
+        AppSettings::instance().dataSource(),
+        bullish ? QStringLiteral("smart_high") : QStringLiteral("smart_low"),
+        price, 0.0, reasons.join(QStringLiteral(";")));
     if (AppSettings::instance().alertSound())
         QApplication::beep();
 }
