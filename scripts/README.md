@@ -1,44 +1,26 @@
 # 历史数据导入
 
-## 公开接口（无需 Key）
+## 单位约定
 
-| 源 | 地址 | 说明 |
-|----|------|------|
-| FreeGoldAPI | https://freegoldapi.com/data/latest.json | 长历史 USD 金价，年/月/日混合粒度 |
-| Stooq | https://stooq.com/q/d/l/?s=xauusd&i=d | XAUUSD 日线 CSV（若可访问） |
+| unit | 含义 | 典型 source |
+|------|------|-------------|
+| `USD/oz` | 美元/金衡盎司 | `gj`（伦敦金 / FreeGoldAPI） |
+| `CNY/g` | 人民币元/克 | `zs` / `ms`（积存金） |
 
-goldprice.dev 日线深度受套餐限制（免费约 30 天），本脚本默认用上两者。
+换算：`CNY/g ≈ USD/oz × 美元兑人民币 / 31.1034768`
 
 ## 用法
 
 ```bash
-# 写入默认库路径（与客户端一致）
+# 1) 原样写入伦敦金（USD/oz）
 python scripts/import_historical_gold.py --min-year 1990 --source gj
 
-# 指定库
-python scripts/import_historical_gold.py --db /path/to/gold_extremes.db
+# 2) 换算为元/克，写入 zs，便于与浙商分时同尺度做 MA
+python scripts/import_historical_gold.py --min-year 1990 --to-cny-g --fx 7.25 --source zs
 ```
 
-导入写入表 `daily_bars`，`source=gj`，可供 MA5/MA20、月份曲线与后续建模使用。
+`--fx` 请按近期中间价自行调整。
 
-## 运行时建模表（客户端自动写）
+## Stooq
 
-| 表 | 内容 |
-|----|------|
-| quote_samples | 主源降采样报价 ~30s |
-| secondary_quotes | 对照价与比值 |
-| forecast_logs | 预测与结算 |
-| alert_events | 预警事件 |
-| session_marks | 交易时段状态变化 |
-| intraday_samples / daily_bars / daily_extremes | 原有分时与日线 |
-
-下阶段再拆无 Qt 的 SDK；本阶段仅扩库与导入脚本。
-
-
-## Stooq 404 说明
-
-自约 2026 年起，Stooq 历史 CSV 直链常要求 **apikey**，匿名访问可能返回 **HTTP 404** 或 HTML 页。
-
-- 申请：浏览器打开 https://stooq.com/q/d/?s=xauusd ，按页面获取 apikey  
-- 使用：`python scripts/import_historical_gold.py --prefer both --stooq-apikey YOUR_KEY`  
-- **仅用 FreeGoldAPI 已成功写入时，可忽略 Stooq 错误**（脚本默认 `--prefer freegold`）。
+2026 起常需 apikey：`--prefer both --stooq-apikey KEY`

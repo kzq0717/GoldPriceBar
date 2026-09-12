@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-导入往年黄金日线到 GoldPriceBar SQLite（daily_bars）
+导入往年黄金日线到 gold_extremes.db 的 daily_bars，并写入单位 unit。
 
-数据源：
-  1) FreeGoldAPI  https://freegoldapi.com/data/latest.json  （免 Key，默认）
-  2) Stooq XAUUSD 日线（2026 起通常需要 apikey，否则会 404/返回 HTML）
-     获取 Key: 打开 https://stooq.com/q/d/?s=xauusd 按页面说明 get_apikey
-     然后: --stooq-apikey YOUR_KEY
+默认 FreeGoldAPI → source=gj, unit=USD/oz
 
-用法：
-  python import_historical_gold.py --min-year 1990 --source gj
-  python import_historical_gold.py --prefer both --stooq-apikey xxx
+换算为积存金常用「元/克」：
+  python import_historical_gold.py --to-cny-g --fx 7.25 --source zs
+  公式: CNY/g = USD/oz * fx / 31.1034768
+
+也可同时保留两种：
+  python import_historical_gold.py --prefer freegold
+  python import_historical_gold.py --to-cny-g --fx 7.25 --source zs
 """
 from __future__ import annotations
 
@@ -27,7 +27,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-UA = "GoldPriceBarLite-HistoryImport/0.8.2 (+https://github.com/kzq0717/GoldPriceBar)"
+UA = "GoldPriceBarLite-HistoryImport/0.8.3"
+OZ_TO_G = 31.1034768
 
 
 def default_db_path() -> Path:
@@ -55,26 +56,39 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           low_price REAL NOT NULL,
           close_price REAL NOT NULL,
           updated_at TEXT NOT NULL,
+          unit TEXT,
           PRIMARY KEY(trade_date, source)
         );
         """
     )
+    try:
+        conn.execute("ALTER TABLE daily_bars ADD COLUMN unit TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 
-def upsert_close(conn: sqlite3.Connection, day: str, source: str, close: float) -> None:
+def upsert_bar(
+    conn: sqlite3.Connection,
+    day: str,
+    source: str,
+    close: float,
+    unit: str,
+) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute(
         """
-        INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO daily_bars
+          (trade_date, source, open_price, high_price, low_price, close_price, updated_at, unit)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(trade_date, source) DO UPDATE SET
           close_price=excluded.close_price,
+          unit=excluded.unit,
           high_price=MAX(daily_bars.high_price, excluded.close_price),
           low_price=MIN(daily_bars.low_price, excluded.close_price),
           updated_at=excluded.updated_at
         """,
-        (day, source, close, close, close, close, now),
+        (day, source, close, close, close, close, now, unit),
     )
 
 
@@ -107,43 +121,24 @@ def fetch_freegoldapi(min_year: int) -> list[tuple[str, float]]:
 
 
 def fetch_stooq_xauusd(min_year: int, apikey: str | None) -> list[tuple[str, float]]:
-    """
-    Stooq 自约 2026 起对 CSV 下载常要求 apikey；无 Key 时可能 404 或返回 HTML 登录页。
-    文档: https://stooq.com/q/d/?s=xauusd  申请: ...&get_apikey
-    """
     base = "https://stooq.com/q/d/l/?s=xauusd&i=d"
-    if apikey:
-        url = f"{base}&apikey={urllib.parse.quote(apikey)}"
-    else:
-        url = base
-    print(f"Downloading Stooq XAUUSD ...")
+    url = f"{base}&apikey={urllib.parse.quote(apikey)}" if apikey else base
+    print("Downloading Stooq XAUUSD ...")
     try:
         raw = http_get(url, timeout=60).decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         print(f"  Stooq HTTP {e.code}: {e.reason}")
         if e.code == 404:
-            print(
-                "  原因说明: Stooq 已不再对匿名 CSV 直链稳定开放（2026 起多要求 apikey）。"
-                " 请打开 https://stooq.com/q/d/?s=xauusd 获取 apikey 后使用 --stooq-apikey。"
-            )
+            print("  需要 --stooq-apikey（Stooq 2026 起常要求密钥）")
         return []
     except Exception as e:
         print(f"  Stooq failed: {e}")
         return []
-
     if raw.lstrip().startswith("<!") or "<html" in raw[:200].lower():
-        print(
-            "  Stooq 返回了 HTML 而非 CSV（通常需要登录/apikey）。"
-            " 跳过 Stooq；FreeGoldAPI 数据仍会写入。"
-        )
+        print("  Stooq 返回 HTML 而非 CSV，跳过")
         return []
-
     rows: list[tuple[str, float]] = []
-    reader = csv.DictReader(io.StringIO(raw))
-    if not reader.fieldnames:
-        print("  Stooq CSV 无表头，跳过")
-        return []
-    for r in reader:
+    for r in csv.DictReader(io.StringIO(raw)):
         d = (r.get("Date") or r.get("date") or "").strip()
         c = r.get("Close") or r.get("close")
         if not d or c is None:
@@ -156,22 +151,33 @@ def fetch_stooq_xauusd(min_year: int, apikey: str | None) -> list[tuple[str, flo
         if y < min_year or price <= 0:
             continue
         rows.append((d, price))
-    print(f"  Stooq XAUUSD rows: {len(rows)}")
+    print(f"  Stooq rows: {len(rows)}")
     return rows
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Import historical gold closes into gold_extremes.db")
-    ap.add_argument("--db", type=Path, default=None, help="SQLite path")
-    ap.add_argument("--source", default="gj", help="source tag (default gj)")
+    ap = argparse.ArgumentParser(description="Import historical gold into daily_bars with unit")
+    ap.add_argument("--db", type=Path, default=None)
+    ap.add_argument("--source", default="gj", help="写入 source 标签（默认 gj）")
     ap.add_argument("--min-year", type=int, default=1990)
+    ap.add_argument("--prefer", choices=("stooq", "freegold", "both"), default="freegold")
+    ap.add_argument("--stooq-apikey", default=None)
     ap.add_argument(
-        "--prefer",
-        choices=("stooq", "freegold", "both"),
-        default="freegold",
-        help="默认仅 FreeGoldAPI；both/stooq 可再试 Stooq",
+        "--to-cny-g",
+        action="store_true",
+        help="将 USD/oz 换算为约元/克后写入（需 --fx）",
     )
-    ap.add_argument("--stooq-apikey", default=None, help="Stooq CSV apikey（可选）")
+    ap.add_argument(
+        "--fx",
+        type=float,
+        default=7.25,
+        help="美元兑人民币中间价近似，用于 --to-cny-g（默认 7.25）",
+    )
+    ap.add_argument(
+        "--unit",
+        default=None,
+        help="强制 unit 字段；默认 USD/oz 或 CNY/g",
+    )
     args = ap.parse_args()
 
     db_path = args.db or default_db_path()
@@ -184,28 +190,37 @@ def main() -> int:
             series[d] = p
     if args.prefer in ("stooq", "both"):
         for d, p in fetch_stooq_xauusd(args.min_year, args.stooq_apikey):
-            series[d] = p  # 同日以 Stooq 覆盖
+            series[d] = p
 
     if not series:
         print("No data fetched.")
         return 1
 
+    if args.to_cny_g:
+        unit = args.unit or "CNY/g"
+        print(f"Converting USD/oz → CNY/g with fx={args.fx}, unit={unit}")
+        converted: dict[str, float] = {}
+        for d, usd_oz in series.items():
+            cny_g = usd_oz * args.fx / OZ_TO_G
+            if cny_g > 0:
+                converted[d] = cny_g
+        series = converted
+        print(f"  sample last: {sorted(series.items())[-1]}")
+    else:
+        unit = args.unit or "USD/oz"
+
     conn = sqlite3.connect(str(db_path))
     ensure_schema(conn)
     n = 0
     for d in sorted(series.keys()):
-        upsert_close(conn, d, args.source, series[d])
+        upsert_bar(conn, d, args.source, series[d], unit)
         n += 1
         if n % 500 == 0:
             conn.commit()
     conn.commit()
     conn.close()
-    print(f"Upserted {n} daily closes for source={args.source}")
-    print("Done. Restart GoldPriceBarLite to use MA / month charts with history.")
-    if args.prefer in ("stooq", "both") and not args.stooq_apikey:
-        print(
-            "提示: 未提供 --stooq-apikey 时 Stooq 常失败；仅 FreeGoldAPI 已足够做中长期日线建模。"
-        )
+    print(f"Upserted {n} rows source={args.source} unit={unit}")
+    print("Done.")
     return 0
 
 

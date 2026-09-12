@@ -58,7 +58,14 @@ public:
     QVector<QPair<QDate, double>> loadRecentDailyCloses(int maxDays,
                                                         const QString& source) const;
 
-    bool upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close);
+    bool upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close,
+                               const QString& unit = QString());
+
+    /** 单位：CNY/g、USD/oz 等；空则按 source 推断 */
+    static QString defaultUnitForSource(const QString& source);
+
+    /** USD/oz → 约元/克：cny_per_g = usd_oz * usdCny / 31.1034768 */
+    static double usdOzToCnyG(double usdPerOz, double usdCny);
 
     /** 建模：主源报价降采样（默认 ≥30s 一条） */
     bool insertQuoteSample(const QDateTime& ts, const QString& source,

@@ -104,11 +104,20 @@ bool ExtremeDatabase::ensureSchema()
             "  low_price REAL NOT NULL,"
             "  close_price REAL NOT NULL,"
             "  updated_at TEXT NOT NULL,"
+            "  unit TEXT,"
             "  PRIMARY KEY(trade_date, source)"
             ")"))) {
         qWarning() << "CREATE daily_bars failed:" << q.lastError().text();
         return false;
     }
+    // 兼容旧库：补 unit 列
+    q.exec(QStringLiteral("ALTER TABLE daily_bars ADD COLUMN unit TEXT"));
+    q.exec(QStringLiteral(
+        "UPDATE daily_bars SET unit='CNY/g' WHERE (unit IS NULL OR unit='') "
+        "AND (source='zs' OR source='ms')"));
+    q.exec(QStringLiteral(
+        "UPDATE daily_bars SET unit='USD/oz' WHERE (unit IS NULL OR unit='') "
+        "AND (source='gj' OR source='xau')"));
 
     // ---- 建模扩展表 ----
     q.exec(QStringLiteral(
@@ -240,6 +249,7 @@ bool ExtremeDatabase::upsertDailyBar(const QDate& tradeDate, const QString& sour
         return false;
 
     const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QString unit = defaultUnitForSource(src);
     const QString dateStr = tradeDate.toString(Qt::ISODate);
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
     QSqlQuery q(db);
@@ -257,11 +267,14 @@ bool ExtremeDatabase::upsertDailyBar(const QDate& tradeDate, const QString& sour
 
     QSqlQuery u(db);
     u.prepare(QStringLiteral(
-        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at, unit) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(trade_date, source) DO UPDATE SET "
-        "  high_price=excluded.high_price, low_price=excluded.low_price, "
-        "  close_price=excluded.close_price, updated_at=excluded.updated_at"));
+        "  high_price=excluded.high_price, "
+        "  low_price=excluded.low_price, "
+        "  close_price=excluded.close_price, "
+        "  unit=excluded.unit, "
+        "  updated_at=excluded.updated_at"));
     u.addBindValue(dateStr);
     u.addBindValue(src);
     u.addBindValue(openP);
@@ -269,6 +282,7 @@ bool ExtremeDatabase::upsertDailyBar(const QDate& tradeDate, const QString& sour
     u.addBindValue(lowP);
     u.addBindValue(price);
     u.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+    u.addBindValue(unit);
     if (!u.exec()) {
         qWarning() << "upsertDailyBar failed:" << u.lastError().text();
         return false;
@@ -302,55 +316,31 @@ bool ExtremeDatabase::refreshDailyBarFromPoints(const QDate& tradeDate, const QS
         return false;
 
     const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QString unit = defaultUnitForSource(src);
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
     QSqlQuery u(db);
     u.prepare(QStringLiteral(
-        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at, unit) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(trade_date, source) DO UPDATE SET "
         "  open_price=excluded.open_price, high_price=excluded.high_price, "
         "  low_price=excluded.low_price, close_price=excluded.close_price, "
-        "  updated_at=excluded.updated_at"));
+        "  unit=excluded.unit, updated_at=excluded.updated_at"));
     u.addBindValue(tradeDate.toString(Qt::ISODate));
     u.addBindValue(src);
     u.addBindValue(openP);
     u.addBindValue(highP);
     u.addBindValue(lowP);
     u.addBindValue(closeP);
-    u.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
-    return u.exec();
-}
-
-QVector<QPair<QDateTime, double>> ExtremeDatabase::loadMonthCloses(int year, int month,
-                                                                   const QString& source) const
-{
-    QVector<QPair<QDateTime, double>> out;
-    if (!m_open)
-        return out;
-
-    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
-    const QString prefix = QStringLiteral("%1-%2")
-                               .arg(year, 4, 10, QChar('0'))
-                               .arg(month, 2, 10, QChar('0'));
-
-    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
-    QSqlQuery q(db);
-    q.prepare(QStringLiteral(
-        "SELECT trade_date, close_price FROM daily_bars "
-        "WHERE source=? AND trade_date LIKE ? ORDER BY trade_date ASC"));
-    q.addBindValue(src);
-    q.addBindValue(prefix + QStringLiteral("-%"));
-    if (!q.exec())
-        return out;
-
-    while (q.next()) {
-        const QDate d = QDate::fromString(q.value(0).toString(), Qt::ISODate);
-        const double c = q.value(1).toDouble();
-        if (d.isValid() && c > 0.0)
-            out.append({QDateTime(d, QTime(12, 0)), c});
+    u.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
+    u.addBindValue(unit);
+    if (!u.exec()) {
+        qWarning() << "refreshDailyBarFromPoints failed:" << u.lastError().text();
+        return false;
     }
-    return out;
+    return true;
 }
+
 
 bool ExtremeDatabase::monthRange(int year, int month, const QString& source,
                                  double& outHigh, double& outLow, int& outDays) const
@@ -484,31 +474,23 @@ QVector<QPair<QDate, double>> ExtremeDatabase::loadRecentDailyCloses(
     return out;
 }
 
-bool ExtremeDatabase::upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close)
+bool ExtremeDatabase::upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close,
+                                              const QString& unit)
 {
     if (!m_open && !open())
         return false;
     if (!tradeDate.isValid() || close <= 0.0)
         return false;
     const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QString u = unit.isEmpty() ? defaultUnitForSource(src) : unit;
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
-    // 若已有当日记录则只在 close 为空/0 时更新，或更新 close 为历史收盘
     QSqlQuery q(db);
     q.prepare(QStringLiteral(
-        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at, unit) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(trade_date, source) DO UPDATE SET "
         "  close_price=excluded.close_price, "
-        "  high_price=MAX(daily_bars.high_price, excluded.high_price), "
-        "  low_price=CASE WHEN daily_bars.low_price<=0 THEN excluded.low_price "
-        "                 ELSE MIN(daily_bars.low_price, excluded.low_price) END, "
-        "  updated_at=excluded.updated_at"));
-    // SQLite MAX in ON CONFLICT may not work that way - simplify
-    q.prepare(QStringLiteral(
-        "INSERT INTO daily_bars (trade_date, source, open_price, high_price, low_price, close_price, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(trade_date, source) DO UPDATE SET "
-        "  close_price=excluded.close_price, "
+        "  unit=excluded.unit, "
         "  updated_at=excluded.updated_at"));
     const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
     q.addBindValue(tradeDate.toString(Qt::ISODate));
@@ -518,6 +500,7 @@ bool ExtremeDatabase::upsertHistoricalClose(const QDate& tradeDate, const QStrin
     q.addBindValue(close);
     q.addBindValue(close);
     q.addBindValue(now);
+    q.addBindValue(u);
     if (!q.exec()) {
         qWarning() << "upsertHistoricalClose failed:" << q.lastError().text();
         return false;
@@ -525,6 +508,22 @@ bool ExtremeDatabase::upsertHistoricalClose(const QDate& tradeDate, const QStrin
     return true;
 }
 
+
+QString ExtremeDatabase::defaultUnitForSource(const QString& source)
+{
+    const QString s = source.trimmed().toLower();
+    if (s == QStringLiteral("gj") || s == QStringLiteral("xau"))
+        return QStringLiteral("USD/oz");
+    return QStringLiteral("CNY/g");
+}
+
+double ExtremeDatabase::usdOzToCnyG(double usdPerOz, double usdCny)
+{
+    if (usdPerOz <= 0.0 || usdCny <= 0.0)
+        return 0.0;
+    constexpr double kOzToG = 31.1034768;
+    return usdPerOz * usdCny / kOzToG;
+}
 
 bool ExtremeDatabase::insertQuoteSample(const QDateTime& ts, const QString& source,
                                         double price, double change)
