@@ -3,6 +3,7 @@
 
 #include <QDialog>
 #include <QPointer>
+#include <QPointer>
 
 class QComboBox;
 class QSlider;
@@ -37,6 +38,7 @@ private:
     void loadFromSettings();
     void updateForecastUiState();
     void applyDialogTheme();
+    void onCategoryChanged(int row);
     void fillDefaultModels();
     void updateApiKeyPlaceholder();
 
@@ -91,7 +93,12 @@ private:
     QCheckBox* m_eventAlertCheck = nullptr;
     QPushButton* m_suggestAlertBtn = nullptr;
     QLabel* m_eventSummaryLabel = nullptr;
+
+    class QListWidget* m_categoryList = nullptr;
+    class QStackedWidget* m_stack = nullptr;
 };
+
+
 
 
 

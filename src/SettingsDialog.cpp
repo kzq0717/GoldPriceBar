@@ -2,13 +2,10 @@
 #include "AppSettings.h"
 #include "EventCalendar.h"
 #include "ExtremeDatabase.h"
-#include <QtMath>
-
-#include "ExtremeDatabase.h"
-#include <QtMath>
 #include "Logger.h"
 #include "UpdateChecker.h"
 
+#include <QtMath>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -35,23 +32,17 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QUrl>
 #include <QMessageBox>
 #include <QScrollArea>
-#include <QSizePolicy>
+#include <QListWidget>
+#include <QStackedWidget>
+#include <QDir>
 #include <QFrame>
-#include <QFormLayout>
-#include <QMessageBox>
 
 SettingsDialog::SettingsDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("设置 - GoldPriceBarLite %1").arg(QApplication::applicationVersion()));
-    setMinimumWidth(520);
-    setMinimumHeight(640);
-    resize(560, 720);
-    setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
-    setWindowIcon(QIcon(QStringLiteral(":/app.png")));
     setupUi();
     loadFromSettings();
     applyDialogTheme();
@@ -59,317 +50,350 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
 void SettingsDialog::setupUi()
 {
+    setMinimumSize(720, 520);
+    resize(780, 560);
+
     auto* mainLayout = new QVBoxLayout(this);
-    auto* scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    auto* formHost = new QWidget(scroll);
-    formHost->setObjectName(QStringLiteral("settingsFormHost"));
-    auto* form = new QFormLayout(formHost);
-    form->setContentsMargins(12, 12, 16, 12);
-    form->setSpacing(12);
-    form->setHorizontalSpacing(16);
-    form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
-    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(10);
 
+    auto* body = new QHBoxLayout;
+    body->setSpacing(12);
 
-    m_intervalCombo = new QComboBox(this);
-    m_intervalCombo->setMinimumWidth(200);
+    m_categoryList = new QListWidget(this);
+    m_categoryList->setObjectName(QStringLiteral("settingsCategoryList"));
+    m_categoryList->setFixedWidth(148);
+    m_categoryList->setSpacing(2);
+    m_categoryList->setMovement(QListWidget::Static);
+    m_categoryList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    const QStringList cats = {
+        tr("行情显示"),
+        tr("预警提醒"),
+        tr("价格预测"),
+        tr("持仓报告"),
+        tr("高级")
+    };
+    for (const QString& c : cats)
+        m_categoryList->addItem(c);
+    m_categoryList->setCurrentRow(0);
+    body->addWidget(m_categoryList);
 
-    m_intervalCombo->addItem(tr("1 秒"), 1000);
-    m_intervalCombo->addItem(tr("2 秒"), 2000);
-    m_intervalCombo->addItem(tr("5 秒"), 5000);
-    m_intervalCombo->addItem(tr("10 秒"), 10000);
-    m_intervalCombo->addItem(tr("30 秒"), 30000);
-    form->addRow(tr("刷新频率："), m_intervalCombo);
+    m_stack = new QStackedWidget(this);
+    m_stack->setObjectName(QStringLiteral("settingsStack"));
 
-    m_sourceCombo = new QComboBox(this);
-    m_sourceCombo->setMinimumWidth(200);
+    auto makePage = [this](const QString& title) -> QFormLayout* {
+        auto* page = new QWidget(m_stack);
+        page->setObjectName(QStringLiteral("settingsFormHost"));
+        auto* outer = new QVBoxLayout(page);
+        outer->setContentsMargins(0, 0, 0, 0);
+        auto* scroll = new QScrollArea(page);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto* host = new QWidget;
+        host->setObjectName(QStringLiteral("settingsFormHost"));
+        auto* form = new QFormLayout(host);
+        form->setContentsMargins(8, 4, 12, 12);
+        form->setSpacing(12);
+        form->setHorizontalSpacing(16);
+        form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        auto* head = new QLabel(title, host);
+        head->setObjectName(QStringLiteral("settingsPageTitle"));
+        head->setStyleSheet("font-size:16px;font-weight:700;padding:4px 0 8px 0;");
+        form->addRow(head);
+        scroll->setWidget(host);
+        outer->addWidget(scroll);
+        m_stack->addWidget(page);
+        return form;
+    };
 
-    m_sourceCombo->addItem(tr("浙商积存金"), "zs");
-    m_sourceCombo->addItem(tr("民生积存金"), "ms");
-    m_sourceCombo->addItem(tr("伦敦金 (XAU/USD)"), "gj");
-    form->addRow(tr("数据源："), m_sourceCombo);
+    // ---- 0 行情显示 ----
+    {
+        auto* form = makePage(tr("行情与显示"));
+        m_intervalCombo = new QComboBox(this);
+        m_intervalCombo->setMinimumWidth(200);
+        m_intervalCombo->addItem(tr("1 秒"), 1000);
+        m_intervalCombo->addItem(tr("2 秒"), 2000);
+        m_intervalCombo->addItem(tr("5 秒"), 5000);
+        m_intervalCombo->addItem(tr("10 秒"), 10000);
+        m_intervalCombo->addItem(tr("30 秒"), 30000);
+        form->addRow(tr("刷新频率："), m_intervalCombo);
 
-    auto* opacityLayout = new QHBoxLayout;
-    m_opacitySlider = new QSlider(Qt::Horizontal, this);
-    m_opacitySlider->setRange(30, 100);
-    m_opacitySlider->setValue(95);
-    m_opacityValueLabel = new QLabel("95%", this);
-    m_opacityValueLabel->setFixedWidth(40);
-    opacityLayout->addWidget(m_opacitySlider);
-    opacityLayout->addWidget(m_opacityValueLabel);
-    form->addRow(tr("窗口透明度："), opacityLayout);
-    connect(m_opacitySlider, &QSlider::valueChanged, this, &SettingsDialog::onOpacityChanged);
+        m_sourceCombo = new QComboBox(this);
+        m_sourceCombo->setMinimumWidth(200);
+        m_sourceCombo->addItem(tr("浙商积存金"), "zs");
+        m_sourceCombo->addItem(tr("民生积存金"), "ms");
+        m_sourceCombo->addItem(tr("伦敦金 (XAU/USD)"), "gj");
+        form->addRow(tr("数据源："), m_sourceCombo);
 
-    // 预警阈值
-    m_alertHighSpin = new QDoubleSpinBox(this);
-    m_alertHighSpin->setFixedWidth(140);
-    m_alertHighSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
-    m_alertHighSpin->setRange(0.0, 99999.0);
-    m_alertHighSpin->setDecimals(2);
-    m_alertHighSpin->setSingleStep(1.0);
-    m_alertHighSpin->setSpecialValueText(tr("关闭"));
-    m_alertHighSpin->setToolTip(tr("现价达到或超过该值时，价格条红点闪烁；0=关闭"));
-    form->addRow(tr("高价预警："), m_alertHighSpin);
+        auto* opacityLayout = new QHBoxLayout;
+        m_opacitySlider = new QSlider(Qt::Horizontal, this);
+        m_opacitySlider->setRange(30, 100);
+        m_opacitySlider->setValue(95);
+        m_opacityValueLabel = new QLabel("95%", this);
+        m_opacityValueLabel->setFixedWidth(40);
+        opacityLayout->addWidget(m_opacitySlider);
+        opacityLayout->addWidget(m_opacityValueLabel);
+        form->addRow(tr("窗口透明度："), opacityLayout);
+        connect(m_opacitySlider, &QSlider::valueChanged, this, &SettingsDialog::onOpacityChanged);
 
-    m_alertLowSpin = new QDoubleSpinBox(this);
-    m_alertLowSpin->setFixedWidth(140);
-    m_alertLowSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
-    m_alertLowSpin->setRange(0.0, 99999.0);
-    m_alertLowSpin->setDecimals(2);
-    m_alertLowSpin->setSingleStep(1.0);
-    m_alertLowSpin->setSpecialValueText(tr("关闭"));
-    m_alertLowSpin->setToolTip(tr("现价达到或低于该值时，价格条绿点闪烁；0=关闭"));
-    form->addRow(tr("低价预警："), m_alertLowSpin);
+        m_secondaryPriceCheck = new QCheckBox(tr("词条显示对照价（主源非伦敦金时显示伦敦金）"), this);
+        form->addRow("", m_secondaryPriceCheck);
+        m_darkThemeCheck = new QCheckBox(tr("深色主题（价格条 / 分时 / 设置）"), this);
+        form->addRow("", m_darkThemeCheck);
+        m_maCheck = new QCheckBox(tr("分时显示均线（优先日线 MA；否则分时滚动均线）"), this);
+        form->addRow("", m_maCheck);
+        m_hotkeyCheck = new QCheckBox(tr("全局热键显示/隐藏价格条（Ctrl+Shift+G）"), this);
+        form->addRow("", m_hotkeyCheck);
+        m_autoStartCheck = new QCheckBox(tr("开机自动启动"), this);
+        form->addRow("", m_autoStartCheck);
+    }
 
-    m_alertCooldownSpin = new QSpinBox(this);
-    m_alertCooldownSpin->setRange(30, 3600);
-    m_alertCooldownSpin->setSuffix(tr(" 秒"));
-    m_alertCooldownSpin->setToolTip(tr("同一方向预警最短通知间隔，避免频繁弹窗"));
-    form->addRow(tr("预警冷却："), m_alertCooldownSpin);
+    // ---- 1 预警 ----
+    {
+        auto* form = makePage(tr("预警与通知"));
+        m_alertHighSpin = new QDoubleSpinBox(this);
+        m_alertHighSpin->setFixedWidth(140);
+        m_alertHighSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
+        m_alertHighSpin->setRange(0.0, 99999.0);
+        m_alertHighSpin->setDecimals(2);
+        m_alertHighSpin->setSingleStep(1.0);
+        m_alertHighSpin->setSpecialValueText(tr("关闭"));
+        form->addRow(tr("高价预警："), m_alertHighSpin);
 
-    m_trayNotifyCheck = new QCheckBox(tr("触发预警时弹出系统托盘通知"), this);
-    form->addRow("", m_trayNotifyCheck);
+        m_alertLowSpin = new QDoubleSpinBox(this);
+        m_alertLowSpin->setFixedWidth(140);
+        m_alertLowSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
+        m_alertLowSpin->setRange(0.0, 99999.0);
+        m_alertLowSpin->setDecimals(2);
+        m_alertLowSpin->setSingleStep(1.0);
+        m_alertLowSpin->setSpecialValueText(tr("关闭"));
+        form->addRow(tr("低价预警："), m_alertLowSpin);
 
-    m_secondaryPriceCheck = new QCheckBox(tr("词条显示对照价（主源非伦敦金时显示伦敦金）"), this);
-    form->addRow("", m_secondaryPriceCheck);
+        m_alertCooldownSpin = new QSpinBox(this);
+        m_alertCooldownSpin->setRange(30, 3600);
+        m_alertCooldownSpin->setSuffix(tr(" 秒"));
+        form->addRow(tr("预警冷却："), m_alertCooldownSpin);
 
-    m_darkThemeCheck = new QCheckBox(tr("深色主题（价格条 / 分时 / 设置）"), this);
-    form->addRow("", m_darkThemeCheck);
+        m_trayNotifyCheck = new QCheckBox(tr("触发预警时弹出系统托盘通知"), this);
+        form->addRow("", m_trayNotifyCheck);
+        m_alertSoundCheck = new QCheckBox(tr("预警时播放系统提示音"), this);
+        form->addRow("", m_alertSoundCheck);
 
-    m_maCheck = new QCheckBox(tr("分时显示均线（优先日线MA5/MA20；无同价单位日线时用分时滚动均线）"), this);
-    form->addRow("", m_maCheck);
+        m_quietCheck = new QCheckBox(tr("启用静默时段（期间不弹托盘）"), this);
+        form->addRow("", m_quietCheck);
+        auto* quietLay = new QHBoxLayout;
+        m_quietStartEdit = new QTimeEdit(this);
+        m_quietEndEdit = new QTimeEdit(this);
+        m_quietStartEdit->setDisplayFormat(QStringLiteral("HH:mm"));
+        m_quietEndEdit->setDisplayFormat(QStringLiteral("HH:mm"));
+        quietLay->addWidget(m_quietStartEdit);
+        quietLay->addWidget(new QLabel(tr("至"), this));
+        quietLay->addWidget(m_quietEndEdit);
+        quietLay->addStretch();
+        form->addRow(tr("静默时段："), quietLay);
 
-    m_alertSoundCheck = new QCheckBox(tr("预警时系统提示音"), this);
-    form->addRow("", m_alertSoundCheck);
+        m_smartMaCheck = new QCheckBox(tr("智能：突破近5日均线提示"), this);
+        form->addRow("", m_smartMaCheck);
+        m_smartPctCheck = new QCheckBox(tr("智能：触及近20日分位提示"), this);
+        form->addRow("", m_smartPctCheck);
+        auto* pctLay = new QHBoxLayout;
+        m_pctLowSpin = new QSpinBox(this);
+        m_pctHighSpin = new QSpinBox(this);
+        m_pctLowSpin->setRange(1, 49);
+        m_pctHighSpin->setRange(51, 99);
+        m_pctLowSpin->setSuffix(QStringLiteral("%"));
+        m_pctHighSpin->setSuffix(QStringLiteral("%"));
+        pctLay->addWidget(new QLabel(tr("低分位"), this));
+        pctLay->addWidget(m_pctLowSpin);
+        pctLay->addWidget(new QLabel(tr("高分位"), this));
+        pctLay->addWidget(m_pctHighSpin);
+        pctLay->addStretch();
+        form->addRow(tr("分位阈值："), pctLay);
 
-    m_hotkeyCheck = new QCheckBox(tr("全局热键 Ctrl+Shift+G 显示/隐藏价格条"), this);
-    form->addRow("", m_hotkeyCheck);
+        m_premiumCheck = new QCheckBox(tr("监控主源相对伦敦金溢价"), this);
+        form->addRow("", m_premiumCheck);
+        m_premiumPctSpin = new QDoubleSpinBox(this);
+        m_premiumPctSpin->setRange(0.1, 50.0);
+        m_premiumPctSpin->setDecimals(2);
+        m_premiumPctSpin->setSuffix(QStringLiteral(" %"));
+        form->addRow(tr("溢价阈值："), m_premiumPctSpin);
 
-    m_quietCheck = new QCheckBox(tr("启用免打扰时段（不通知、不闪点、不蜂鸣）"), this);
-    form->addRow("", m_quietCheck);
-    auto* quietLay = new QHBoxLayout;
-    m_quietStartEdit = new QTimeEdit(this);
-    m_quietStartEdit->setDisplayFormat("HH:mm");
-    m_quietEndEdit = new QTimeEdit(this);
-    m_quietEndEdit->setDisplayFormat("HH:mm");
-    quietLay->addWidget(new QLabel(tr("从"), this));
-    quietLay->addWidget(m_quietStartEdit);
-    quietLay->addWidget(new QLabel(tr("到"), this));
-    quietLay->addWidget(m_quietEndEdit);
-    quietLay->addWidget(new QLabel(tr("（可跨午夜）"), this));
-    quietLay->addStretch();
-    form->addRow(tr("免打扰："), quietLay);
+        m_suggestAlertBtn = new QPushButton(tr("根据近10日振幅建议高低预警"), this);
+        m_suggestAlertBtn->setObjectName(QStringLiteral("wideAction"));
+        form->addRow("", m_suggestAlertBtn);
+        connect(m_suggestAlertBtn, &QPushButton::clicked, this, [this]() {
+            auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(
+                10, AppSettings::instance().dataSource());
+            if (closes.size() < 3)
+                closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+            if (closes.size() < 3) {
+                if (m_eventSummaryLabel)
+                    m_eventSummaryLabel->setText(tr("日线样本不足，无法建议"));
+                return;
+            }
+            double mn = closes.first().second, mx = mn;
+            for (const auto& c : closes) {
+                mn = qMin(mn, c.second);
+                mx = qMax(mx, c.second);
+            }
+            m_alertLowSpin->setValue(mn);
+            m_alertHighSpin->setValue(mx);
+            if (m_eventSummaryLabel)
+                m_eventSummaryLabel->setText(
+                    tr("已建议 低 %1 / 高 %2（近%3日极值）")
+                        .arg(mn, 0, 'f', 2).arg(mx, 0, 'f', 2).arg(closes.size()));
+        });
+    }
 
-    m_dcaDaySpin = new QSpinBox(this);
-    m_dcaDaySpin->setRange(0, 28);
-    m_dcaDaySpin->setSpecialValueText(tr("关闭"));
-    m_dcaDaySpin->setToolTip(tr("每月几号提醒定投，0=关闭"));
-    form->addRow(tr("定投日："), m_dcaDaySpin);
-    m_dcaNoteEdit = new QLineEdit(this);
-    m_dcaNoteEdit->setPlaceholderText(tr("可选备注，如：每月定投 500 元"));
-    form->addRow(tr("定投备注："), m_dcaNoteEdit);
+    // ---- 2 预测 ----
+    {
+        auto* form = makePage(tr("价格预测"));
+        auto* forecastLayout = new QHBoxLayout;
+        auto* localLbl = new QLabel(tr("本地"), this);
+        auto* onlineLbl = new QLabel(tr("大模型"), this);
+        m_forecastSlider = new QSlider(Qt::Horizontal, this);
+        m_forecastSlider->setRange(0, 1);
+        m_forecastSlider->setPageStep(1);
+        m_forecastSlider->setSingleStep(1);
+        m_forecastSlider->setValue(0);
+        m_forecastSlider->setFixedWidth(80);
+        m_forecastModeLabel = new QLabel(tr("本地推演"), this);
+        m_forecastModeLabel->setStyleSheet("color:#5b8def;font-size:12px;font-weight:bold;");
+        forecastLayout->addWidget(localLbl);
+        forecastLayout->addWidget(m_forecastSlider);
+        forecastLayout->addWidget(onlineLbl);
+        forecastLayout->addSpacing(8);
+        forecastLayout->addWidget(m_forecastModeLabel);
+        forecastLayout->addStretch();
+        form->addRow(tr("预测模式："), forecastLayout);
+        connect(m_forecastSlider, &QSlider::valueChanged, this, &SettingsDialog::onForecastSliderChanged);
 
-    m_smartMaCheck = new QCheckBox(tr("智能预警：跌破 MA5日 或 显著偏离均线"), this);
-    form->addRow("", m_smartMaCheck);
-    m_smartPctCheck = new QCheckBox(tr("智能预警：近20日价格分位过高/过低"), this);
-    form->addRow("", m_smartPctCheck);
-    auto* pctLay = new QHBoxLayout;
-    m_pctLowSpin = new QSpinBox(this);
-    m_pctLowSpin->setRange(1, 49);
-    m_pctHighSpin = new QSpinBox(this);
-    m_pctHighSpin->setRange(51, 99);
-    pctLay->addWidget(new QLabel(tr("低分位≤"), this));
-    pctLay->addWidget(m_pctLowSpin);
-    pctLay->addWidget(new QLabel(tr("%  高分位≥"), this));
-    pctLay->addWidget(m_pctHighSpin);
-    pctLay->addWidget(new QLabel(tr("%"), this));
-    pctLay->addStretch();
-    form->addRow(tr("分位阈值："), pctLay);
+        m_providerLabel = new QLabel(tr("大模型提供方："), this);
+        m_providerCombo = new QComboBox(this);
+        m_providerCombo->setMinimumWidth(200);
+        m_providerCombo->addItem(tr("xAI (Grok)"), QStringLiteral("xai"));
+        m_providerCombo->addItem(tr("Google Gemini"), QStringLiteral("gemini"));
+        form->addRow(m_providerLabel, m_providerCombo);
+        connect(m_providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, &SettingsDialog::onProviderChanged);
 
-    m_posGramsSpin = new QDoubleSpinBox(this);
-    m_posGramsSpin->setFixedWidth(140);
-    m_posGramsSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
-    m_posGramsSpin->setRange(0, 99999);
-    m_posGramsSpin->setDecimals(3);
-    m_posGramsSpin->setSuffix(tr(" 克"));
-    form->addRow(tr("持仓克数："), m_posGramsSpin);
-    m_posCostSpin = new QDoubleSpinBox(this);
-    m_posCostSpin->setFixedWidth(140);
-    m_posCostSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
-    m_posCostSpin->setRange(0, 99999);
-    m_posCostSpin->setDecimals(2);
-    m_posCostSpin->setSuffix(tr(" 元/克"));
-    form->addRow(tr("持仓成本："), m_posCostSpin);
+        m_apiKeyEdit = new QLineEdit(this);
+        m_apiKeyEdit->setEchoMode(QLineEdit::Password);
+        m_apiKeyEdit->setPlaceholderText(tr("API Key"));
+        m_apiKeyLabel = new QLabel(tr("API Key："), this);
+        form->addRow(m_apiKeyLabel, m_apiKeyEdit);
+        connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this]() {
+            if (!m_apiKeyEdit->text().trimmed().isEmpty()
+                && m_forecastSlider && m_forecastSlider->value() == 1)
+                onRefreshModels();
+        });
 
-    m_premiumCheck = new QCheckBox(tr("溢价监测：主价/对照价比值异常偏离"), this);
-    form->addRow("", m_premiumCheck);
-    m_premiumPctSpin = new QDoubleSpinBox(this);
-    m_premiumPctSpin->setRange(0.1, 50);
-    m_premiumPctSpin->setDecimals(1);
-    m_premiumPctSpin->setSuffix(tr(" %"));
-    form->addRow(tr("溢价偏离阈值："), m_premiumPctSpin);
+        m_modelCombo = new QComboBox(this);
+        m_modelCombo->setEditable(true);
+        m_modelCombo->setMinimumWidth(200);
+        m_modelLabel = new QLabel(tr("模型："), this);
+        auto* modelLay = new QHBoxLayout;
+        modelLay->addWidget(m_modelCombo, 1);
+        m_refreshModelsBtn = new QPushButton(tr("拉取模型"), this);
+        m_refreshModelsBtn->setObjectName(QStringLiteral("wideAction"));
+        modelLay->addWidget(m_refreshModelsBtn);
+        form->addRow(m_modelLabel, modelLay);
+        connect(m_refreshModelsBtn, &QPushButton::clicked, this, &SettingsDialog::onRefreshModels);
+        m_modelsNam = new QNetworkAccessManager(this);
+        fillDefaultModels();
+    }
 
-    m_dailyReportCheck = new QCheckBox(tr("每日收盘摘要（托盘）"), this);
-    form->addRow("", m_dailyReportCheck);
-    m_dailyReportTimeEdit = new QTimeEdit(this);
-    m_dailyReportTimeEdit->setDisplayFormat("HH:mm");
-    form->addRow(tr("摘要时刻："), m_dailyReportTimeEdit);
+    // ---- 3 持仓报告 ----
+    {
+        auto* form = makePage(tr("持仓与报告"));
+        m_posGramsSpin = new QDoubleSpinBox(this);
+        m_posGramsSpin->setRange(0, 1e6);
+        m_posGramsSpin->setDecimals(3);
+        m_posGramsSpin->setSuffix(tr(" 克"));
+        form->addRow(tr("持仓克数："), m_posGramsSpin);
+        m_posCostSpin = new QDoubleSpinBox(this);
+        m_posCostSpin->setRange(0, 1e7);
+        m_posCostSpin->setDecimals(2);
+        form->addRow(tr("成本均价："), m_posCostSpin);
 
-    m_eventAlertCheck = new QCheckBox(tr("宏观日程提醒（非农/FOMC/CPI 等，本地表）"), this);
-    form->addRow("", m_eventAlertCheck);
-    m_eventSummaryLabel = new QLabel(EventCalendar::summaryNear(), this);
-    m_eventSummaryLabel->setWordWrap(true);
-    m_eventSummaryLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    m_eventSummaryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_eventSummaryLabel->setStyleSheet("font-size:12px; padding: 6px;");
-    m_eventSummaryLabel->setMinimumWidth(280);
-    m_eventSummaryLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    // 嵌在滚动区，避免 Form 行高把多行日程裁成一条
-    auto* eventScroll = new QScrollArea(this);
-    eventScroll->setWidgetResizable(true);
-    eventScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    eventScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    eventScroll->setMinimumHeight(140);
-    eventScroll->setMaximumHeight(220);
-    eventScroll->setFrameShape(QFrame::StyledPanel);
-    eventScroll->setWidget(m_eventSummaryLabel);
-    form->addRow(tr("近10日日程："), eventScroll);
+        m_dailyReportCheck = new QCheckBox(tr("每日汇总报告"), this);
+        form->addRow("", m_dailyReportCheck);
+        m_dailyReportTimeEdit = new QTimeEdit(this);
+        m_dailyReportTimeEdit->setDisplayFormat(QStringLiteral("HH:mm"));
+        form->addRow(tr("报告时间："), m_dailyReportTimeEdit);
 
-    m_suggestAlertBtn = new QPushButton(tr("按近20日波动建议高低预警"), this);
-    m_suggestAlertBtn->setObjectName(QStringLiteral("wideAction"));
-    form->addRow("", m_suggestAlertBtn);
-    QObject::connect(m_suggestAlertBtn, &QPushButton::clicked, this, [this]() {
-        QString src = AppSettings::instance().dataSource();
-        if (src == QStringLiteral("xau")) src = QStringLiteral("gj");
-        auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(21, src);
-        if (closes.size() < 5)
-            closes = ExtremeDatabase::instance().loadRecentDailyCloses(21, QStringLiteral("gj"));
-        if (closes.size() < 5) {
-            m_eventSummaryLabel->setText(tr("日线样本不足，无法建议（请先运行积累或切换伦敦金）"));
-            return;
-        }
-        double sumRange = 0.0;
-        int n = 0;
-        for (int i = 1; i < closes.size(); ++i) {
-            sumRange += qAbs(closes.at(i).second - closes.at(i-1).second);
-            ++n;
-        }
-        const double avgMove = n > 0 ? sumRange / n : 0.0;
-        const double last = closes.last().second;
-        const double hi = last + avgMove * 0.8;
-        const double lo = last - avgMove * 0.8;
-        m_alertHighSpin->setValue(hi);
-        m_alertLowSpin->setValue(qMax(0.0, lo));
-        m_eventSummaryLabel->setText(
-            tr("建议高 %1 / 低 %2（近均日变动 %3）")
-                .arg(hi, 0, 'f', 2).arg(lo, 0, 'f', 2).arg(avgMove, 0, 'f', 2));
-    });
+        m_dcaDaySpin = new QSpinBox(this);
+        m_dcaDaySpin->setRange(0, 31);
+        m_dcaDaySpin->setSpecialValueText(tr("关闭"));
+        form->addRow(tr("定投提醒日："), m_dcaDaySpin);
+        m_dcaNoteEdit = new QLineEdit(this);
+        m_dcaNoteEdit->setPlaceholderText(tr("定投备注"));
+        form->addRow(tr("定投备注："), m_dcaNoteEdit);
 
-    m_proxyCheck = new QCheckBox(tr("启用 HTTP 代理（公司网络/科学上网）"), this);
-    form->addRow("", m_proxyCheck);
-    auto* proxyLay = new QHBoxLayout;
-    m_proxyHostEdit = new QLineEdit(this);
-    m_proxyHostEdit->setPlaceholderText(tr("主机，如 127.0.0.1"));
-    m_proxyPortSpin = new QSpinBox(this);
-    m_proxyPortSpin->setRange(1, 65535);
-    m_proxyPortSpin->setValue(7890);
-    proxyLay->addWidget(m_proxyHostEdit, 1);
-    proxyLay->addWidget(new QLabel(tr(":"), this));
-    proxyLay->addWidget(m_proxyPortSpin);
-    form->addRow(tr("代理地址："), proxyLay);
+        m_eventAlertCheck = new QCheckBox(tr("宏观日程提醒（非农/FOMC/CPI 等）"), this);
+        form->addRow("", m_eventAlertCheck);
+        m_eventSummaryLabel = new QLabel(EventCalendar::summaryNear(), this);
+        m_eventSummaryLabel->setWordWrap(true);
+        m_eventSummaryLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+        m_eventSummaryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        m_eventSummaryLabel->setStyleSheet("font-size:12px; padding: 6px;");
+        m_eventSummaryLabel->setMinimumWidth(280);
+        auto* eventScroll = new QScrollArea(this);
+        eventScroll->setWidgetResizable(true);
+        eventScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        eventScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        eventScroll->setMinimumHeight(140);
+        eventScroll->setMaximumHeight(220);
+        eventScroll->setFrameShape(QFrame::StyledPanel);
+        eventScroll->setWidget(m_eventSummaryLabel);
+        form->addRow(tr("近10日日程："), eventScroll);
+    }
 
-    auto* dbLayout = new QHBoxLayout;
-    m_dbDirEdit = new QLineEdit(this);
-    m_dbDirEdit->setPlaceholderText(tr("留空 = 默认路径（系统 AppData）"));
-    m_dbDirBrowseBtn = new QPushButton(tr("浏览…"), this);
-    m_dbDirBrowseBtn->setFixedWidth(64);
-    dbLayout->addWidget(m_dbDirEdit);
-    dbLayout->addWidget(m_dbDirBrowseBtn);
-    form->addRow(tr("数据库目录："), dbLayout);
-    connect(m_dbDirBrowseBtn, &QPushButton::clicked, this, [this]() {
-        const QString start = m_dbDirEdit->text().isEmpty()
-                                  ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                                  : m_dbDirEdit->text();
-        const QString dir = QFileDialog::getExistingDirectory(
-            this, tr("选择数据库目录"), start);
-        if (!dir.isEmpty())
-            m_dbDirEdit->setText(dir);
-    });
+    // ---- 4 高级 ----
+    {
+        auto* form = makePage(tr("高级与数据"));
+        m_dbDirEdit = new QLineEdit(this);
+        m_dbDirBrowseBtn = new QPushButton(tr("浏览…"), this);
+        auto* dbLay = new QHBoxLayout;
+        dbLay->addWidget(m_dbDirEdit, 1);
+        dbLay->addWidget(m_dbDirBrowseBtn);
+        form->addRow(tr("数据库目录："), dbLay);
+        connect(m_dbDirBrowseBtn, &QPushButton::clicked, this, [this]() {
+            const QString dir = QFileDialog::getExistingDirectory(this, tr("选择数据库目录"));
+            if (!dir.isEmpty())
+                m_dbDirEdit->setText(dir);
+        });
 
-    auto* forecastLayout = new QHBoxLayout;
-    auto* localLbl = new QLabel(tr("本地"), this);
-    localLbl->setStyleSheet("font-size:11px;");
-    m_forecastSlider = new QSlider(Qt::Horizontal, this);
-    m_forecastSlider->setRange(0, 1);
-    m_forecastSlider->setPageStep(1);
-    m_forecastSlider->setSingleStep(1);
-    m_forecastSlider->setValue(0);
-    m_forecastSlider->setFixedWidth(80);
-    auto* onlineLbl = new QLabel(tr("大模型"), this);
-    onlineLbl->setStyleSheet("font-size:11px;");
-    m_forecastModeLabel = new QLabel(tr("本地推演"), this);
-    m_forecastModeLabel->setStyleSheet("color:#0052d9;font-size:12px;font-weight:bold;");
-    forecastLayout->addWidget(localLbl);
-    forecastLayout->addWidget(m_forecastSlider);
-    forecastLayout->addWidget(onlineLbl);
-    forecastLayout->addSpacing(8);
-    forecastLayout->addWidget(m_forecastModeLabel);
-    forecastLayout->addStretch();
-    form->addRow(tr("价格预测："), forecastLayout);
-    connect(m_forecastSlider, &QSlider::valueChanged, this, &SettingsDialog::onForecastSliderChanged);
+        m_proxyCheck = new QCheckBox(tr("启用 HTTP 代理"), this);
+        form->addRow("", m_proxyCheck);
+        m_proxyHostEdit = new QLineEdit(this);
+        m_proxyHostEdit->setPlaceholderText(QStringLiteral("127.0.0.1"));
+        form->addRow(tr("代理主机："), m_proxyHostEdit);
+        m_proxyPortSpin = new QSpinBox(this);
+        m_proxyPortSpin->setRange(1, 65535);
+        m_proxyPortSpin->setValue(7890);
+        form->addRow(tr("代理端口："), m_proxyPortSpin);
 
-    m_providerLabel = new QLabel(tr("大模型提供方："), this);
-    m_providerCombo = new QComboBox(this);
-    m_providerCombo->setMinimumWidth(200);
-    m_providerCombo->addItem(tr("xAI (Grok)"), QStringLiteral("xai"));
-    m_providerCombo->addItem(tr("Google Gemini"), QStringLiteral("gemini"));
-    form->addRow(m_providerLabel, m_providerCombo);
-    connect(m_providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SettingsDialog::onProviderChanged);
+        auto* tip = new QLabel(
+            tr("历史日线可用 scripts/import_historical_gold.py 导入；单位见 scripts/README.md。"),
+            this);
+        tip->setWordWrap(true);
+        tip->setStyleSheet("font-size:11px;color:#8b93a7;");
+        form->addRow(tip);
+    }
 
-    m_apiKeyEdit = new QLineEdit(this);
-    m_apiKeyEdit->setEchoMode(QLineEdit::Password);
-    m_apiKeyEdit->setPlaceholderText(tr("API Key"));
-    m_apiKeyLabel = new QLabel(tr("API Key："), this);
-    form->addRow(m_apiKeyLabel, m_apiKeyEdit);
-    connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this]() {
-        if (!m_apiKeyEdit->text().trimmed().isEmpty()
-            && m_forecastSlider && m_forecastSlider->value() == 1)
-            onRefreshModels();
-    });
+    body->addWidget(m_stack, 1);
+    mainLayout->addLayout(body, 1);
 
-    m_modelCombo = new QComboBox(this);
-    m_modelCombo->setEditable(true);
-    m_modelCombo->setMinimumWidth(200);
-    m_modelLabel = new QLabel(tr("模型："), this);
-    auto* modelLay = new QHBoxLayout;
-    modelLay->addWidget(m_modelCombo, 1);
-    m_refreshModelsBtn = new QPushButton(tr("拉取模型"), this);
-    m_refreshModelsBtn->setObjectName(QStringLiteral("wideAction"));
-    m_refreshModelsBtn->setToolTip(tr("使用当前 API Key 从服务商拉取可用模型列表"));
-    modelLay->addWidget(m_refreshModelsBtn);
-    form->addRow(m_modelLabel, modelLay);
-    connect(m_refreshModelsBtn, &QPushButton::clicked, this, &SettingsDialog::onRefreshModels);
-
-    m_modelsNam = new QNetworkAccessManager(this);
-    fillDefaultModels();
-
-    m_autoStartCheck = new QCheckBox(tr("开机自动启动"), this);
-    form->addRow("", m_autoStartCheck);
-
-    scroll->setWidget(formHost);
-    mainLayout->addWidget(scroll, 1);
+    connect(m_categoryList, &QListWidget::currentRowChanged, this, &SettingsDialog::onCategoryChanged);
 
     auto* hint = new QLabel(
-        tr("高/低预警：0 表示关闭。触发后价格条在「高」与分时按钮之间闪烁色点。"
-           "退出可直接点下方「退出软件」。"),
+        tr("分类切换无需滚动整页。高/低预警为 0 表示关闭。"),
         this);
     hint->setWordWrap(true);
     hint->setStyleSheet("font-size:11px;");
     mainLayout->addWidget(hint);
-    mainLayout->addStretch();
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::onAccept);
@@ -390,6 +414,23 @@ void SettingsDialog::setupUi()
     connect(updateBtn, &QPushButton::clicked, this, &SettingsDialog::onCheckUpdate);
 
     auto* bottom = new QHBoxLayout;
+    bottom->addWidget(exitBtn);
+    bottom->addWidget(logBtn);
+    bottom->addWidget(updateBtn);
+    bottom->addStretch();
+    bottom->addWidget(buttons);
+    mainLayout->addLayout(bottom);
+
+    updateForecastUiState();
+}
+
+void SettingsDialog::onCategoryChanged(int row)
+{
+    if (m_stack && row >= 0 && row < m_stack->count())
+        m_stack->setCurrentIndex(row);
+}
+
+ew QHBoxLayout;
     bottom->addWidget(exitBtn);
     bottom->addWidget(logBtn);
     bottom->addWidget(updateBtn);
@@ -831,7 +872,17 @@ void SettingsDialog::applyDialogTheme()
                 "QPushButton#wideAction { max-width: 280px; }"
                 "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #3d4450; }"
                 "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #5b8def; }"
-                "QDialogButtonBox QPushButton { min-width: 72px; max-width: 100px; }")
+                "QDialogButtonBox QPushButton { min-width: 72px; max-width: 100px; }"
+                "QListWidget#settingsCategoryList {"
+                "  background:#161b27;border:1px solid #2a3347;border-radius:12px;"
+                "  padding:8px 6px;outline:none;}"
+                "QListWidget#settingsCategoryList::item {"
+                "  color:#8b93a7;padding:10px 12px;border-radius:8px;margin:2px 0;}"
+                "QListWidget#settingsCategoryList::item:selected {"
+                "  background:#243049;color:#e8eaed;font-weight:600;}"
+                "QListWidget#settingsCategoryList::item:hover {"
+                "  background:#1a2233;color:#c5cbe0;}"
+                "QLabel#settingsPageTitle{color:#e8eaed;}")
             + spinArrows);
     } else {
         setStyleSheet(
@@ -861,7 +912,17 @@ void SettingsDialog::applyDialogTheme()
                 "QPushButton#wideAction { max-width: 280px; }"
                 "QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #dde3ea; }"
                 "QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #0052d9; }"
-                "QDialogButtonBox QPushButton { min-width: 72px; max-width: 100px; }")
+                "QDialogButtonBox QPushButton { min-width: 72px; max-width: 100px; }"
+                "QListWidget#settingsCategoryList {"
+                "  background:#f3f6fb;border:1px solid #d8dee6;border-radius:12px;"
+                "  padding:8px 6px;outline:none;}"
+                "QListWidget#settingsCategoryList::item {"
+                "  color:#5c6b77;padding:10px 12px;border-radius:8px;margin:2px 0;}"
+                "QListWidget#settingsCategoryList::item:selected {"
+                "  background:#e8eefc;color:#0f172a;font-weight:600;}"
+                "QListWidget#settingsCategoryList::item:hover {"
+                "  background:#eef2f7;color:#1a1d23;}"
+                "QLabel#settingsPageTitle{color:#0f172a;}")
             + spinArrows);
     }
 }
