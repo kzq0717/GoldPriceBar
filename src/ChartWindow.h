@@ -20,6 +20,9 @@ class QNetworkReply;
 class QLabel;
 class QFrame;
 class QComboBox;
+class QToolButton;
+class QMenu;
+class QAction;
 QT_END_NAMESPACE
 
 /**
@@ -49,6 +52,7 @@ private slots:
     void onChartReplyFinished(QNetworkReply* reply);
     void onPeriodChanged(int index);
     void onExportCsv();
+    void onMaOptionChanged();
 
 private:
     void setupChart();
@@ -81,11 +85,16 @@ private:
     void setCurrentMarker(qint64 xMs, double y, bool startPulse = true);
 
     QComboBox* m_periodCombo = nullptr;
+    QToolButton* m_maMenuBtn = nullptr;
+    QAction* m_ma5Action = nullptr;
+    QAction* m_ma10Action = nullptr;
+    QAction* m_ma20Action = nullptr;
 
     QChartView* m_chartView = nullptr;
     QChart* m_chart = nullptr;
     QLineSeries* m_series = nullptr;
     QLineSeries* m_ma5Series = nullptr;
+    QLineSeries* m_ma10Series = nullptr;
     QLineSeries* m_ma20Series = nullptr;
     QLineSeries* m_yesterdaySeries = nullptr;
     QLineSeries* m_forecastSeries = nullptr;      // 预测最高（水平虚线）
