@@ -1,31 +1,107 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
-setlocal EnableExtensions
+
+REM ============================================================
+REM  Deploy Qt6 runtime DLLs next to GoldPriceBarLite.exe
+REM  Usage:
+REM    deploy.bat
+REM    deploy.bat "D:\path\to\GoldPriceBarLite.exe"
+REM  Env:
+REM    set QT6_ROOT=D:\InstallDir\Qt6.7\6.7.3\msvc2022_64
+REM ============================================================
 
 cd /d "%~dp0"
 
 if not defined QT6_ROOT set "QT6_ROOT=D:\InstallDir\Qt6.7\6.7.3\msvc2022_64"
 
+set "EXE=%~1"
+if defined EXE goto have_exe
+
 set "EXE="
-if exist "build\Release\GoldPriceBarLite.exe" set "EXE=build\Release\GoldPriceBarLite.exe"
-if not defined EXE if exist "build\GoldPriceBarLite.exe" set "EXE=build\GoldPriceBarLite.exe"
+if exist "build\Release\GoldPriceBarLite.exe" set "EXE=%cd%\build\Release\GoldPriceBarLite.exe"
+if not defined EXE if exist "build\RelWithDebInfo\GoldPriceBarLite.exe" set "EXE=%cd%\build\RelWithDebInfo\GoldPriceBarLite.exe"
+if not defined EXE if exist "build\Debug\GoldPriceBarLite.exe" set "EXE=%cd%\build\Debug\GoldPriceBarLite.exe"
+if not defined EXE if exist "build\GoldPriceBarLite.exe" set "EXE=%cd%\build\GoldPriceBarLite.exe"
 
+:have_exe
 if not defined EXE (
-    echo [错误] 未找到可执行文件，请先运行 build.bat
-    exit /b 1
+  echo [ERROR] GoldPriceBarLite.exe not found. Build first: build.bat
+  exit /b 1
+)
+if not exist "%EXE%" (
+  echo [ERROR] File not found: %EXE%
+  exit /b 1
 )
 
-if not exist "%QT6_ROOT%\bin\windeployqt.exe" (
-    echo [错误] 未找到 windeployqt: %QT6_ROOT%\bin\windeployqt.exe
-    exit /b 1
+for %%I in ("%EXE%") do set "EXEDIR=%%~dpI"
+set "EXEDIR=%EXEDIR:~0,-1%"
+
+set "WDEPLOY=%QT6_ROOT%\bin\windeployqt.exe"
+if not exist "%WDEPLOY%" (
+  echo [ERROR] windeployqt not found:
+  echo         %WDEPLOY%
+  echo Set QT6_ROOT to your Qt msvc kit, e.g.
+  echo   set QT6_ROOT=D:\Qt\6.7.3\msvc2022_64
+  exit /b 1
 )
 
-echo 部署 Qt 运行库到: %EXE%
-"%QT6_ROOT%\bin\windeployqt.exe" --release --no-translations "%EXE%"
+echo.
+echo ========================================
+echo   Deploy Qt dependencies
+echo ========================================
+echo   EXE     : %EXE%
+echo   OutDir  : %EXEDIR%
+echo   Qt      : %QT6_ROOT%
+echo ========================================
+echo.
+
+REM Detect debug vs release from path
+set "WD_MODE=--release"
+echo %EXE% | findstr /i "\\Debug\\" >nul && set "WD_MODE=--debug"
+
+echo [1/2] windeployqt %WD_MODE% ...
+"%WDEPLOY%" %WD_MODE% --compiler-runtime --no-translations --force ^
+  --network --sql --charts --widgets --gui --core ^
+  "%EXE%"
 if errorlevel 1 (
-    echo [错误] windeployqt 失败
+  echo [WARN] windeployqt with module flags failed, retry minimal...
+  "%WDEPLOY%" %WD_MODE% --compiler-runtime --no-translations --force "%EXE%"
+  if errorlevel 1 (
+    echo [ERROR] windeployqt failed
     exit /b 1
+  )
 )
 
-echo 部署完成。可直接运行: %EXE%
+echo.
+echo [2/2] verify key DLLs ...
+set "MISS=0"
+for %%D in (Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6Charts.dll Qt6Sql.dll) do (
+  if not exist "%EXEDIR%\%%D" (
+    echo   MISSING: %%D
+    set "MISS=1"
+  ) else (
+    echo   OK: %%D
+  )
+)
+if not exist "%EXEDIR%\platforms\qwindows.dll" (
+  echo   MISSING: platforms\qwindows.dll
+  set "MISS=1"
+) else (
+  echo   OK: platforms\qwindows.dll
+)
+
+echo.
+if "%MISS%"=="1" (
+  echo [WARN] Some DLLs still missing. You can also run with PATH:
+  echo   set PATH=%QT6_ROOT%\bin;%%PATH%%
+  echo   "%EXE%"
+  exit /b 2
+)
+
+echo Deploy OK. Run:
+echo   "%EXE%"
+echo.
+echo Tip: double-click the exe in:
+echo   %EXEDIR%
 exit /b 0

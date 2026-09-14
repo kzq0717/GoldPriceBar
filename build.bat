@@ -165,9 +165,7 @@ echo.
 echo BUILD OK: %EXE%
 
 if "%DO_DEPLOY%"=="1" (
-  if exist "%QT6_ROOT%\bin\windeployqt.exe" (
-    "%QT6_ROOT%\bin\windeployqt.exe" --release --no-translations "%EXE%"
-  )
+  call "%~dp0deploy.bat" "%EXE%"
 )
 
 if "%DO_START%"=="1" (
