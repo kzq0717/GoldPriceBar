@@ -1,5 +1,27 @@
 # GoldPriceBarLite
 
+浮窗黄金价格监控（浙商/民生积存金、伦敦金）· Qt6 UI + **GoldSdk**（无 Qt 核心库）
+
+## 架构（v1.0）
+
+- `sdk/`：**GoldSdk**（C++17，不依赖 Qt）— 行情解析、HTTP、本地预测、交易时段、INI 配置
+- `src/`：Qt6 界面与适配层
+
+详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+## 构建
+
+```bat
+cmake -B build -DQT6_ROOT_DIR=你的Qt路径
+cmake --build build --config Release
+```
+
+## 版本
+
+**1.0.0** — UI / SDK 分离首个正式版
+
+# GoldPriceBarLite
+
 轻量级 Windows 黄金积存金价格条（Qt 6 / C++）
 
 仓库：https://github.com/kzq0717/GoldPriceBar

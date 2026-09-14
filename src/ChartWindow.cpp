@@ -1,4 +1,6 @@
 #include "ChartWindow.h"
+#include "goldsdk/forecast.hpp"
+#include <vector>
 #include "AppSettings.h"
 #include "ExtremeDatabase.h"
 #include "Logger.h"
@@ -596,55 +598,25 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
     if (m_plotPoints.size() < 3)
         return false;
 
+    std::vector<goldsdk::IntradayPoint> pts;
+    pts.reserve(static_cast<size_t>(m_plotPoints.size()));
+    for (const auto& p : m_plotPoints) {
+        goldsdk::IntradayPoint ip;
+        ip.epochMs = p.first.toMSecsSinceEpoch();
+        ip.price = p.second;
+        pts.push_back(ip);
+    }
     double actHigh = 0.0, actLow = 0.0;
     HistoryCache::instance().todayHigh(actHigh);
     HistoryCache::instance().todayLow(actLow);
-    const double lastPrice = m_plotPoints.last().second;
-    if (lastPrice <= 0.0)
-        return false;
-    if (actHigh <= 0.0) actHigh = lastPrice;
-    if (actLow <= 0.0) actLow = lastPrice;
-
-    const int n = m_plotPoints.size();
-    const int w = qMin(30, n);
-    double mean = 0.0;
-    for (int i = n - w; i < n; ++i)
-        mean += m_plotPoints.at(i).second;
-    mean /= static_cast<double>(w);
-    double var = 0.0;
-    for (int i = n - w; i < n; ++i) {
-        const double d = m_plotPoints.at(i).second - mean;
-        var += d * d;
-    }
-    const double stdev = qSqrt(var / static_cast<double>(qMax(1, w - 1)));
-    const double rangeSoFar = qMax(0.01, actHigh - actLow);
-
     const QTime nowT = QTime::currentTime();
     const double dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
-    const double remain = qBound(0.08, 1.0 - dayFrac, 1.0);
-    const double timeScale = qSqrt(remain);
-
-    // 保守扩张：紧贴已实现区间与近窗波动，避免预测线大幅偏离分时
-    double expand = qMax(1.0 * stdev, 0.12 * rangeSoFar);
-    expand *= (0.35 + 0.40 * timeScale);
-    const double hard = lastPrice * 0.0045;
-    expand = qMin(expand, hard);
-    expand = qMin(expand, rangeSoFar * 0.55 + stdev);
-    expand = qMax(expand, lastPrice * 0.0003);
-
-    outPredHigh = qMax(actHigh, lastPrice) + expand * 0.55;
-    outPredLow = qMin(actLow, lastPrice) - expand * 0.55;
-    outPredHigh = qMax(outPredHigh, actHigh);
-    outPredLow = qMin(outPredLow, actLow);
-    const double maxWidth = qMin(hard * 1.6, rangeSoFar * 1.35 + 2.0 * stdev);
-    if (outPredHigh - outPredLow > maxWidth) {
-        const double mid = lastPrice;
-        outPredHigh = qMin(outPredHigh, mid + maxWidth * 0.55);
-        outPredLow = qMax(outPredLow, mid - maxWidth * 0.55);
-        outPredHigh = qMax(outPredHigh, actHigh);
-        outPredLow = qMin(outPredLow, actLow);
-    }
-    return outPredHigh > outPredLow && outPredHigh > 0.0;
+    const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac);
+    if (!fr.valid)
+        return false;
+    outPredHigh = fr.predHigh;
+    outPredLow = fr.predLow;
+    return true;
 }
 
 void ChartWindow::updateForecast() {
