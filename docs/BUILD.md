@@ -83,3 +83,20 @@ cmake --build build --parallel
 
 **windeployqt 找不到**  
 检查 `QT6_ROOT%\bin\windeployqt.exe`。
+
+
+## C1083: Cannot open include file: 'type_traits'
+
+原因：使用 **Ninja** 时 `cl.exe` 在 PATH 中，但 **MSVC 标准库目录未加入 INCLUDE**（未执行 vcvars）。
+
+处理：
+
+```bat
+build.bat clean vs
+```
+
+或在本仓库最新 `build.bat` 中会自动尝试调用 `vcvars64.bat`，再：
+
+```bat
+build.bat clean ninja
+```
