@@ -65,6 +65,11 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp)
 endif()
 
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+endif()
+
+
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME}
     BUNDLE  DESTINATION .

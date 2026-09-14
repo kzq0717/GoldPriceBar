@@ -1,4 +1,4 @@
-# GoldSdk — 无 Qt，仅 C++17 标准库 + 平台 HTTP
+# GoldSdk — no Qt dependency (C++17 + platform HTTP)
 add_library(goldsdk STATIC
     src/json_util.cpp
     src/http_client.cpp
@@ -8,6 +8,14 @@ add_library(goldsdk STATIC
     src/config.cpp
 )
 add_library(GoldSdk::goldsdk ALIAS goldsdk)
+
+# Parent project may enable GLOBAL AUTOMOC; keep this target free of Qt.
+set_target_properties(goldsdk PROPERTIES
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    SKIP_AUTOGEN ON
+)
 
 target_include_directories(goldsdk
     PUBLIC
@@ -20,9 +28,9 @@ if(WIN32)
     target_link_libraries(goldsdk PUBLIC winhttp)
 endif()
 
-# 可选：禁止异常外的警告
 if(MSVC)
-    target_compile_options(goldsdk PRIVATE /W3 /EHsc)
+    # Required on Chinese Windows (code page 936): UTF-8 source without BOM
+    target_compile_options(goldsdk PRIVATE /W3 /EHsc /utf-8)
 else()
     target_compile_options(goldsdk PRIVATE -Wall -Wextra)
 endif()
