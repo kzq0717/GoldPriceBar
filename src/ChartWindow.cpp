@@ -22,6 +22,9 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QComboBox>
+#include <QSet>
+#include <QList>
+#include <algorithm>
 #include <QToolButton>
 #include <QMenu>
 #include <QAction>
@@ -1051,22 +1054,33 @@ void ChartWindow::updateHighLowMarkers() {
   if (m_plotPoints.isEmpty() || !m_chart)
     return;
 
+  // 与 updateSeries 相同：在分时点序列上找极值，保证与折线拐点重合
   int highIdx = 0, lowIdx = 0;
   for (int i = 1; i < m_plotPoints.size(); ++i) {
-    if (m_plotPoints.at(i).second > m_plotPoints.at(highIdx).second)
+    const double v = m_plotPoints.at(i).second;
+    if (v > m_plotPoints.at(highIdx).second)
       highIdx = i;
-    if (m_plotPoints.at(i).second < m_plotPoints.at(lowIdx).second)
+    if (v < m_plotPoints.at(lowIdx).second)
       lowIdx = i;
   }
 
   const auto &hp = m_plotPoints.at(highIdx);
   const auto &lp = m_plotPoints.at(lowIdx);
-  m_highSeries->append(static_cast<qreal>(hp.first.toMSecsSinceEpoch()),
-                       hp.second);
-  m_lowSeries->append(static_cast<qreal>(lp.first.toMSecsSinceEpoch()),
-                      lp.second);
+  const qreal hx = static_cast<qreal>(hp.first.toMSecsSinceEpoch());
+  const qreal lx = static_cast<qreal>(lp.first.toMSecsSinceEpoch());
+  m_highSeries->append(hx, hp.second);
+  m_lowSeries->append(lx, lp.second);
 
-  // 数值统一刷到右侧信息栏
+  if (m_axisX && m_axisY) {
+    m_highSeries->attachAxis(m_axisX);
+    m_highSeries->attachAxis(m_axisY);
+    m_lowSeries->attachAxis(m_axisX);
+    m_lowSeries->attachAxis(m_axisY);
+  }
+  m_highSeries->setVisible(true);
+  m_lowSeries->setVisible(true);
+
+  // 侧栏高低与标记同源（分时点极值），避免与 HistoryCache 时间轴不一致
   const double cur = m_plotPoints.last().second;
   updateSidePanelValues(cur, m_lastPredictPrice, m_hasPredict, hp.second,
                         lp.second, m_forecastModeTag);
@@ -1188,27 +1202,40 @@ void ChartWindow::updateSeries() {
   qreal minPrice = m_plotPoints.first().second;
   qreal maxPrice = minPrice;
   const int n = m_plotPoints.size();
+
+  // 全量数据上的真实最高/最低下标（标记必须与曲线拐点重合）
+  int highIdx = 0;
+  int lowIdx = 0;
+  for (int i = 1; i < n; ++i) {
+    if (m_plotPoints.at(i).second > m_plotPoints.at(highIdx).second)
+      highIdx = i;
+    if (m_plotPoints.at(i).second < m_plotPoints.at(lowIdx).second)
+      lowIdx = i;
+  }
+
   int step = 1;
   if (n > 1000)
     step = n / 500;
   else if (n > 500)
     step = 2;
 
-  for (int i = 0; i < n; i += step) {
-    const auto &p = m_plotPoints.at(i);
-    m_series->append(p.first.toMSecsSinceEpoch(), p.second);
-    minPrice = qMin(minPrice, p.second);
-    maxPrice = qMax(maxPrice, p.second);
+  // 降采样时强制保留最高/最低点，避免红绿点落在「折线缺口」上
+  QSet<int> keep;
+  keep.reserve(n / step + 8);
+  for (int i = 0; i < n; i += step)
+    keep.insert(i);
+  keep.insert(n - 1);
+  keep.insert(highIdx);
+  keep.insert(lowIdx);
+  QList<int> order = keep.values();
+  std::sort(order.begin(), order.end());
+  for (int i : order) {
+    const auto &pt = m_plotPoints.at(i);
+    m_series->append(pt.first.toMSecsSinceEpoch(), pt.second);
   }
-  if ((n - 1) % step != 0) {
-    const auto &p = m_plotPoints.last();
-    m_series->append(p.first.toMSecsSinceEpoch(), p.second);
-    minPrice = qMin(minPrice, p.second);
-    maxPrice = qMax(maxPrice, p.second);
-  }
-  for (const auto &p : m_plotPoints) {
-    minPrice = qMin(minPrice, p.second);
-    maxPrice = qMax(maxPrice, p.second);
+  for (const auto &pt : m_plotPoints) {
+    minPrice = qMin(minPrice, pt.second);
+    maxPrice = qMax(maxPrice, pt.second);
   }
 
   // 日高低预测纳入坐标范围
