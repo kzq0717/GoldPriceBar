@@ -38,7 +38,8 @@ void HistoryCache::append(const QDateTime& time, double price)
         const double lastP = m_points.last().second;
         if (lastP > 0.0) {
             const double r = price / lastP;
-            if (r > 1.25 || r < 0.75)
+            // 积存金日内几乎不可能 ±15% 跳变；过滤错误源/单位混入
+            if (r > 1.15 || r < 0.85)
                 return;
         }
     }

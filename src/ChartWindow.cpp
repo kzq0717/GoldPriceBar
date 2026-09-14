@@ -684,13 +684,27 @@ void ChartWindow::updateForecast() {
       QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag,
       predHigh, predLow, m_plotPoints.last().second);
 
-  if (m_axisY) {
-    qreal yMin = m_axisY->min();
-    qreal yMax = m_axisY->max();
-    yMin = qMin(yMin, predLow);
-    yMax = qMax(yMax, predHigh);
-    const qreal m = (yMax - yMin) * 0.05 + 0.2;
-    m_axisY->setRange(yMin - m, yMax + m);
+  if (m_axisY && !m_plotPoints.isEmpty()) {
+    // 仅在预测贴近现价时微调 Y 轴，避免 605~1238 这类跨度
+    double lo = m_plotPoints.first().second, hi = lo;
+    for (const auto& pt : m_plotPoints) {
+      if (pt.second <= 0) continue;
+      lo = qMin(lo, pt.second);
+      hi = qMax(hi, pt.second);
+    }
+    const double mid = 0.5 * (lo + hi);
+    const double band = qMax((hi - lo) * 0.6, mid * 0.015);
+    auto clampP = [&](double v) {
+      return v >= mid - band * 3 && v <= mid + band * 3;
+    };
+    qreal yMin = static_cast<qreal>(lo);
+    qreal yMax = static_cast<qreal>(hi);
+    if (clampP(predLow))
+      yMin = qMin(yMin, static_cast<qreal>(predLow));
+    if (clampP(predHigh))
+      yMax = qMax(yMax, static_cast<qreal>(predHigh));
+    const qreal mgn = qMax(0.3, (yMax - yMin) * 0.12);
+    m_axisY->setRange(yMin - mgn, yMax + mgn);
   }
 
   double high = 0.0, low = 0.0;
@@ -1199,19 +1213,51 @@ void ChartWindow::updateSeries() {
     return;
   }
 
-  qreal minPrice = m_plotPoints.first().second;
-  qreal maxPrice = minPrice;
   const int n = m_plotPoints.size();
 
-  // 全量数据上的真实最高/最低下标（标记必须与曲线拐点重合）
-  int highIdx = 0;
-  int lowIdx = 0;
-  for (int i = 1; i < n; ++i) {
-    if (m_plotPoints.at(i).second > m_plotPoints.at(highIdx).second)
+  // 以中位价为基准剔除异常点（单位混入 USD/oz 或错误点会导致 605~1238 把分时压成一条线）
+  QVector<double> vals;
+  vals.reserve(n);
+  for (const auto& pt : m_plotPoints) {
+    if (pt.second > 0.0)
+      vals.append(pt.second);
+  }
+  std::sort(vals.begin(), vals.end());
+  const double median = vals.isEmpty() ? 0.0 : vals.at(vals.size() / 2);
+  auto inBand = [median](double v) {
+    if (v <= 0.0 || median <= 0.0)
+      return false;
+    // 积存金日内波幅通常很小；硬限制 ±8%，再加绝对下限
+    const double lo = median * 0.92;
+    const double hi = median * 1.08;
+    return v >= lo && v <= hi;
+  };
+
+  // 全量数据上的真实最高/最低（仅统计带内点）
+  int highIdx = -1;
+  int lowIdx = -1;
+  for (int i = 0; i < n; ++i) {
+    const double v = m_plotPoints.at(i).second;
+    if (!inBand(v))
+      continue;
+    if (highIdx < 0 || v > m_plotPoints.at(highIdx).second)
       highIdx = i;
-    if (m_plotPoints.at(i).second < m_plotPoints.at(lowIdx).second)
+    if (lowIdx < 0 || v < m_plotPoints.at(lowIdx).second)
       lowIdx = i;
   }
+  if (highIdx < 0) {
+    highIdx = 0;
+    lowIdx = 0;
+    for (int i = 1; i < n; ++i) {
+      if (m_plotPoints.at(i).second > m_plotPoints.at(highIdx).second)
+        highIdx = i;
+      if (m_plotPoints.at(i).second < m_plotPoints.at(lowIdx).second)
+        lowIdx = i;
+    }
+  }
+
+  qreal minPrice = m_plotPoints.at(lowIdx).second;
+  qreal maxPrice = m_plotPoints.at(highIdx).second;
 
   int step = 1;
   if (n > 1000)
@@ -1219,30 +1265,43 @@ void ChartWindow::updateSeries() {
   else if (n > 500)
     step = 2;
 
-  // 降采样时强制保留最高/最低点，避免红绿点落在「折线缺口」上
+  // 降采样时强制保留最高/最低点
   QSet<int> keep;
   keep.reserve(n / step + 8);
-  for (int i = 0; i < n; i += step)
-    keep.insert(i);
+  for (int i = 0; i < n; i += step) {
+    if (inBand(m_plotPoints.at(i).second) || i == 0 || i == n - 1)
+      keep.insert(i);
+  }
   keep.insert(n - 1);
   keep.insert(highIdx);
   keep.insert(lowIdx);
   QList<int> order = keep.values();
   std::sort(order.begin(), order.end());
   for (int i : order) {
-    const auto &pt = m_plotPoints.at(i);
+    const auto& pt = m_plotPoints.at(i);
     m_series->append(pt.first.toMSecsSinceEpoch(), pt.second);
   }
-  for (const auto &pt : m_plotPoints) {
-    minPrice = qMin(minPrice, pt.second);
-    maxPrice = qMax(maxPrice, pt.second);
-  }
 
-  // 日高低预测纳入坐标范围
+  // 预测仅在贴近分时带内时纳入 Y 轴（防止离谱预测撑轴）
   double ph = 0.0, pl = 0.0;
   if (computeDayRangeForecast(ph, pl)) {
-    minPrice = qMin(minPrice, pl);
-    maxPrice = qMax(maxPrice, ph);
+    const double span = qMax(0.5, maxPrice - minPrice);
+    const double pad = qMax(span * 0.5, median * 0.01);
+    if (pl >= minPrice - pad && pl <= maxPrice + pad)
+      minPrice = qMin(minPrice, static_cast<qreal>(pl));
+    if (ph >= minPrice - pad && ph <= maxPrice + pad)
+      maxPrice = qMax(maxPrice, static_cast<qreal>(ph));
+  }
+  // 若已有侧栏预测值，同样做带内裁剪
+  if (m_hasPredict) {
+    const double span = qMax(0.5, maxPrice - minPrice);
+    const double pad = qMax(span * 0.5, median * 0.01);
+    if (m_lastPredictLow > 0 && m_lastPredictLow >= minPrice - pad
+        && m_lastPredictLow <= maxPrice + pad)
+      minPrice = qMin(minPrice, static_cast<qreal>(m_lastPredictLow));
+    if (m_lastPredictHigh > 0 && m_lastPredictHigh >= minPrice - pad
+        && m_lastPredictHigh <= maxPrice + pad)
+      maxPrice = qMax(maxPrice, static_cast<qreal>(m_lastPredictHigh));
   }
 
   // 横轴：左端尽量从当日 00:00 起；右端留足到当前之后 1 小时
