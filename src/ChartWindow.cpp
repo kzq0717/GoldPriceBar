@@ -385,24 +385,23 @@ void ChartWindow::setupChart() {
       "QListWidget#forecastList::item:selected{"
       "  background:#1c2a40;color:#e8eaed;"
       "}");
-  m_sideForecastList->setWordWrap(true);
+  // 长文案横向展开；垂直+水平滚动条均可拖动
+  m_sideForecastList->setWordWrap(false);
+  m_sideForecastList->setTextElideMode(Qt::ElideNone);
   m_sideForecastList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-  m_sideForecastList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_sideForecastList->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+  m_sideForecastList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   m_sideForecastList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   m_sideForecastList->setSpacing(2);
   m_sideForecastList->setUniformItemSizes(false);
-  m_sideForecastList->setMinimumHeight(120);
+  m_sideForecastList->setMinimumHeight(140);
   m_sideForecastList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  m_sideForecastList->setToolTip(tr("滚轮或拖动滚动条查看今日历史预测；最新在底部"));
+  m_sideForecastList->setToolTip(
+      tr("垂直/水平滚动查看今日预测；滚轮与拖动滚动条均可；最新在底部"));
   sideLay->addWidget(m_sideForecastList, 1);
 
-  // 保留 m_sideModeLabel 作最新状态一行（请求中… 等）
-  m_sideModeLabel = new QLabel(tr("等待预测…"), m_sidePanel);
-  m_sideModeLabel->setStyleSheet(
-      "color:#8b9bb4;font-size:11px;padding:4px 6px;");
-  m_sideModeLabel->setWordWrap(true);
-  m_sideModeLabel->setMaximumHeight(36);
-  sideLay->addWidget(m_sideModeLabel, 0);
+  // 不再单独占一行状态框；状态写入列表首行提示或仅日志
+  m_sideModeLabel = nullptr;
 
   m_sideHitRateLabel = nullptr;
   m_sideAdviceLabel = nullptr;
@@ -810,7 +809,7 @@ void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString
     QString head = mode;
     if (head.size() > 36)
         head = head.left(36) + QStringLiteral("…");
-    const QString text = QStringLiteral("%1  高%2  低%3\n%4")
+    const QString text = QStringLiteral("%1  高%2  低%3  %4")
                              .arg(timeStr)
                              .arg(ph, 0, 'f', 2)
                              .arg(pl, 0, 'f', 2)
@@ -938,10 +937,10 @@ void ChartWindow::requestOnlineForecast()
     return;
   }
 
-  if (m_sidePredictLabel)
-    m_sidePredictLabel->setText(tr("请求中…"));
-  if (m_sideModeLabel)
-    m_sideModeLabel->setText(tr("大模型…"));
+  if (m_sidePredictHighLabel)
+    m_sidePredictHighLabel->setText(tr("…"));
+  if (m_sidePredictLowLabel)
+    m_sidePredictLowLabel->setText(tr("…"));
 
   Logger::info(QStringLiteral("Online forecast request provider=%1 model=%2")
                    .arg(AppSettings::instance().llmProvider(),
