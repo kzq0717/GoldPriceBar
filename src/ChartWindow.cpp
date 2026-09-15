@@ -2603,8 +2603,8 @@ void ChartWindow::updateClockAndAdvice()
                     .arg(ft.hitRatePercent(), 0, 'f', 0)
                     .arg(ft.totalEvaluated() / 2));
             m_sideHitRateLabel->setToolTip(
-                tr("来自已结算预测日志（非日线导入）
-高命中 %1% / 低命中 %2% / 待结算 %3")
+                tr("来自已结算预测日志（非日线导入）\n"
+                   "高命中 %1% / 低命中 %2% / 待结算 %3")
                     .arg(ft.highHitRatePercent(), 0, 'f', 0)
                     .arg(ft.lowHitRatePercent(), 0, 'f', 0)
                     .arg(ft.pendingCount()));
