@@ -22,6 +22,7 @@ class QFrame;
 class QComboBox;
 class QListWidget;
 class QToolButton;
+class QPushButton;
 class QMenu;
 class QAction;
 QT_END_NAMESPACE
