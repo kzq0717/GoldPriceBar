@@ -237,56 +237,122 @@ void ChartWindow::setupChart() {
       "border-radius:4px;padding:5px 9px;font-size:12px;}");
   m_tipLabel->hide();
 
-  // 顶部：周期选择（今日分时 / 7月～当月）
-  m_periodCombo = new QComboBox(this);
-  m_periodCombo->setMinimumWidth(160);
+  // —— 顶部现代工具栏：左周期 | 中均线胶囊 | 右导出 ——
+  m_toolbar = new QFrame(this);
+  m_toolbar->setObjectName(QStringLiteral("chartToolbar"));
+  m_toolbar->setFixedHeight(48);
+  m_toolbar->setStyleSheet(
+      "QFrame#chartToolbar{"
+      "  background:#161b27;"
+      "  border:1px solid #2a3347;"
+      "  border-radius:12px;"
+      "}"
+      "QFrame#chartToolbar QLabel#tbHint{"
+      "  color:#6b778c;font-size:11px;font-weight:500;"
+      "}"
+      "QFrame#chartToolbar QComboBox{"
+      "  background:#1c2433;color:#e8eaed;"
+      "  border:1px solid #2f3a4f;border-radius:8px;"
+      "  padding:4px 10px;min-height:28px;min-width:140px;"
+      "  font-size:12px;"
+      "}"
+      "QFrame#chartToolbar QComboBox:hover{border-color:#5b8def;}"
+      "QFrame#chartToolbar QComboBox::drop-down{border:none;width:22px;}"
+      "QFrame#chartToolbar QComboBox QAbstractItemView{"
+      "  background:#1c2433;color:#e8eaed;border:1px solid #2f3a4f;"
+      "  selection-background-color:#2a4a7a;"
+      "}"
+      "QFrame#chartToolbar QToolButton#maPill{"
+      "  background:#1c2433;color:#9aa8bc;"
+      "  border:1px solid #2f3a4f;border-radius:14px;"
+      "  padding:4px 12px;min-height:28px;font-size:12px;font-weight:600;"
+      "}"
+      "QFrame#chartToolbar QToolButton#maPill:hover{"
+      "  border-color:#5b8def;color:#e8eaed;"
+      "}"
+      "QFrame#chartToolbar QToolButton#maPill:checked{"
+      "  background:#1a3a5c;color:#7eb6ff;border-color:#5b8def;"
+      "}"
+      "QFrame#chartToolbar QPushButton#exportCsv{"
+      "  background:transparent;color:#9aa8bc;"
+      "  border:1px solid #2f3a4f;border-radius:8px;"
+      "  padding:4px 14px;min-height:28px;font-size:12px;"
+      "}"
+      "QFrame#chartToolbar QPushButton#exportCsv:hover{"
+      "  background:#1c2433;color:#e8eaed;border-color:#5b8def;"
+      "}");
+
+  auto *tb = new QHBoxLayout(m_toolbar);
+  tb->setContentsMargins(12, 6, 12, 6);
+  tb->setSpacing(10);
+
+  auto *periodHint = new QLabel(tr("周期"), m_toolbar);
+  periodHint->setObjectName(QStringLiteral("tbHint"));
+  m_periodCombo = new QComboBox(m_toolbar);
+  m_periodCombo->setMinimumWidth(148);
+  m_periodCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
   fillPeriodCombo();
   connect(m_periodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ChartWindow::onPeriodChanged);
 
-  auto *exportBtn = new QPushButton(tr("导出CSV"), this);
-  exportBtn->setFixedWidth(80);
-  exportBtn->setToolTip(tr("导出当前曲线点到 CSV 文件"));
-  connect(exportBtn, &QPushButton::clicked, this, &ChartWindow::onExportCsv);
+  // 均线：胶囊式可勾选按钮（替代下拉菜单）
+  auto makeMaPill = [this](const QString& text, QAction** actionOut) {
+    auto* btn = new QToolButton(m_toolbar);
+    btn->setObjectName(QStringLiteral("maPill"));
+    btn->setText(text);
+    btn->setCheckable(true);
+    btn->setChecked(false);
+    btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    btn->setCursor(Qt::PointingHandCursor);
+    auto* act = new QAction(text, this);
+    act->setCheckable(true);
+    act->setChecked(false);
+    connect(btn, &QToolButton::toggled, act, &QAction::setChecked);
+    connect(act, &QAction::toggled, btn, &QToolButton::setChecked);
+    connect(act, &QAction::toggled, this, &ChartWindow::onMaOptionChanged);
+    *actionOut = act;
+    return btn;
+  };
+  m_ma5Btn = makeMaPill(tr("MA5"), &m_ma5Action);
+  m_ma10Btn = makeMaPill(tr("MA10"), &m_ma10Action);
+  m_ma20Btn = makeMaPill(tr("MA20"), &m_ma20Action);
+  m_ma5Btn->setToolTip(tr("5日均线（日线或分时滚动）"));
+  m_ma10Btn->setToolTip(tr("10日均线"));
+  m_ma20Btn->setToolTip(tr("20日均线"));
+  m_maMenuBtn = nullptr; // 旧下拉不再使用
 
-  m_maMenuBtn = new QToolButton(this);
-  m_maMenuBtn->setText(tr("均线 ▾"));
-  m_maMenuBtn->setPopupMode(QToolButton::InstantPopup);
-  m_maMenuBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  m_maMenuBtn->setMinimumWidth(96);
-  m_maMenuBtn->setMinimumHeight(28);
-  m_maMenuBtn->setToolTip(tr("勾选显示均线（本页独立；默认关闭）"));
-  auto* maMenu = new QMenu(m_maMenuBtn);
-  maMenu->setMinimumWidth(160);
-  m_ma5Action = maMenu->addAction(tr("☑ MA5（5日）"));
-  m_ma10Action = maMenu->addAction(tr("☑ MA10（10日）"));
-  m_ma20Action = maMenu->addAction(tr("☑ MA20（20日）"));
-  // 文案用纯文字，勾选状态由 checkable 控制
-  m_ma5Action->setText(tr("MA5（5日）"));
-  m_ma10Action->setText(tr("MA10（10日）"));
-  m_ma20Action->setText(tr("MA20（20日）"));
-  for (QAction* a : {m_ma5Action, m_ma10Action, m_ma20Action}) {
-    a->setCheckable(true);
-    a->setChecked(false);
-    connect(a, &QAction::toggled, this, &ChartWindow::onMaOptionChanged);
-  }
-  m_maMenuBtn->setMenu(maMenu);
+  auto *maHint = new QLabel(tr("均线"), m_toolbar);
+  maHint->setObjectName(QStringLiteral("tbHint"));
+  auto *maGroup = new QHBoxLayout();
+  maGroup->setSpacing(6);
+  maGroup->setContentsMargins(0, 0, 0, 0);
+  maGroup->addWidget(m_ma5Btn);
+  maGroup->addWidget(m_ma10Btn);
+  maGroup->addWidget(m_ma20Btn);
 
-  auto *topBar = new QHBoxLayout();
-  topBar->setSpacing(10);
-  topBar->addWidget(new QLabel(tr("周期："), this));
-  topBar->addWidget(m_periodCombo);
-  topBar->addSpacing(16);
-  topBar->addWidget(m_maMenuBtn);
-  topBar->addSpacing(20);
-  topBar->addWidget(exportBtn);
-  topBar->addStretch();
+  m_exportCsvBtn = new QPushButton(tr("导出 CSV"), m_toolbar);
+  m_exportCsvBtn->setObjectName(QStringLiteral("exportCsv"));
+  m_exportCsvBtn->setCursor(Qt::PointingHandCursor);
+  m_exportCsvBtn->setToolTip(tr("导出当前曲线点到 CSV 文件"));
+  connect(m_exportCsvBtn, &QPushButton::clicked, this, &ChartWindow::onExportCsv);
+
+  tb->addWidget(periodHint);
+  tb->addWidget(m_periodCombo);
+  tb->addSpacing(8);
+  auto *vdiv1 = new QFrame(m_toolbar);
+  vdiv1->setFrameShape(QFrame::VLine);
+  vdiv1->setStyleSheet("color:#2a3347;max-width:1px;background:#2a3347;");
+  tb->addWidget(vdiv1);
+  tb->addWidget(maHint);
+  tb->addLayout(maGroup);
+  tb->addStretch(1);
+  tb->addWidget(m_exportCsvBtn);
 
   // 主布局：上工具栏 + 曲线 + 右侧信息栏
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(4, 4, 4, 4);
-  root->setSpacing(4);
-  root->addLayout(topBar);
+  root->setContentsMargins(8, 8, 8, 8);
+  root->setSpacing(8);
+  root->addWidget(m_toolbar);
 
   auto *body = new QHBoxLayout();
   body->setSpacing(8);

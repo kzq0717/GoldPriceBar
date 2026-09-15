@@ -91,7 +91,12 @@ private:
     void setCurrentMarker(qint64 xMs, double y, bool startPulse = true);
 
     QComboBox* m_periodCombo = nullptr;
+    QFrame* m_toolbar = nullptr;
     QToolButton* m_maMenuBtn = nullptr;
+    QToolButton* m_ma5Btn = nullptr;
+    QToolButton* m_ma10Btn = nullptr;
+    QToolButton* m_ma20Btn = nullptr;
+    QPushButton* m_exportCsvBtn = nullptr;
     QAction* m_ma5Action = nullptr;
     QAction* m_ma10Action = nullptr;
     QAction* m_ma20Action = nullptr;
