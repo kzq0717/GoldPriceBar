@@ -69,6 +69,10 @@ public:
     QVector<QPair<QDate, double>> loadRecentDailyCloses(int maxDays,
                                                         const QString& source) const;
 
+    QVector<QPair<QDateTime, double>> loadDailyClosesRange(const QDate& from,
+                                                           const QDate& to,
+                                                           const QString& source) const;
+
     bool upsertHistoricalClose(const QDate& tradeDate, const QString& source, double close,
                                const QString& unit = QString());
 
