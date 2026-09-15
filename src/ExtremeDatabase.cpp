@@ -161,6 +161,11 @@ bool ExtremeDatabase::ensureSchema()
         ")"));
     q.exec(QStringLiteral(
         "CREATE INDEX IF NOT EXISTS idx_forecast_unsettled ON forecast_logs(settled, mature_at)"));
+    // 兼容旧库：补充 brief 字段（Gemini 分析原文）
+    {
+        QSqlQuery qa(db);
+        qa.exec(QStringLiteral("ALTER TABLE forecast_logs ADD COLUMN brief TEXT"));
+    }
 
     q.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS alert_events ("
@@ -616,7 +621,7 @@ bool ExtremeDatabase::insertSecondaryQuote(const QDateTime& ts, const QString& p
 
 qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString& source,
                                           const QString& mode, double predHigh, double predLow,
-                                          double basePrice)
+                                          double basePrice, const QString& brief)
 {
     if (!m_open || predHigh <= 0.0 || predLow <= 0.0)
         return 0;
@@ -624,8 +629,8 @@ qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString
     QSqlQuery q(db);
     q.prepare(QStringLiteral(
         "INSERT INTO forecast_logs "
-        "(made_at, mature_at, source, mode, pred_high, pred_low, base_price, settled) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0)"));
+        "(made_at, mature_at, source, mode, pred_high, pred_low, base_price, brief, settled) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"));
     q.addBindValue(madeAt.toString(Qt::ISODate));
     q.addBindValue(madeAt.addSecs(3600).toString(Qt::ISODate));
     q.addBindValue(source);
@@ -633,11 +638,58 @@ qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString
     q.addBindValue(predHigh);
     q.addBindValue(predLow);
     q.addBindValue(basePrice);
+    q.addBindValue(brief);
     if (!q.exec()) {
         qWarning() << "insertForecastLog:" << q.lastError().text();
         return 0;
     }
     return q.lastInsertId().toLongLong();
+}
+
+QVector<ForecastLogEntry> ExtremeDatabase::loadForecastLogsForDay(const QDate& day,
+                                                                  const QString& source) const
+{
+    QVector<ForecastLogEntry> out;
+    if (!m_open || !day.isValid())
+        return out;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    const QString day0 = day.toString(Qt::ISODate) + QStringLiteral("T00:00:00");
+    const QString day1 = day.addDays(1).toString(Qt::ISODate) + QStringLiteral("T00:00:00");
+    if (source.isEmpty()) {
+        q.prepare(QStringLiteral(
+            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price "
+            "FROM forecast_logs WHERE made_at>=? AND made_at<? ORDER BY made_at ASC, id ASC"));
+        q.addBindValue(day0);
+        q.addBindValue(day1);
+    } else {
+        q.prepare(QStringLiteral(
+            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price "
+            "FROM forecast_logs WHERE made_at>=? AND made_at<? AND source=? "
+            "ORDER BY made_at ASC, id ASC"));
+        q.addBindValue(day0);
+        q.addBindValue(day1);
+        q.addBindValue(source);
+    }
+    if (!q.exec()) {
+        qWarning() << "loadForecastLogsForDay:" << q.lastError().text();
+        return out;
+    }
+    while (q.next()) {
+        ForecastLogEntry e;
+        e.id = q.value(0).toLongLong();
+        e.madeAt = QDateTime::fromString(q.value(1).toString(), Qt::ISODate);
+        if (!e.madeAt.isValid())
+            e.madeAt = QDateTime::fromString(q.value(1).toString(), Qt::ISODateWithMs);
+        e.source = q.value(2).toString();
+        e.mode = q.value(3).toString();
+        e.brief = q.value(4).toString();
+        e.predHigh = q.value(5).toDouble();
+        e.predLow = q.value(6).toDouble();
+        e.basePrice = q.value(7).toDouble();
+        out.append(e);
+    }
+    return out;
 }
 
 int ExtremeDatabase::settleForecasts(const QString& source, double actualHigh, double actualLow,

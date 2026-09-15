@@ -20,6 +20,17 @@
  *  - alert_events    预警事件
  *  - session_marks   交易时段标记
  */
+struct ForecastLogEntry {
+    qint64 id = 0;
+    QDateTime madeAt;
+    QString source;
+    QString mode;
+    QString brief;
+    double predHigh = 0;
+    double predLow = 0;
+    double basePrice = 0;
+};
+
 class ExtremeDatabase : public QObject
 {
     Q_OBJECT
@@ -79,7 +90,11 @@ public:
     /** 建模：登记预测；返回 row id（失败 0） */
     qint64 insertForecastLog(const QDateTime& madeAt, const QString& source,
                              const QString& mode, double predHigh, double predLow,
-                             double basePrice);
+                             double basePrice, const QString& brief = QString());
+
+    /** 当日预测记录（按时间升序，最新在末尾） */
+    QVector<ForecastLogEntry> loadForecastLogsForDay(const QDate& day,
+                                                     const QString& source = QString()) const;
 
     /** 结算未到期预测（用今高/今低） */
     int settleForecasts(const QString& source, double actualHigh, double actualLow,

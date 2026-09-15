@@ -27,6 +27,9 @@
 #include <QList>
 #include <algorithm>
 #include <QToolButton>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QAbstractItemView>
 #include <QMenu>
 #include <QAction>
 #include <QFileDialog>
@@ -295,7 +298,7 @@ void ChartWindow::setupChart() {
   body->addWidget(m_chartView, 1);
 
   m_sidePanel = new QFrame(this);
-  m_sidePanel->setFixedWidth(188);
+  m_sidePanel->setFixedWidth(200);
   m_sidePanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   m_sidePanel->setMinimumHeight(0);
   m_sidePanel->setStyleSheet(
@@ -365,21 +368,44 @@ void ChartWindow::setupChart() {
   // 兼容旧字段：合并预测仍写 m_sidePredictLabel（可指向预高）
   m_sidePredictLabel = m_sidePredictHighLabel;
 
-  m_sideModeLabel = new QLabel(tr("本地推演"), m_sidePanel);
+  auto *histTitle = new QLabel(tr("今日预测记录"), m_sidePanel);
+  histTitle->setStyleSheet("color:#6b778c;font-size:11px;");
+  sideLay->addWidget(histTitle);
+
+  m_sideForecastList = new QListWidget(m_sidePanel);
+  m_sideForecastList->setObjectName(QStringLiteral("forecastList"));
+  m_sideForecastList->setStyleSheet(
+      "QListWidget#forecastList{"
+      "  background:#0e1219;border:1px solid #2a3347;border-radius:8px;"
+      "  color:#c5cddb;font-size:11px;outline:none;"
+      "}"
+      "QListWidget#forecastList::item{"
+      "  padding:6px 8px;border-bottom:1px solid #1c2433;"
+      "}"
+      "QListWidget#forecastList::item:selected{"
+      "  background:#1c2a40;color:#e8eaed;"
+      "}");
+  m_sideForecastList->setWordWrap(true);
+  m_sideForecastList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+  m_sideForecastList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_sideForecastList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  m_sideForecastList->setSpacing(2);
+  m_sideForecastList->setUniformItemSizes(false);
+  m_sideForecastList->setMinimumHeight(120);
+  m_sideForecastList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  m_sideForecastList->setToolTip(tr("滚轮或拖动滚动条查看今日历史预测；最新在底部"));
+  sideLay->addWidget(m_sideForecastList, 1);
+
+  // 保留 m_sideModeLabel 作最新状态一行（请求中… 等）
+  m_sideModeLabel = new QLabel(tr("等待预测…"), m_sidePanel);
   m_sideModeLabel->setStyleSheet(
-      "color:#8b9bb4;font-size:11px;padding:6px 8px;"
-      "background:#1a2030;border-radius:8px;border:1px solid #2a3347;");
+      "color:#8b9bb4;font-size:11px;padding:4px 6px;");
   m_sideModeLabel->setWordWrap(true);
-  m_sideModeLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-  m_sideModeLabel->setMinimumHeight(48);
-  m_sideModeLabel->setMaximumHeight(72);
-  m_sideModeLabel->setToolTip(tr("预测来源与简要分析"));
+  m_sideModeLabel->setMaximumHeight(36);
   sideLay->addWidget(m_sideModeLabel, 0);
 
   m_sideHitRateLabel = nullptr;
   m_sideAdviceLabel = nullptr;
-
-  sideLay->addStretch(1);
   body->addWidget(m_sidePanel, 0);
   // 强制同一行内垂直方向填满
   body->setStretch(0, 1);
@@ -531,6 +557,8 @@ void ChartWindow::onPulseTick()
 }
 
 void ChartWindow::showEvent(QShowEvent *event) {
+  reloadForecastHistory();
+
   QWidget::showEvent(event);
   fetchChartFromApi();
 }
@@ -765,6 +793,53 @@ void ChartWindow::applyForecastPoints(
     const QVector<QPair<QDateTime, double>> &forecast, const QString &modeTag) {
   Q_UNUSED(forecast);
   Q_UNUSED(modeTag);
+}
+
+
+void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString& mode,
+                                            const QString& brief, double ph, double pl)
+{
+    if (!m_sideForecastList)
+        return;
+    const QString timeStr = when.isValid() ? when.toString(QStringLiteral("HH:mm:ss"))
+                                           : QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+    QString body = brief.trimmed();
+    if (body.isEmpty())
+        body = mode;
+    // 去掉重复的 Gemini· 前缀展示
+    QString head = mode;
+    if (head.size() > 36)
+        head = head.left(36) + QStringLiteral("…");
+    const QString text = QStringLiteral("%1  高%2  低%3\n%4")
+                             .arg(timeStr)
+                             .arg(ph, 0, 'f', 2)
+                             .arg(pl, 0, 'f', 2)
+                             .arg(body);
+    auto* item = new QListWidgetItem(text);
+    item->setToolTip(text);
+    m_sideForecastList->addItem(item);
+    m_sideForecastList->scrollToItem(item, QAbstractItemView::PositionAtBottom);
+    m_sideForecastList->setCurrentItem(item);
+}
+
+void ChartWindow::reloadForecastHistory()
+{
+    if (!m_sideForecastList)
+        return;
+    m_sideForecastList->clear();
+    const auto logs = ExtremeDatabase::instance().loadForecastLogsForDay(
+        QDate::currentDate(), currentTypeCode());
+    for (const auto& e : logs) {
+        QString brief = e.brief;
+        if (brief.isEmpty())
+            brief = e.mode;
+        appendForecastHistoryItem(e.madeAt, e.mode, brief, e.predHigh, e.predLow);
+    }
+    if (m_sideForecastList->count() > 0) {
+        auto* last = m_sideForecastList->item(m_sideForecastList->count() - 1);
+        m_sideForecastList->scrollToItem(last, QAbstractItemView::PositionAtBottom);
+        m_sideForecastList->setCurrentItem(last);
+    }
 }
 
 void ChartWindow::updateSidePanelValues(double current, double predict,
@@ -1270,11 +1345,13 @@ void ChartWindow::onOnlineForecastFinished()
 
   ForecastTracker::instance().recordDayRange(
       QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
+  const QDateTime madeAt = QDateTime::currentDateTime();
   ExtremeDatabase::instance().insertForecastLog(
-      QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag, predHigh,
-      predLow, m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second);
+      madeAt, currentTypeCode(), m_forecastModeTag, predHigh, predLow,
+      m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second, brief);
+  appendForecastHistoryItem(madeAt, m_forecastModeTag, brief, predHigh, predLow);
 
-  m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
+  m_lastForecastMs = madeAt.toMSecsSinceEpoch();
   double high = 0, low = 0;
   HistoryCache::instance().todayHigh(high);
   HistoryCache::instance().todayLow(low);
@@ -1562,6 +1639,7 @@ void ChartWindow::updateSeries() {
   HistoryCache::instance().todayLow(low);
 
   refreshIntradayTitle();
+  reloadForecastHistory();
 
   updateMovingAverages();
   updateYesterdayOverlay();
@@ -1925,6 +2003,13 @@ void ChartWindow::applySidePanelChrome()
         m_sidePanel->setStyleSheet(
             "QFrame#sidePanel{background:#12161f;border:1px solid #2a3347;border-radius:12px;}"
             "QLabel{background:transparent;}");
+    if (m_sideForecastList)
+        m_sideForecastList->setStyleSheet(
+            "QListWidget#forecastList{"
+            "  background:#0e1219;border:1px solid #2a3347;border-radius:8px;"
+            "  color:#c5cddb;font-size:11px;outline:none;}"
+            "QListWidget#forecastList::item{padding:6px 8px;border-bottom:1px solid #1c2433;}"
+            "QListWidget#forecastList::item:selected{background:#1c2a40;color:#e8eaed;}");
 }
 
 void ChartWindow::onMaOptionChanged()

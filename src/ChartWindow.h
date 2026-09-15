@@ -20,6 +20,7 @@ class QNetworkReply;
 class QLabel;
 class QFrame;
 class QComboBox;
+class QListWidget;
 class QToolButton;
 class QMenu;
 class QAction;
@@ -71,6 +72,8 @@ private:
     void requestOnlineForecast();
     void onOnlineForecastFinished();
     void refreshIntradayTitle();
+    void reloadForecastHistory();
+    void appendForecastHistoryItem(const QDateTime& when, const QString& mode, const QString& brief, double ph, double pl);
     void applySidePanelChrome();
     void updateSidePanelValues(double current, double predict, bool hasPredict,
                                double high, double low, const QString& modeTag);
@@ -119,6 +122,7 @@ private:
     QLabel* m_sideHighLabel = nullptr;
     QLabel* m_sideLowLabel = nullptr;
     QLabel* m_sideModeLabel = nullptr;
+    QListWidget* m_sideForecastList = nullptr;
     QLabel* m_sideHitRateLabel = nullptr;
     QLabel* m_sideClockLabel = nullptr;
     QLabel* m_sideSessionLabel = nullptr;
