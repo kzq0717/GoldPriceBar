@@ -842,7 +842,7 @@ void ChartWindow::requestOnlineForecast()
   QString model = AppSettings::instance().xaiModel().trimmed();
   if (model.isEmpty())
     model = (provider == QStringLiteral("gemini"))
-                ? QStringLiteral("gemini-2.0-flash")
+                ? QStringLiteral("gemini-3.6-flash")
                 : QStringLiteral("grok-2-latest");
 
   const QString nowStr =
@@ -851,7 +851,7 @@ void ChartWindow::requestOnlineForecast()
       "你是资深黄金/贵金属短线分析师。综合：①用户给出的今日分时与已实现高低；"
       "②你所掌握的宏观与消息面知识（美元、利率、地缘、央行购金、ETF 等）；"
       "估计「今日剩余交易时段」可能触及的最高价与最低价。"
-      "只输出一个 JSON 对象，不要 Markdown。字段："
+      "只输出一个 JSON 对象（单行即可），不要 Markdown、不要思考过程、不要列表。字段："
       "{\"pred_high\":number,\"pred_low\":number,\"bias\":\"偏多|偏空|震荡\","
       "\"brief\":\"不超过40字\",\"confidence\":0.0到1.0}。"
       "硬性约束：pred_high >= 已出现今高；pred_low <= 已出现今低；"
@@ -895,9 +895,34 @@ void ChartWindow::requestOnlineForecast()
     contents.append(userMsg);
     body.insert(QStringLiteral("contents"), contents);
     QJsonObject genCfg;
-    genCfg.insert(QStringLiteral("temperature"), 0.35);
-    genCfg.insert(QStringLiteral("maxOutputTokens"), 512);
-    // 不强制 responseMimeType：部分模型会返回空 parts 导致「JSON无效」
+    // Gemini 3.x：思考 token 计入 maxOutputTokens；过小会 MAX_TOKENS 截断、无 JSON
+    genCfg.insert(QStringLiteral("maxOutputTokens"), 4096);
+    genCfg.insert(QStringLiteral("responseMimeType"), QStringLiteral("application/json"));
+    {
+      QJsonObject schema;
+      schema.insert(QStringLiteral("type"), QStringLiteral("object"));
+      QJsonObject props;
+      props.insert(QStringLiteral("pred_high"),
+                   QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
+      props.insert(QStringLiteral("pred_low"),
+                   QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
+      props.insert(QStringLiteral("bias"),
+                   QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}});
+      props.insert(QStringLiteral("brief"),
+                   QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}});
+      props.insert(QStringLiteral("confidence"),
+                   QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
+      schema.insert(QStringLiteral("properties"), props);
+      QJsonArray req;
+      req.append(QStringLiteral("pred_high"));
+      req.append(QStringLiteral("pred_low"));
+      schema.insert(QStringLiteral("required"), req);
+      genCfg.insert(QStringLiteral("responseSchema"), schema);
+    }
+    // 尽量少思考，把额度留给最终 JSON
+    QJsonObject thinking;
+    thinking.insert(QStringLiteral("thinkingLevel"), QStringLiteral("MINIMAL"));
+    genCfg.insert(QStringLiteral("thinkingConfig"), thinking);
     body.insert(QStringLiteral("generationConfig"), genCfg);
     reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
   } else {
@@ -1003,7 +1028,26 @@ void ChartWindow::onOnlineForecastFinished()
 
   if (err != QNetworkReply::NoError) {
     Logger::warn(QStringLiteral("Online forecast HTTP error: %1 body=%2")
-                     .arg(reply->errorString(), QString::fromUtf8(raw.left(400))));
+                     .arg(reply->errorString(), QString::fromUtf8(raw.left(600))));
+    // 404 等也会带 JSON error.message（如模型下线）
+    QJsonParseError peE{};
+    const QJsonDocument de = QJsonDocument::fromJson(raw, &peE);
+    if (peE.error == QJsonParseError::NoError && de.isObject()) {
+      const QString msg = de.object()
+                              .value(QStringLiteral("error"))
+                              .toObject()
+                              .value(QStringLiteral("message"))
+                              .toString();
+      if (!msg.isEmpty()) {
+        Logger::warn(QStringLiteral("Online forecast API message: %1").arg(msg));
+        if (msg.contains(QStringLiteral("no longer available"), Qt::CaseInsensitive)
+            || msg.contains(QStringLiteral("NOT_FOUND")))
+          fallback(tr("模型不可用·本地"));
+        else
+          fallback(tr("API错误·本地"));
+        return;
+      }
+    }
     fallback(tr("在线失败·本地"));
     return;
   }

@@ -607,11 +607,11 @@ void SettingsDialog::fillDefaultModels()
     m_modelCombo->clear();
     const QString prov = m_providerCombo->currentData().toString();
     if (prov == QStringLiteral("gemini")) {
-        m_modelCombo->addItem(QStringLiteral("gemini-2.0-flash"));
-        m_modelCombo->addItem(QStringLiteral("gemini-2.0-flash-lite"));
-        m_modelCombo->addItem(QStringLiteral("gemini-1.5-flash"));
-        m_modelCombo->addItem(QStringLiteral("gemini-1.5-pro"));
-        m_modelCombo->addItem(QStringLiteral("gemini-2.5-flash-preview-05-20"));
+        m_modelCombo->addItem(QStringLiteral("gemini-3.6-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-3.5-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-3.5-flash-lite"));
+        m_modelCombo->addItem(QStringLiteral("gemini-3.8-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-2.5-flash"));
     } else {
         m_modelCombo->addItem(QStringLiteral("grok-4.6"));
         m_modelCombo->addItem(QStringLiteral("grok-4.5"));
