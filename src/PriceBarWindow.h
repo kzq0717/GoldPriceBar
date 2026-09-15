@@ -55,6 +55,7 @@ private:
 
     void applyOpacity();
     void updateAlertIndicator(double price);
+    void checkPlanAlerts(double price);
     void maybeTrayNotify(AlertKind kind, double price);
     void updateSecondaryVisibility();
     void updatePnLDisplay(double price);
@@ -107,6 +108,7 @@ private:
     bool m_alertLit = false;
     QDateTime m_lastHighNotify;
     QDateTime m_lastLowNotify;
+    QDateTime m_lastPlanNotify;
     QDateTime m_lastSmartNotify;
     QDateTime m_lastPremiumNotify;
     double m_lastSecondaryPrice = 0.0;

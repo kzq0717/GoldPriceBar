@@ -95,6 +95,10 @@ private:
     QTimeEdit* m_dailyReportTimeEdit = nullptr;
     QCheckBox* m_eventAlertCheck = nullptr;
     QPushButton* m_suggestAlertBtn = nullptr;
+    QCheckBox* m_planEnabledCheck = nullptr;
+    QDoubleSpinBox* m_planBuySpin = nullptr;
+    QDoubleSpinBox* m_planSellSpin = nullptr;
+    QDoubleSpinBox* m_planInvalidSpin = nullptr;
     QLabel* m_eventSummaryLabel = nullptr;
 
     class QListWidget* m_categoryList = nullptr;

@@ -274,6 +274,7 @@ void PriceBarWindow::updatePriceDisplay(double price, double change, const QStri
 
     m_lastPrice = price;
     updateAlertIndicator(price);
+    checkPlanAlerts(price);
 }
 
 void PriceBarWindow::applyOpacity()
@@ -561,6 +562,45 @@ void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
         body);
 }
 
+
+
+
+void PriceBarWindow::checkPlanAlerts(double price)
+{
+    if (price <= 0.0 || !AppSettings::instance().planEnabled())
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+    if (!m_trayIcon || !AppSettings::instance().trayNotifyOnAlert())
+        return;
+
+    const auto& s = AppSettings::instance();
+    QString msg;
+    if (s.planInvalidPrice() > 0.0 && price <= s.planInvalidPrice())
+        msg = tr("现价 %1 触及计划失效价 %2，计划作废")
+                  .arg(price, 0, 'f', 2)
+                  .arg(s.planInvalidPrice(), 0, 'f', 2);
+    else if (s.planBuyPrice() > 0.0 && price <= s.planBuyPrice())
+        msg = tr("现价 %1 进入买入观察区（≤ %2）")
+                  .arg(price, 0, 'f', 2)
+                  .arg(s.planBuyPrice(), 0, 'f', 2);
+    else if (s.planSellPrice() > 0.0 && price >= s.planSellPrice())
+        msg = tr("现价 %1 进入卖出观察区（≥ %2）")
+                  .arg(price, 0, 'f', 2)
+                  .arg(s.planSellPrice(), 0, 'f', 2);
+    if (msg.isEmpty())
+        return;
+
+    const QDateTime now = QDateTime::currentDateTime();
+    const int cool = qMax(60, AppSettings::instance().alertCooldownSec());
+    if (m_lastPlanNotify.isValid() && m_lastPlanNotify.secsTo(now) < cool)
+        return;
+    m_lastPlanNotify = now;
+    m_trayIcon->showMessage(tr("交易计划"), msg, QSystemTrayIcon::Information, 6000);
+    ExtremeDatabase::instance().insertAlertEvent(
+        now, AppSettings::instance().dataSource(), QStringLiteral("plan"),
+        price, 0.0, msg);
+}
 
 
 void PriceBarWindow::updateSecondaryVisibility()

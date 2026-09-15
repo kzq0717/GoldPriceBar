@@ -231,6 +231,23 @@ void SettingsDialog::setupUi()
         connect(m_suggestAlertBtn, &QPushButton::clicked, this, [this]() {
             refreshAmplitudeHint(true);
         });
+
+        m_planEnabledCheck = new QCheckBox(tr("启用交易计划提醒"), this);
+        form->addRow("", m_planEnabledCheck);
+        m_planBuySpin = new QDoubleSpinBox(this);
+        m_planBuySpin->setRange(0, 999999);
+        m_planBuySpin->setDecimals(2);
+        form->addRow(tr("计划买入观察价："), m_planBuySpin);
+        m_planSellSpin = new QDoubleSpinBox(this);
+        m_planSellSpin->setRange(0, 999999);
+        m_planSellSpin->setDecimals(2);
+        form->addRow(tr("计划卖出观察价："), m_planSellSpin);
+        m_planInvalidSpin = new QDoubleSpinBox(this);
+        m_planInvalidSpin->setRange(0, 999999);
+        m_planInvalidSpin->setDecimals(2);
+        m_planInvalidSpin->setToolTip(tr("价格触及则计划作废（失效条件）"));
+        form->addRow(tr("计划失效价："), m_planInvalidSpin);
+
     }
 
     // ---- 2 预测 ----
@@ -463,6 +480,14 @@ void SettingsDialog::loadFromSettings()
     m_dbDirEdit->setText(settings.databaseDir());
 
     m_alertHighSpin->setValue(settings.alertHigh());
+    if (m_planEnabledCheck)
+        m_planEnabledCheck->setChecked(settings.planEnabled());
+    if (m_planBuySpin)
+        m_planBuySpin->setValue(settings.planBuyPrice());
+    if (m_planSellSpin)
+        m_planSellSpin->setValue(settings.planSellPrice());
+    if (m_planInvalidSpin)
+        m_planInvalidSpin->setValue(settings.planInvalidPrice());
     m_alertLowSpin->setValue(settings.alertLow());
     m_alertCooldownSpin->setValue(settings.alertCooldownSec());
     m_trayNotifyCheck->setChecked(settings.trayNotifyOnAlert());
@@ -542,6 +567,14 @@ void SettingsDialog::onAccept()
     settings.setXaiModel(m_modelCombo->currentText().trimmed());
     settings.setDatabaseDir(m_dbDirEdit->text().trimmed());
     settings.setAlertHigh(m_alertHighSpin->value());
+    if (m_planEnabledCheck)
+        settings.setPlanEnabled(m_planEnabledCheck->isChecked());
+    if (m_planBuySpin)
+        settings.setPlanBuyPrice(m_planBuySpin->value());
+    if (m_planSellSpin)
+        settings.setPlanSellPrice(m_planSellSpin->value());
+    if (m_planInvalidSpin)
+        settings.setPlanInvalidPrice(m_planInvalidSpin->value());
     settings.setAlertLow(m_alertLowSpin->value());
     settings.setAlertCooldownSec(m_alertCooldownSpin->value());
     settings.setTrayNotifyOnAlert(m_trayNotifyCheck->isChecked());

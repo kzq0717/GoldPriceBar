@@ -90,6 +90,19 @@ double AppSettings::alertHigh() const { return m_alertHigh; }
 void AppSettings::setAlertHigh(double v)
 { v = qMax(0.0, v); if (!qFuzzyCompare(m_alertHigh, v)) { m_alertHigh = v; emit settingsChanged(); } }
 
+bool AppSettings::planEnabled() const { return m_planEnabled; }
+void AppSettings::setPlanEnabled(bool on)
+{ if (m_planEnabled != on) { m_planEnabled = on; emit settingsChanged(); } }
+double AppSettings::planBuyPrice() const { return m_planBuyPrice; }
+void AppSettings::setPlanBuyPrice(double v)
+{ v = qMax(0.0, v); if (!qFuzzyCompare(m_planBuyPrice, v)) { m_planBuyPrice = v; emit settingsChanged(); } }
+double AppSettings::planSellPrice() const { return m_planSellPrice; }
+void AppSettings::setPlanSellPrice(double v)
+{ v = qMax(0.0, v); if (!qFuzzyCompare(m_planSellPrice, v)) { m_planSellPrice = v; emit settingsChanged(); } }
+double AppSettings::planInvalidPrice() const { return m_planInvalidPrice; }
+void AppSettings::setPlanInvalidPrice(double v)
+{ v = qMax(0.0, v); if (!qFuzzyCompare(m_planInvalidPrice, v)) { m_planInvalidPrice = v; emit settingsChanged(); } }
+
 double AppSettings::alertLow() const { return m_alertLow; }
 void AppSettings::setAlertLow(double v)
 { v = qMax(0.0, v); if (!qFuzzyCompare(m_alertLow, v)) { m_alertLow = v; emit settingsChanged(); } }
@@ -296,6 +309,10 @@ void AppSettings::load()
     if (m_llmProvider != QStringLiteral("gemini"))
         m_llmProvider = QStringLiteral("xai");
     m_databaseDir        = s.value("databaseDir", "").toString().trimmed();
+    m_planEnabled        = s.value("planEnabled", false).toBool();
+    m_planBuyPrice       = s.value("planBuyPrice", 0.0).toDouble();
+    m_planSellPrice      = s.value("planSellPrice", 0.0).toDouble();
+    m_planInvalidPrice   = s.value("planInvalidPrice", 0.0).toDouble();
     m_alertHigh          = s.value("alertHigh", 0.0).toDouble();
     m_alertLow           = s.value("alertLow", 0.0).toDouble();
     m_alertCooldownSec     = s.value("alertCooldownSec", 120).toInt();
@@ -348,6 +365,10 @@ void AppSettings::save()
     s.setValue("xaiModel", m_xaiModel);
     s.setValue("llmProvider", m_llmProvider);
     s.setValue("databaseDir", m_databaseDir);
+    s.setValue("planEnabled", m_planEnabled);
+    s.setValue("planBuyPrice", m_planBuyPrice);
+    s.setValue("planSellPrice", m_planSellPrice);
+    s.setValue("planInvalidPrice", m_planInvalidPrice);
     s.setValue("alertHigh", m_alertHigh);
     s.setValue("alertLow", m_alertLow);
     s.setValue("alertCooldownSec", m_alertCooldownSec);

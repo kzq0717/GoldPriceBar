@@ -425,6 +425,38 @@ void ChartWindow::setupChart() {
     return row;
   };
 
+  // 趋势状态 + 命中率
+  {
+    auto *row = new QHBoxLayout();
+    row->setSpacing(4);
+    auto *k = new QLabel(tr("趋势"), m_sidePanel);
+    k->setStyleSheet("color:#6b778c;font-size:11px;");
+    k->setFixedWidth(52);
+    m_sideTrendLabel = new QLabel(tr("—"), m_sidePanel);
+    m_sideTrendLabel->setStyleSheet(
+        "color:#e8eaed;font-size:13px;font-weight:600;");
+    m_sideTrendLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_sideTrendLabel->setWordWrap(false);
+    row->addWidget(k, 0);
+    row->addWidget(m_sideTrendLabel, 1);
+    sideLay->addLayout(row);
+  }
+  {
+    auto *row = new QHBoxLayout();
+    row->setSpacing(4);
+    auto *k = new QLabel(tr("命中"), m_sidePanel);
+    k->setStyleSheet("color:#6b778c;font-size:11px;");
+    k->setFixedWidth(52);
+    m_sideHitRateLabel = new QLabel(tr("--"), m_sidePanel);
+    m_sideHitRateLabel->setStyleSheet(
+        "color:#9aa8bc;font-size:12px;font-weight:600;");
+    m_sideHitRateLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_sideHitRateLabel->setWordWrap(false);
+    row->addWidget(k, 0);
+    row->addWidget(m_sideHitRateLabel, 1);
+    sideLay->addLayout(row);
+  }
+
   sideLay->addLayout(mkRow(tr("现价"), "#e8eaed", &m_sideCurrentLabel));
   sideLay->addLayout(mkRow(tr("今高"), "#f07178", &m_sideHighLabel));
   sideLay->addLayout(mkRow(tr("今低"), "#7fd99a", &m_sideLowLabel));
@@ -469,7 +501,6 @@ void ChartWindow::setupChart() {
   // 不再单独占一行状态框；状态写入列表首行提示或仅日志
   m_sideModeLabel = nullptr;
 
-  m_sideHitRateLabel = nullptr;
   m_sideAdviceLabel = nullptr;
   body->addWidget(m_sidePanel, 0);
   // 强制同一行内垂直方向填满
@@ -564,8 +595,11 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
 
   const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
   {
-    const qint64 intervalMs =
+    qint64 intervalMs =
         qMax(15000LL, static_cast<qint64>(AppSettings::instance().forecastIntervalSec()) * 1000LL);
+    // 宏观高影响日：拉长请求间隔，降低噪声
+    if (EventCalendar::isHighImpactDay())
+        intervalMs = qMax(intervalMs * 2, 120000LL);
     if (m_lastForecastMs == 0 || (nowMs - m_lastForecastMs) >= intervalMs) {
       if (AppSettings::instance().forecastOnline())
         requestOnlineForecast();
@@ -573,8 +607,19 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
         updateForecast();
     }
   }
+  // 交易计划触达（节流：用 tip 文本变化即可，托盘由主窗处理可选）
+  if (AppSettings::instance().planEnabled() && price > 0.0) {
+    const auto& ps = AppSettings::instance();
+    if (ps.planInvalidPrice() > 0.0 && price <= ps.planInvalidPrice()) {
+      if (m_sideTrendLabel)
+        m_sideTrendLabel->setToolTip(
+            m_sideTrendLabel->toolTip() + tr(" | 已触及计划失效价"));
+    }
+  }
+
   updateClockAndAdvice();
 }
+
 
 void ChartWindow::setCurrentMarker(qint64 xMs, double y, bool startPulse)
 {
@@ -2306,49 +2351,63 @@ void ChartWindow::updateYesterdayOverlay()
 
 QString ChartWindow::buildAdviceText(double price) const
 {
-    const QString src = AppSettings::instance().dataSource();
     QStringList tips;
+    const QString src = currentTypeCode();
 
     if (!TradingSession::isTradingNow(src)) {
-        tips << tr("【时段】当前不在示意交易时间内，不宜下单；仅可观望。");
+        tips << tr("非交易时段");
         tips << TradingSession::hoursDescription(src);
-    } else {
-        tips << tr("【时段】处于示意交易时段。");
+        return tips.join(QStringLiteral(" · "));
     }
 
-    const QString ev = EventCalendar::pendingAlertText();
-    if (!ev.isEmpty())
-        tips << tr("【宏观】%1，波动可能放大，注意风险。").arg(ev);
+    // 1) 趋势：现价 vs 分时均价
+    QString trend = tr("震荡");
+    QString reason;
+    if (m_plotPoints.size() >= 8 && price > 0.0) {
+        double sum = 0.0;
+        for (const auto& p : m_plotPoints)
+            sum += p.second;
+        const double vwap = sum / m_plotPoints.size();
+        const double n = m_plotPoints.size();
+        const int take = qMin(12, (int)n);
+        double recent = 0.0;
+        for (int i = (int)n - take; i < (int)n; ++i)
+            recent += m_plotPoints.at(i).second;
+        recent /= take;
+        const double band = qMax(0.15, vwap * 0.0008);
+        if (price > vwap + band && recent >= vwap)
+            trend = tr("偏强");
+        else if (price < vwap - band && recent <= vwap)
+            trend = tr("偏弱");
+        reason = tr("均价%1").arg(vwap, 0, 'f', 2);
+    }
+    tips << tr("趋势%1").arg(trend);
+    if (!reason.isEmpty())
+        tips << reason;
 
-    if (price > 0.0) {
-        QString code = src;
-        if (code == QStringLiteral("xau")) code = QStringLiteral("gj");
-        auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, code);
-        if (closes.size() < 5)
-            closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
-        if (closes.size() >= 5) {
-            double s5 = 0.0;
-            const int k = qMin(5, closes.size());
-            for (int i = closes.size() - k; i < closes.size(); ++i)
-                s5 += closes.at(i).second;
-            const double ma5 = s5 / k;
-            int below = 0;
-            for (const auto& c : closes)
-                if (c.second < price) ++below;
-            const double pct = 100.0 * below / closes.size();
-            if (price < ma5 * 0.998)
-                tips << tr("【技术】现价低于近5日均线，偏谨慎。");
-            else if (price > ma5 * 1.002)
-                tips << tr("【技术】现价高于近5日均线，追高需谨慎。");
-            if (pct <= 20)
-                tips << tr("【位置】处近20日偏低分位，仅作区间参考。");
-            else if (pct >= 80)
-                tips << tr("【位置】处近20日偏高分位，注意回撤风险。");
+    // 2) 计划价
+    const auto& st = AppSettings::instance();
+    if (st.planEnabled() && price > 0.0) {
+        if (st.planInvalidPrice() > 0.0) {
+            const double inv = st.planInvalidPrice();
+            if (qAbs(price - inv) / qMax(price, inv) < 0.0015 || price <= inv * 0.999)
+                tips << tr("触及失效价%1").arg(inv, 0, 'f', 2);
         }
+        if (st.planBuyPrice() > 0.0 && price <= st.planBuyPrice() * 1.001)
+            tips << tr("靠近买入观察%1").arg(st.planBuyPrice(), 0, 'f', 2);
+        if (st.planSellPrice() > 0.0 && price >= st.planSellPrice() * 0.999)
+            tips << tr("靠近卖出观察%1").arg(st.planSellPrice(), 0, 'f', 2);
     }
 
-    tips << tr("以上仅为软件规则提示，不构成投资建议。");
-    return tips.join(QStringLiteral("\n"));
+    // 3) 命中率
+    const auto& ft = ForecastTracker::instance();
+    if (ft.totalEvaluated() >= 4)
+        tips << tr("预测命中%1%").arg(ft.hitRatePercent(), 0, 'f', 0);
+
+    if (EventCalendar::isHighImpactDay())
+        tips << tr("今日宏观高波动");
+
+    return tips.join(QStringLiteral(" · "));
 }
 
 void ChartWindow::updateClockAndAdvice()
@@ -2357,21 +2416,76 @@ void ChartWindow::updateClockAndAdvice()
     if (m_sideClockLabel)
         m_sideClockLabel->setText(now.toString(QStringLiteral("HH:mm:ss")));
 
-    const QString src = AppSettings::instance().dataSource();
+    const QString src = currentTypeCode();
     const bool open = TradingSession::isTradingNow(src, now);
     if (m_sideSessionLabel) {
         const QString st = TradingSession::statusText(src, now);
         m_sideSessionLabel->setText(st);
         m_sideSessionLabel->setStyleSheet(
-            open ? QStringLiteral("color:#27ae60;font-size:11px;font-weight:bold;")
-                 : QStringLiteral("color:#e67e22;font-size:11px;font-weight:bold;"));
+            open ? QStringLiteral(
+                       "color:#7fd99a;font-size:11px;padding:2px 6px;"
+                       "background:#14301f;border-radius:8px;")
+                 : QStringLiteral(
+                       "color:#a8b3c7;font-size:11px;padding:2px 6px;"
+                       "background:#1c2433;border-radius:8px;"));
         m_sideSessionLabel->setToolTip(TradingSession::hoursDescription(src));
-        ExtremeDatabase::instance().insertSessionMark(now, src, open, st);
     }
 
     double price = 0.0;
     if (!m_plotPoints.isEmpty())
         price = m_plotPoints.last().second;
+
+    // 趋势徽章
+    if (m_sideTrendLabel) {
+        QString trend = tr("—");
+        QString color = QStringLiteral("#e8eaed");
+        if (m_plotPoints.size() >= 8 && price > 0.0) {
+            double sum = 0.0;
+            for (const auto& p : m_plotPoints)
+                sum += p.second;
+            const double vwap = sum / m_plotPoints.size();
+            const double band = qMax(0.15, vwap * 0.0008);
+            const int n = m_plotPoints.size();
+            const int take = qMin(12, n);
+            double recent = 0.0;
+            for (int i = n - take; i < n; ++i)
+                recent += m_plotPoints.at(i).second;
+            recent /= take;
+            if (price > vwap + band && recent >= vwap) {
+                trend = tr("偏强");
+                color = QStringLiteral("#7fd99a");
+            } else if (price < vwap - band && recent <= vwap) {
+                trend = tr("偏弱");
+                color = QStringLiteral("#f07178");
+            } else {
+                trend = tr("震荡");
+                color = QStringLiteral("#e8c547");
+            }
+            m_sideTrendLabel->setToolTip(
+                tr("现价 %1 · 分时均价 %2").arg(price, 0, 'f', 2).arg(vwap, 0, 'f', 2));
+        }
+        m_sideTrendLabel->setText(trend);
+        m_sideTrendLabel->setStyleSheet(
+            QStringLiteral("color:%1;font-size:13px;font-weight:600;").arg(color));
+    }
+
+    if (m_sideHitRateLabel) {
+        const auto& ft = ForecastTracker::instance();
+        if (ft.totalEvaluated() > 0)
+            m_sideHitRateLabel->setText(
+                tr("%1% (%2评)")
+                    .arg(ft.hitRatePercent(), 0, 'f', 0)
+                    .arg(ft.totalEvaluated() / 2)); // 高低各算一次
+        else
+            m_sideHitRateLabel->setText(tr("样本不足"));
+        m_sideHitRateLabel->setToolTip(
+            tr("高命中 %1% / 低命中 %2%")
+                .arg(ft.highHitRatePercent(), 0, 'f', 0)
+                .arg(ft.lowHitRatePercent(), 0, 'f', 0));
+    }
+
     if (m_sideAdviceLabel)
         m_sideAdviceLabel->setText(buildAdviceText(price));
 }
+
+

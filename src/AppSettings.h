@@ -45,6 +45,16 @@ public:
     QString resolvedDatabaseDir() const;
 
     double alertHigh() const;
+    /** 交易计划：买入观察价 / 卖出观察价 / 失效价（跌破或升破则计划作废） */
+    bool planEnabled() const;
+    void setPlanEnabled(bool on);
+    double planBuyPrice() const;
+    void setPlanBuyPrice(double v);
+    double planSellPrice() const;
+    void setPlanSellPrice(double v);
+    double planInvalidPrice() const;
+    void setPlanInvalidPrice(double v);
+
     void setAlertHigh(double v);
     double alertLow() const;
     void setAlertLow(double v);
@@ -160,6 +170,11 @@ private:
     QString m_llmProvider = "xai";
     QString m_databaseDir;
     double m_alertHigh = 0.0;
+    bool m_planEnabled = false;
+    double m_planBuyPrice = 0.0;
+    double m_planSellPrice = 0.0;
+    double m_planInvalidPrice = 0.0;
+
     double m_alertLow = 0.0;
     int m_alertCooldownSec = 120;
     bool m_trayNotifyOnAlert = true;

@@ -129,6 +129,7 @@ private:
     QLabel* m_sideLowLabel = nullptr;
     QLabel* m_sideModeLabel = nullptr;
     QListWidget* m_sideForecastList = nullptr;
+    QLabel* m_sideTrendLabel = nullptr;
     QLabel* m_sideHitRateLabel = nullptr;
     QLabel* m_sideClockLabel = nullptr;
     QLabel* m_sideSessionLabel = nullptr;
