@@ -19,6 +19,7 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QJsonObject>
 #include <QLabel>
 #include <QComboBox>
@@ -896,8 +897,7 @@ void ChartWindow::requestOnlineForecast()
     QJsonObject genCfg;
     genCfg.insert(QStringLiteral("temperature"), 0.35);
     genCfg.insert(QStringLiteral("maxOutputTokens"), 512);
-    genCfg.insert(QStringLiteral("responseMimeType"),
-                  QStringLiteral("application/json"));
+    // 不强制 responseMimeType：部分模型会返回空 parts 导致「JSON无效」
     body.insert(QStringLiteral("generationConfig"), genCfg);
     reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
   } else {
@@ -1024,18 +1024,31 @@ void ChartWindow::onOnlineForecastFinished()
     return;
   }
 
+  // ----- 从 Gemini / xAI 响应中取出模型文本 -----
   QString content;
+  QString finishReason;
   if (root.contains(QStringLiteral("candidates"))) {
     const QJsonArray cands = root.value(QStringLiteral("candidates")).toArray();
     if (!cands.isEmpty()) {
-      const QJsonArray parts = cands.at(0)
-                                   .toObject()
-                                   .value(QStringLiteral("content"))
-                                   .toObject()
-                                   .value(QStringLiteral("parts"))
-                                   .toArray();
-      if (!parts.isEmpty())
-        content = parts.at(0).toObject().value(QStringLiteral("text")).toString();
+      const QJsonObject c0 = cands.at(0).toObject();
+      finishReason = c0.value(QStringLiteral("finishReason")).toString();
+      const QJsonObject contentObj = c0.value(QStringLiteral("content")).toObject();
+      const QJsonArray parts = contentObj.value(QStringLiteral("parts")).toArray();
+      for (const QJsonValue& pv : parts) {
+        const QString tx = pv.toObject().value(QStringLiteral("text")).toString();
+        if (!tx.isEmpty()) {
+          if (!content.isEmpty())
+            content += QLatin1Char('\n');
+          content += tx;
+        }
+      }
+    }
+    const QJsonObject feedback = root.value(QStringLiteral("promptFeedback")).toObject();
+    if (content.isEmpty() && !feedback.isEmpty()) {
+      Logger::warn(QStringLiteral("Gemini blocked/empty, promptFeedback=%1")
+                       .arg(QString::fromUtf8(QJsonDocument(feedback).toJson(QJsonDocument::Compact))));
+      fallback(tr("模型拒答·本地"));
+      return;
     }
   } else if (root.contains(QStringLiteral("choices"))) {
     content = root.value(QStringLiteral("choices"))
@@ -1049,6 +1062,7 @@ void ChartWindow::onOnlineForecastFinished()
   }
 
   content = content.trimmed();
+  // 去掉 ```json ... ```
   if (content.startsWith(QStringLiteral("```"))) {
     const int nl = content.indexOf(QLatin1Char('\n'));
     if (nl > 0)
@@ -1057,30 +1071,71 @@ void ChartWindow::onOnlineForecastFinished()
       content.chop(3);
     content = content.trimmed();
   }
-
-  QJsonParseError pe2{};
-  QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
-  if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
+  // 有的模型会在 JSON 前后夹杂说明文字
+  {
     const int a = content.indexOf(QLatin1Char('{'));
     const int b = content.lastIndexOf(QLatin1Char('}'));
     if (a >= 0 && b > a)
-      jdoc = QJsonDocument::fromJson(content.mid(a, b - a + 1).toUtf8(), &pe2);
+      content = content.mid(a, b - a + 1).trimmed();
   }
-  if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
-    // content 本身可能已是 JSON 对象字符串
-    if (doc.isObject() && doc.object().contains(QStringLiteral("pred_high")))
-      jdoc = doc;
-    else {
-      fallback(tr("JSON无效·本地"));
-      return;
+
+  auto readPred = [](const QJsonObject& jo, double& outH, double& outL, QString& brief,
+                     QString& bias) -> bool {
+    auto num = [&](std::initializer_list<const char*> keys) -> double {
+      for (const char* k : keys) {
+        if (!jo.contains(QLatin1String(k)))
+          continue;
+        const QJsonValue v = jo.value(QLatin1String(k));
+        if (v.isDouble() || v.isString()) {
+          bool ok = false;
+          const double d = v.toVariant().toDouble(&ok);
+          if (ok && d > 0.0)
+            return d;
+        }
+      }
+      return 0.0;
+    };
+    outH = num({"pred_high", "predHigh", "high", "max", "day_high", "预测高"});
+    outL = num({"pred_low", "predLow", "low", "min", "day_low", "预测低"});
+    brief = jo.value(QStringLiteral("brief")).toString();
+    if (brief.isEmpty())
+      brief = jo.value(QStringLiteral("reason")).toString();
+    bias = jo.value(QStringLiteral("bias")).toString();
+    return outH > 0.0 && outL > 0.0 && outH >= outL;
+  };
+
+  double predHigh = 0.0, predLow = 0.0;
+  QString brief, bias;
+  QJsonParseError pe2{};
+  QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
+  bool ok = false;
+  if (pe2.error == QJsonParseError::NoError && jdoc.isObject())
+    ok = readPred(jdoc.object(), predHigh, predLow, brief, bias);
+
+  // 正则兜底：pred_high": 940.5
+  if (!ok) {
+    QRegularExpression reH(
+        QStringLiteral("pred[_\\s-]*high[\"'\\s:=]+([0-9]+(?:\\.[0-9]+)?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression reL(
+        QStringLiteral("pred[_\\s-]*low[\"'\\s:=]+([0-9]+(?:\\.[0-9]+)?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto mh = reH.match(content);
+    const auto ml = reL.match(content);
+    if (mh.hasMatch() && ml.hasMatch()) {
+      predHigh = mh.captured(1).toDouble();
+      predLow = ml.captured(1).toDouble();
+      ok = predHigh > 0 && predLow > 0 && predHigh >= predLow;
     }
   }
 
-  const QJsonObject jo = jdoc.object();
-  double predHigh = jo.value(QStringLiteral("pred_high")).toDouble();
-  double predLow = jo.value(QStringLiteral("pred_low")).toDouble();
-  if (predHigh <= 0 || predLow <= 0 || predHigh < predLow) {
-    fallback(tr("数值无效·本地"));
+  if (!ok) {
+    Logger::warn(
+        QStringLiteral("Online forecast JSON invalid finishReason=%1 content=%2 raw=%3")
+            .arg(finishReason,
+                 content.left(500),
+                 QString::fromUtf8(raw.left(400))));
+    fallback(tr("JSON无效·本地"));
     return;
   }
 
@@ -1111,8 +1166,6 @@ void ChartWindow::onOnlineForecastFinished()
   m_lastPredictLow = predLow;
   m_lastPredictPrice = predHigh;
   m_hasPredict = true;
-  const QString brief = jo.value(QStringLiteral("brief")).toString();
-  const QString bias = jo.value(QStringLiteral("bias")).toString();
   const QString prov = AppSettings::instance().llmProvider();
   QString tag = (prov == QStringLiteral("gemini") ? tr("Gemini") : tr("Grok"));
   if (!bias.isEmpty())
