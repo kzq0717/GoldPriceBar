@@ -447,12 +447,15 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
       m_lastPredictPrice, m_hasPredict, high, low, m_forecastModeTag);
 
   const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-  if (m_lastForecastMs == 0 ||
-      (nowMs - m_lastForecastMs) >= kForecastIntervalMs) {
-    if (AppSettings::instance().forecastOnline())
-      requestOnlineForecast();
-    else
-      updateForecast();
+  {
+    const qint64 intervalMs =
+        qMax(15000LL, static_cast<qint64>(AppSettings::instance().forecastIntervalSec()) * 1000LL);
+    if (m_lastForecastMs == 0 || (nowMs - m_lastForecastMs) >= intervalMs) {
+      if (AppSettings::instance().forecastOnline())
+        requestOnlineForecast();
+      else
+        updateForecast();
+    }
   }
   updateClockAndAdvice();
 }

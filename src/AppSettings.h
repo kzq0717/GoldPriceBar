@@ -26,6 +26,9 @@ public:
 
     bool forecastOnline() const;
     void setForecastOnline(bool online);
+    /** 大模型请求最小间隔（秒），默认 60，改后立即生效 */
+    int forecastIntervalSec() const;
+    void setForecastIntervalSec(int sec);
 
     QString xaiApiKey() const;
     void setXaiApiKey(const QString& key);
@@ -151,6 +154,7 @@ private:
     double m_opacity = 0.95;
     bool m_autoStart = false;
     bool m_forecastOnline = false;
+    int m_forecastIntervalSec = 60;
     QString m_xaiApiKey;
     QString m_xaiModel = "grok-4.6";
     QString m_llmProvider = "xai";

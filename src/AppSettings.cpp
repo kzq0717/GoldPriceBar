@@ -38,6 +38,16 @@ bool AppSettings::forecastOnline() const { return m_forecastOnline; }
 void AppSettings::setForecastOnline(bool online)
 { if (m_forecastOnline != online) { m_forecastOnline = online; emit settingsChanged(); } }
 
+int AppSettings::forecastIntervalSec() const { return m_forecastIntervalSec; }
+void AppSettings::setForecastIntervalSec(int sec)
+{
+    sec = qBound(15, sec, 3600);
+    if (m_forecastIntervalSec != sec) {
+        m_forecastIntervalSec = sec;
+        emit settingsChanged();
+    }
+}
+
 QString AppSettings::xaiApiKey() const { return m_xaiApiKey; }
 void AppSettings::setXaiApiKey(const QString& key)
 { if (m_xaiApiKey != key) { m_xaiApiKey = key; emit settingsChanged(); } }
@@ -277,6 +287,9 @@ void AppSettings::load()
     m_opacity            = s.value("opacity", 0.95).toDouble();
     m_autoStart          = s.value("autoStart", false).toBool();
     m_forecastOnline     = s.value("forecastOnline", false).toBool();
+    m_forecastIntervalSec = s.value("forecastIntervalSec", 60).toInt();
+    if (m_forecastIntervalSec < 15) m_forecastIntervalSec = 60;
+    if (m_forecastIntervalSec > 3600) m_forecastIntervalSec = 3600;
     m_xaiApiKey          = s.value("xaiApiKey", "").toString();
     m_xaiModel           = s.value("xaiModel", "grok-4.6").toString();
     m_llmProvider        = s.value("llmProvider", "xai").toString();
@@ -330,6 +343,7 @@ void AppSettings::save()
     s.setValue("opacity", m_opacity);
     s.setValue("autoStart", m_autoStart);
     s.setValue("forecastOnline", m_forecastOnline);
+    s.setValue("forecastIntervalSec", m_forecastIntervalSec);
     s.setValue("xaiApiKey", m_xaiApiKey);
     s.setValue("xaiModel", m_xaiModel);
     s.setValue("llmProvider", m_llmProvider);

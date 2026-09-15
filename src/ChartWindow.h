@@ -133,7 +133,6 @@ private:
     double m_lastPredictLow = 0.0;
     bool m_hasPredict = false;
     qint64 m_lastForecastMs = 0;
-    static constexpr int kForecastIntervalMs = 30000;
     QTimer* m_smoothTimer = nullptr;
     QTimer* m_pulseTimer = nullptr;
     qint64 m_markerXMs = 0;

@@ -219,30 +219,17 @@ void SettingsDialog::setupUi()
         m_premiumPctSpin->setSuffix(QStringLiteral(" %"));
         form->addRow(tr("溢价阈值："), m_premiumPctSpin);
 
-        m_suggestAlertBtn = new QPushButton(tr("根据近10日振幅建议高低预警"), this);
+        m_amplitudeHintLabel = new QLabel(tr("（打开本页时自动计算近10日振幅建议）"), this);
+        m_amplitudeHintLabel->setWordWrap(true);
+        m_amplitudeHintLabel->setStyleSheet(QStringLiteral("color:#8b93a7;font-size:12px;"));
+        form->addRow(tr("近10日振幅："), m_amplitudeHintLabel);
+
+        m_suggestAlertBtn = new QPushButton(tr("采用近10日振幅为高低预警"), this);
         m_suggestAlertBtn->setObjectName(QStringLiteral("wideAction"));
+        m_suggestAlertBtn->setToolTip(tr("与「宏观日程」无关：用本地日线最高/最低建议预警阈值"));
         form->addRow("", m_suggestAlertBtn);
         connect(m_suggestAlertBtn, &QPushButton::clicked, this, [this]() {
-            auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(
-                10, AppSettings::instance().dataSource());
-            if (closes.size() < 3)
-                closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
-            if (closes.size() < 3) {
-                if (m_eventSummaryLabel)
-                    m_eventSummaryLabel->setText(tr("日线样本不足，无法建议"));
-                return;
-            }
-            double mn = closes.first().second, mx = mn;
-            for (const auto& c : closes) {
-                mn = qMin(mn, c.second);
-                mx = qMax(mx, c.second);
-            }
-            m_alertLowSpin->setValue(mn);
-            m_alertHighSpin->setValue(mx);
-            if (m_eventSummaryLabel)
-                m_eventSummaryLabel->setText(
-                    tr("已建议 低 %1 / 高 %2（近%3日极值）")
-                        .arg(mn, 0, 'f', 2).arg(mx, 0, 'f', 2).arg(closes.size()));
+            refreshAmplitudeHint(true);
         });
     }
 
@@ -268,6 +255,14 @@ void SettingsDialog::setupUi()
         forecastLayout->addStretch();
         form->addRow(tr("预测模式："), forecastLayout);
         connect(m_forecastSlider, &QSlider::valueChanged, this, &SettingsDialog::onForecastSliderChanged);
+
+        m_forecastIntervalSpin = new QSpinBox(this);
+        m_forecastIntervalSpin->setRange(15, 3600);
+        m_forecastIntervalSpin->setValue(60);
+        m_forecastIntervalSpin->setSuffix(tr(" 秒"));
+        m_forecastIntervalSpin->setToolTip(tr("大模型请求最小间隔，默认 60 秒；修改保存后立即生效"));
+        form->addRow(tr("大模型请求间隔："), m_forecastIntervalSpin);
+
 
         m_providerLabel = new QLabel(tr("大模型提供方："), this);
         m_providerCombo = new QComboBox(this);
@@ -347,7 +342,9 @@ void SettingsDialog::setupUi()
         eventScroll->setMaximumHeight(220);
         eventScroll->setFrameShape(QFrame::StyledPanel);
         eventScroll->setWidget(m_eventSummaryLabel);
-        form->addRow(tr("近10日日程："), eventScroll);
+        form->addRow(tr("宏观日程（本地表，非振幅）："), eventScroll);
+        m_eventSummaryLabel->setToolTip(tr("非农/FOMC/CPI 等本地日程，与「近10日振幅预警」无关"));
+
     }
 
     // ---- 4 高级 ----
@@ -493,9 +490,12 @@ void SettingsDialog::loadFromSettings()
     m_dailyReportCheck->setChecked(settings.dailyReportEnabled());
     m_dailyReportTimeEdit->setTime(settings.dailyReportTime());
     m_eventAlertCheck->setChecked(settings.eventAlertEnabled());
+    refreshAmplitudeHint(false);
 
 
     m_forecastSlider->setValue(settings.forecastOnline() ? 1 : 0);
+    if (m_forecastIntervalSpin)
+        m_forecastIntervalSpin->setValue(settings.forecastIntervalSec());
     {
         const int pi = m_providerCombo->findData(settings.llmProvider());
         m_providerCombo->setCurrentIndex(pi >= 0 ? pi : 0);
@@ -534,6 +534,8 @@ void SettingsDialog::onAccept()
     settings.setOpacity(m_opacitySlider->value() / 100.0);
     settings.setAutoStart(m_autoStartCheck->isChecked());
     settings.setForecastOnline(m_forecastSlider->value() >= 1);
+    if (m_forecastIntervalSpin)
+        settings.setForecastIntervalSec(m_forecastIntervalSpin->value());
     if (m_providerCombo)
         settings.setLlmProvider(m_providerCombo->currentData().toString());
     settings.setXaiApiKey(m_apiKeyEdit->text().trimmed());
@@ -917,5 +919,45 @@ void SettingsDialog::applyDialogTheme()
                 "  background:#eef2f7;color:#1a1d23;}"
                 "QLabel#settingsPageTitle{color:#0f172a;}")
             + spinArrows);
+    }
+}
+
+
+void SettingsDialog::refreshAmplitudeHint(bool applyToSpins)
+{
+    if (!m_amplitudeHintLabel && !applyToSpins)
+        return;
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(
+        10, AppSettings::instance().dataSource());
+    if (closes.size() < 3)
+        closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+    if (closes.size() < 3) {
+        if (m_amplitudeHintLabel)
+            m_amplitudeHintLabel->setText(tr("日线样本不足（需导入历史或运行累积）"));
+        return;
+    }
+    double mn = closes.first().second, mx = mn;
+    double sum = 0.0;
+    for (const auto& c : closes) {
+        mn = qMin(mn, c.second);
+        mx = qMax(mx, c.second);
+        sum += c.second;
+    }
+    const double avg = sum / closes.size();
+    const double amp = mx - mn;
+    const QString text = tr("近%1日 收盘均 %2  |  最低 %3  最高 %4  |  振幅 %5 (%6%)")
+                             .arg(closes.size())
+                             .arg(avg, 0, 'f', 2)
+                             .arg(mn, 0, 'f', 2)
+                             .arg(mx, 0, 'f', 2)
+                             .arg(amp, 0, 'f', 2)
+                             .arg(avg > 0 ? amp / avg * 100.0 : 0.0, 0, 'f', 2);
+    if (m_amplitudeHintLabel)
+        m_amplitudeHintLabel->setText(text);
+    if (applyToSpins) {
+        if (m_alertLowSpin)
+            m_alertLowSpin->setValue(mn);
+        if (m_alertHighSpin)
+            m_alertHighSpin->setValue(mx);
     }
 }

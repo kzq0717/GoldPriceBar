@@ -27,6 +27,7 @@ private slots:
     void onIntervalChanged(int index);
     void onOpacityChanged(int value);
     void onForecastSliderChanged(int value);
+    void refreshAmplitudeHint(bool applyToSpins);
     void onExitApp();
     void onCheckUpdate();
     void onProviderChanged(int index);
@@ -49,6 +50,8 @@ private:
     QCheckBox* m_autoStartCheck = nullptr;
 
     QSlider* m_forecastSlider = nullptr;
+    QSpinBox* m_forecastIntervalSpin = nullptr;
+    QLabel* m_amplitudeHintLabel = nullptr;
     QLabel* m_forecastModeLabel = nullptr;
     QComboBox* m_providerCombo = nullptr;
     QLabel* m_providerLabel = nullptr;
