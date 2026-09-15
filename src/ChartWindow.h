@@ -66,9 +66,10 @@ private:
     void hideCrosshair();
     void updateHighLowMarkers();
     void updateForecast();
+    void applyLocalForecastLines(double predHigh, double predLow);
     void applyForecastPoints(const QVector<QPair<QDateTime, double>>& forecast, const QString& modeTag);
     void requestOnlineForecast();
-    void onOnlineForecastFinished(QNetworkReply* reply);
+    void onOnlineForecastFinished();
     void updateSidePanelValues(double current, double predict, bool hasPredict,
                                double high, double low, const QString& modeTag);
     int nearestPointIndex(qreal xMsecs) const;

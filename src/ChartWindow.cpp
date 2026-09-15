@@ -779,37 +779,37 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
 
 }
 
-void ChartWindow::requestOnlineForecast() {
-  if (!AppSettings::instance().forecastOnline()) {
-    return; // 由 updateForecast 本地分支处理
-  }
+void ChartWindow::requestOnlineForecast()
+{
+  if (!AppSettings::instance().forecastOnline())
+    return;
   if (m_pendingForecast)
     return;
-  if (m_plotPoints.isEmpty()) {
-    updateForecast();
+  if (m_plotPoints.isEmpty() || !isIntradayMode())
     return;
-  }
+  if (!isVisible())
+    return;
+
   if (!m_network)
     m_network = new QNetworkAccessManager(this);
 
   const QString apiKey = AppSettings::instance().xaiApiKey().trimmed();
   if (apiKey.isEmpty()) {
-    Logger::warn(QStringLiteral("Online forecast: empty API key, fallback local"));
-    // 避免递归：临时按本地算
-    const bool was = AppSettings::instance().forecastOnline();
-    Q_UNUSED(was);
-    // 直接本地算法
+    Logger::warn(QStringLiteral("Online forecast: empty API key, local only"));
     double ph = 0, pl = 0;
     if (computeDayRangeForecast(ph, pl)) {
       m_lastPredictHigh = ph;
       m_lastPredictLow = pl;
+      m_lastPredictPrice = ph;
       m_hasPredict = true;
       m_forecastModeTag = tr("无Key·本地");
       m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
       double high = 0, low = 0;
       HistoryCache::instance().todayHigh(high);
       HistoryCache::instance().todayLow(low);
-      updateSidePanelValues(m_plotPoints.last().second, ph, true, high, low, m_forecastModeTag);
+      updateSidePanelValues(m_plotPoints.last().second, ph, true, high, low,
+                            m_forecastModeTag);
+      applyLocalForecastLines(ph, pl);
     }
     return;
   }
@@ -818,11 +818,11 @@ void ChartWindow::requestOnlineForecast() {
     m_sidePredictLabel->setText(tr("请求中…"));
   if (m_sideModeLabel)
     m_sideModeLabel->setText(tr("大模型…"));
+
   Logger::info(QStringLiteral("Online forecast request provider=%1 model=%2")
                    .arg(AppSettings::instance().llmProvider(),
                         AppSettings::instance().xaiModel()));
 
-  // 构造摘要
   const int n = m_plotPoints.size();
   const int take = qMin(30, n);
   QString seriesText;
@@ -840,36 +840,36 @@ void ChartWindow::requestOnlineForecast() {
   const QString provider = AppSettings::instance().llmProvider();
   QString model = AppSettings::instance().xaiModel().trimmed();
   if (model.isEmpty())
-    model = (provider == QStringLiteral("gemini")) ? QStringLiteral("gemini-2.0-flash")
-                                                   : QStringLiteral("grok-4.6");
+    model = (provider == QStringLiteral("gemini"))
+                ? QStringLiteral("gemini-2.0-flash")
+                : QStringLiteral("grok-2-latest");
 
-  const QString nowStr = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
+  const QString nowStr =
+      QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
   const QString systemPrompt = QStringLiteral(
       "你是资深黄金/贵金属短线分析师。综合：①用户给出的今日分时与已实现高低；"
-      "②你所掌握的最新宏观与消息面知识（美元指数、美联储/利率预期、地缘冲突、央行购金、ETF 流向、重要经济数据等）；"
+      "②你所掌握的宏观与消息面知识（美元、利率、地缘、央行购金、ETF 等）；"
       "估计「今日剩余交易时段」可能触及的最高价与最低价。"
-      "只输出一个 JSON 对象，不要 Markdown、不要代码围栏。字段："
+      "只输出一个 JSON 对象，不要 Markdown。字段："
       "{\"pred_high\":number,\"pred_low\":number,\"bias\":\"偏多|偏空|震荡\","
-      "\"brief\":\"不超过40字，含消息面或技术面理由\",\"confidence\":0.0到1.0}。"
+      "\"brief\":\"不超过40字\",\"confidence\":0.0到1.0}。"
       "硬性约束：pred_high >= 已出现今高；pred_low <= 已出现今低；"
-      "预测全日振幅建议约在现价的 0.2%~1.5%（积存金人民币/克）或等价比例，避免无依据的极端跳跃。"
-      "这不是投资建议。");
+      "振幅建议约现价 0.2%~1.5%。这不是投资建议。");
 
   const QString userPrompt =
       QStringLiteral(
-          "时间(本地):%1\n品种代码:%2（zs/ms=积存金元/克，gj=伦敦金美元/盎司）\n"
-          "现价:%3\n已出现今高:%4 今低:%5\n最近分时(时间 价格):\n%6\n"
-          "请结合消息面与分时结构，输出今日剩余时段预测最高/最低 JSON。")
+          "时间(本地):%1\n品种代码:%2（zs/ms=积存金元/克，gj=伦敦金）\n"
+          "现价:%3\n已出现今高:%4 今低:%5\n最近分时:\n%6\n请输出 JSON。")
           .arg(nowStr, src)
           .arg(lastPrice, 0, 'f', 2)
           .arg(actH > 0 ? actH : lastPrice, 0, 'f', 2)
           .arg(actL > 0 ? actL : lastPrice, 0, 'f', 2)
           .arg(seriesText);
 
-
   QNetworkRequest request;
-  request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.7.7"));
-  request.setTransferTimeout(30000);
+  request.setHeader(QNetworkRequest::UserAgentHeader,
+                    QStringLiteral("GoldPriceBarLite/1.0"));
+  request.setTransferTimeout(60000);
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::NoLessSafeRedirectPolicy);
 
@@ -881,30 +881,34 @@ void ChartWindow::requestOnlineForecast() {
         "https://generativelanguage.googleapis.com/v1beta/models/%1:generateContent?key=%2")
                        .arg(model, QString::fromUtf8(QUrl::toPercentEncoding(apiKey))));
     request.setUrl(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader,
+                      QStringLiteral("application/json"));
     QJsonObject body;
     QJsonArray contents;
     QJsonObject userMsg;
     userMsg.insert(QStringLiteral("role"), QStringLiteral("user"));
     QJsonArray parts;
-    parts.append(QJsonObject{{QStringLiteral("text"), systemPrompt + QStringLiteral("\n\n") + userPrompt}});
+    parts.append(QJsonObject{
+        {QStringLiteral("text"), systemPrompt + QStringLiteral("\n\n") + userPrompt}});
     userMsg.insert(QStringLiteral("parts"), parts);
     contents.append(userMsg);
     body.insert(QStringLiteral("contents"), contents);
     QJsonObject genCfg;
     genCfg.insert(QStringLiteral("temperature"), 0.35);
     genCfg.insert(QStringLiteral("maxOutputTokens"), 512);
-    genCfg.insert(QStringLiteral("responseMimeType"), QStringLiteral("application/json"));
+    genCfg.insert(QStringLiteral("responseMimeType"),
+                  QStringLiteral("application/json"));
     body.insert(QStringLiteral("generationConfig"), genCfg);
     reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
   } else {
     request.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/chat/completions")));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader,
+                      QStringLiteral("application/json"));
     request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
     QJsonObject body;
     body.insert(QStringLiteral("model"), model);
-    body.insert(QStringLiteral("temperature"), 0.2);
-    body.insert(QStringLiteral("max_tokens"), 400);
+    body.insert(QStringLiteral("temperature"), 0.35);
+    body.insert(QStringLiteral("max_tokens"), 512);
     QJsonArray messages;
     messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
                                 {QStringLiteral("content"), systemPrompt}});
@@ -914,20 +918,67 @@ void ChartWindow::requestOnlineForecast() {
     reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
   }
 
+  if (!reply) {
+    Logger::warn(QStringLiteral("Online forecast: post returned null"));
+    return;
+  }
+
   m_pendingForecast = reply;
-  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-    onOnlineForecastFinished(reply);
-  });
+  // 用 sender()，避免 lambda 悬空 reply 指针
+  connect(reply, &QNetworkReply::finished, this, &ChartWindow::onOnlineForecastFinished);
 }
 
-void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
+void ChartWindow::applyLocalForecastLines(double predHigh, double predLow)
+{
+  if (m_forecastSeries) {
+    m_forecastSeries->clear();
+    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+    m_forecastSeries->append(t0.toMSecsSinceEpoch(), predHigh);
+    m_forecastSeries->append(t1.toMSecsSinceEpoch(), predHigh);
+  }
+  if (m_forecastLowSeries) {
+    m_forecastLowSeries->clear();
+    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+    m_forecastLowSeries->append(t0.toMSecsSinceEpoch(), predLow);
+    m_forecastLowSeries->append(t1.toMSecsSinceEpoch(), predLow);
+  }
+}
+
+void ChartWindow::onOnlineForecastFinished()
+{
+  QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
   if (!reply)
     return;
+
+  // 先摘掉 pending，避免 closeEvent 再次 abort 同一对象
   if (m_pendingForecast.data() == reply)
     m_pendingForecast.clear();
 
+  const auto err = reply->error();
+  QByteArray raw;
+  if (reply->isOpen())
+    raw = reply->readAll();
+  else if (err == QNetworkReply::NoError)
+    Logger::warn(QStringLiteral("Online forecast: reply not open"));
+
+  reply->disconnect(this);
+  reply->deleteLater();
+
+  // 主动取消（关窗等）：不要再改 UI，避免崩溃
+  if (err == QNetworkReply::OperationCanceledError) {
+    Logger::info(QStringLiteral("Online forecast canceled (ignored)"));
+    return;
+  }
+
   auto fallback = [this](const QString& tag) {
     Logger::warn(QStringLiteral("Online forecast fallback: %1").arg(tag));
+    if (!isVisible() || !isIntradayMode() || m_plotPoints.isEmpty()) {
+      if (m_sideModeLabel)
+        m_sideModeLabel->setText(tag);
+      return;
+    }
     double ph = 0, pl = 0;
     if (!computeDayRangeForecast(ph, pl)) {
       m_hasPredict = false;
@@ -943,52 +994,18 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     m_hasPredict = true;
     m_forecastModeTag = tag;
     m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
-    if (m_forecastSeries) {
-      m_forecastSeries->clear();
-      const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-      const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-      m_forecastSeries->append(t0.toMSecsSinceEpoch(), ph);
-      m_forecastSeries->append(t1.toMSecsSinceEpoch(), ph);
-    }
-    if (m_forecastLowSeries) {
-      m_forecastLowSeries->clear();
-      const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-      const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-      m_forecastLowSeries->append(t0.toMSecsSinceEpoch(), pl);
-      m_forecastLowSeries->append(t1.toMSecsSinceEpoch(), pl);
-    }
+    applyLocalForecastLines(ph, pl);
     double high = 0, low = 0;
     HistoryCache::instance().todayHigh(high);
     HistoryCache::instance().todayLow(low);
-    updateSidePanelValues(m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second,
-                          ph, true, high, low, tag);
+    updateSidePanelValues(m_plotPoints.last().second, ph, true, high, low, tag);
   };
 
-  if (reply->error() != QNetworkReply::NoError) {
-    const QString err = reply->errorString();
-    const QByteArray errBody = reply->readAll();
+  if (err != QNetworkReply::NoError) {
     Logger::warn(QStringLiteral("Online forecast HTTP error: %1 body=%2")
-                     .arg(err, QString::fromUtf8(errBody.left(400))));
-    reply->deleteLater();
+                     .arg(reply->errorString(), QString::fromUtf8(raw.left(400))));
     fallback(tr("在线失败·本地"));
     return;
-  }
-
-  const QByteArray raw = reply->readAll();
-  reply->deleteLater();
-  // Gemini 业务错误：HTTP 200 但带 error 对象
-  {
-    QJsonParseError pe0{};
-    const QJsonDocument d0 = QJsonDocument::fromJson(raw, &pe0);
-    if (pe0.error == QJsonParseError::NoError && d0.isObject()) {
-      const QJsonObject eo = d0.object().value(QStringLiteral("error")).toObject();
-      if (!eo.isEmpty()) {
-        const QString msg = eo.value(QStringLiteral("message")).toString();
-        Logger::warn(QStringLiteral("Online forecast API error: %1").arg(msg));
-        fallback(tr("API错误·本地"));
-        return;
-      }
-    }
   }
 
   QJsonParseError pe{};
@@ -998,27 +1015,40 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     return;
   }
 
-  // 取出模型文本
-  QString content;
   const QJsonObject root = doc.object();
+  if (root.contains(QStringLiteral("error"))) {
+    const QString msg =
+        root.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString();
+    Logger::warn(QStringLiteral("Online forecast API error: %1").arg(msg));
+    fallback(tr("API错误·本地"));
+    return;
+  }
+
+  QString content;
   if (root.contains(QStringLiteral("candidates"))) {
-    // Gemini
     const QJsonArray cands = root.value(QStringLiteral("candidates")).toArray();
     if (!cands.isEmpty()) {
-      const QJsonArray parts = cands.at(0).toObject()
-                                   .value(QStringLiteral("content")).toObject()
-                                   .value(QStringLiteral("parts")).toArray();
+      const QJsonArray parts = cands.at(0)
+                                   .toObject()
+                                   .value(QStringLiteral("content"))
+                                   .toObject()
+                                   .value(QStringLiteral("parts"))
+                                   .toArray();
       if (!parts.isEmpty())
         content = parts.at(0).toObject().value(QStringLiteral("text")).toString();
     }
   } else if (root.contains(QStringLiteral("choices"))) {
-    content = root.value(QStringLiteral("choices")).toArray().at(0).toObject()
-                  .value(QStringLiteral("message")).toObject()
-                  .value(QStringLiteral("content")).toString();
+    content = root.value(QStringLiteral("choices"))
+                  .toArray()
+                  .at(0)
+                  .toObject()
+                  .value(QStringLiteral("message"))
+                  .toObject()
+                  .value(QStringLiteral("content"))
+                  .toString();
   }
 
   content = content.trimmed();
-  // 剥离可能的 ```json 包裹
   if (content.startsWith(QStringLiteral("```"))) {
     const int nl = content.indexOf(QLatin1Char('\n'));
     if (nl > 0)
@@ -1031,15 +1061,19 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
   QJsonParseError pe2{};
   QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
   if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
-    // 尝试截取第一个 { ... }
     const int a = content.indexOf(QLatin1Char('{'));
     const int b = content.lastIndexOf(QLatin1Char('}'));
     if (a >= 0 && b > a)
       jdoc = QJsonDocument::fromJson(content.mid(a, b - a + 1).toUtf8(), &pe2);
   }
   if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
-    fallback(tr("JSON无效·本地"));
-    return;
+    // content 本身可能已是 JSON 对象字符串
+    if (doc.isObject() && doc.object().contains(QStringLiteral("pred_high")))
+      jdoc = doc;
+    else {
+      fallback(tr("JSON无效·本地"));
+      return;
+    }
   }
 
   const QJsonObject jo = jdoc.object();
@@ -1059,7 +1093,6 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     predLow = qMin(predLow, actL);
   if (!m_plotPoints.isEmpty()) {
     const double px = m_plotPoints.last().second;
-    // 大模型允许约 ±1.8% 扩张，避免结果被压成与今高/今低相同
     const double hard = px * 0.018;
     predHigh = qMin(predHigh, qMax(actH > 0 ? actH : px, px) + hard);
     predLow = qMax(predLow, qMin(actL > 0 ? actL : px, px) - hard);
@@ -1088,26 +1121,13 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     tag += QStringLiteral("·") + brief.left(28);
   m_forecastModeTag = tag;
 
-  if (m_forecastSeries) {
-    m_forecastSeries->clear();
-    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-    m_forecastSeries->append(t0.toMSecsSinceEpoch(), predHigh);
-    m_forecastSeries->append(t1.toMSecsSinceEpoch(), predHigh);
-  }
-  if (m_forecastLowSeries) {
-    m_forecastLowSeries->clear();
-    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-    m_forecastLowSeries->append(t0.toMSecsSinceEpoch(), predLow);
-    m_forecastLowSeries->append(t1.toMSecsSinceEpoch(), predLow);
-  }
+  applyLocalForecastLines(predHigh, predLow);
 
   ForecastTracker::instance().recordDayRange(
       QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
   ExtremeDatabase::instance().insertForecastLog(
-      QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag,
-      predHigh, predLow, m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second);
+      QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag, predHigh,
+      predLow, m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second);
 
   m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
   double high = 0, low = 0;
@@ -1115,6 +1135,10 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
   HistoryCache::instance().todayLow(low);
   const double cur = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
   updateSidePanelValues(cur, predHigh, true, high, low, m_forecastModeTag);
+  Logger::info(QStringLiteral("Online forecast OK high=%1 low=%2 tag=%3")
+                   .arg(predHigh, 0, 'f', 2)
+                   .arg(predLow, 0, 'f', 2)
+                   .arg(tag));
 }
 
 void ChartWindow::updateHighLowMarkers() {
@@ -1141,12 +1165,7 @@ void ChartWindow::updateHighLowMarkers() {
   m_highSeries->append(hx, hp.second);
   m_lowSeries->append(lx, lp.second);
 
-  if (m_axisX && m_axisY) {
-    m_highSeries->attachAxis(m_axisX);
-    m_highSeries->attachAxis(m_axisY);
-    m_lowSeries->attachAxis(m_axisX);
-    m_lowSeries->attachAxis(m_axisY);
-  }
+  // 坐标轴在 setupChart 已绑定，勿重复 attach（会刷屏警告）
   m_highSeries->setVisible(true);
   m_lowSeries->setVisible(true);
 
@@ -1443,11 +1462,14 @@ void ChartWindow::resizeEvent(QResizeEvent *event) {
 
 void ChartWindow::closeEvent(QCloseEvent *event) {
   if (m_pendingChart) {
+    m_pendingChart->disconnect(this);
     m_pendingChart->abort();
     m_pendingChart->deleteLater();
     m_pendingChart.clear();
   }
   if (m_pendingForecast) {
+    // 断开 finished，避免 abort 后回调里再读/改 UI 导致崩溃
+    m_pendingForecast->disconnect(this);
     m_pendingForecast->abort();
     m_pendingForecast->deleteLater();
     m_pendingForecast.clear();
@@ -1918,15 +1940,8 @@ void ChartWindow::updateMovingAverages()
     if (m_axisY && pxMax > pxMin)
         m_axisY->setRange(yLo, yHi);
 
-    if (m_chart && m_axisX && m_axisY) {
-        for (QLineSeries* s : {m_ma5Series, m_ma10Series, m_ma20Series}) {
-            if (!s)
-                continue;
-            s->attachAxis(m_axisX);
-            s->attachAxis(m_axisY);
-        }
+    if (m_chart)
         m_chart->update();
-    }
     if (m_chartView)
         m_chartView->viewport()->update();
 }
