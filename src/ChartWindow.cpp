@@ -295,64 +295,89 @@ void ChartWindow::setupChart() {
   body->addWidget(m_chartView, 1);
 
   m_sidePanel = new QFrame(this);
-  m_sidePanel->setFixedWidth(132);
-  // 垂直扩展，高度与左侧 chartView 对齐
+  m_sidePanel->setFixedWidth(188);
   m_sidePanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   m_sidePanel->setMinimumHeight(0);
   m_sidePanel->setStyleSheet(
-      "QFrame{background:#161b27;border:1px solid #2a3347;border-radius:14px;}"
-      "QLabel{color:#8b93a7;}");
+      "QFrame#sidePanel{"
+      "  background:#12161f;"
+      "  border:1px solid #2a3347;"
+      "  border-radius:12px;"
+      "}"
+      "QLabel{background:transparent;}");
+  m_sidePanel->setObjectName(QStringLiteral("sidePanel"));
   auto *sideLay = new QVBoxLayout(m_sidePanel);
-  sideLay->setContentsMargins(12, 16, 12, 16);
-  sideLay->setSpacing(8);
+  sideLay->setContentsMargins(10, 10, 10, 10);
+  sideLay->setSpacing(6);
 
-  auto mkTitle = [](const QString &s) {
-    auto *l = new QLabel(s);
-    l->setStyleSheet("color:#5c6b77;font-size:11px;");
-    return l;
-  };
-  auto mkValue = [](const QString &s, const QString &color) {
-    auto *l = new QLabel(s);
-    l->setStyleSheet(
-        QStringLiteral("color:%1;font-size:16px;font-weight:bold;").arg(color));
-    l->setWordWrap(true);
-    return l;
-  };
-
+  // 顶栏：时间 + 交易时段（右上角风格）
+  auto *head = new QHBoxLayout();
+  head->setSpacing(6);
   m_sideClockLabel = new QLabel(QDateTime::currentDateTime().toString("HH:mm:ss"), m_sidePanel);
-  m_sideClockLabel->setStyleSheet("color:#0052d9;font-size:16px;font-weight:bold;");
-  m_sideClockLabel->setAlignment(Qt::AlignCenter);
-  sideLay->addWidget(m_sideClockLabel);
+  m_sideClockLabel->setStyleSheet(
+      "color:#5b8def;font-size:13px;font-weight:600;font-family:Consolas,monospace;");
+  m_sideClockLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   m_sideSessionLabel = new QLabel(tr("—"), m_sidePanel);
-  m_sideSessionLabel->setStyleSheet("color:#888;font-size:11px;");
-  m_sideSessionLabel->setWordWrap(true);
-  m_sideSessionLabel->setAlignment(Qt::AlignCenter);
-  sideLay->addWidget(m_sideSessionLabel);
+  m_sideSessionLabel->setStyleSheet(
+      "color:#a8b3c7;font-size:11px;padding:2px 6px;"
+      "background:#1c2433;border-radius:8px;");
+  m_sideSessionLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  m_sideSessionLabel->setWordWrap(false);
+  head->addWidget(m_sideClockLabel, 1);
+  head->addWidget(m_sideSessionLabel, 0);
+  sideLay->addLayout(head);
 
-  sideLay->addWidget(mkTitle(tr("当前价")));
-  m_sideCurrentLabel = mkValue(tr("--.--"), "#212529");
-  sideLay->addWidget(m_sideCurrentLabel);
+  auto sep = [m_sidePanel = m_sidePanel]() {
+    auto *line = new QFrame(m_sidePanel);
+    line->setFrameShape(QFrame::HLine);
+    line->setStyleSheet("color:#2a3347;max-height:1px;background:#2a3347;");
+    return line;
+  };
+  sideLay->addWidget(sep());
 
-  sideLay->addWidget(mkTitle(tr("预测高低")));
-  m_sidePredictLabel = mkValue(tr("--.--"), "#e74c3c");
-  sideLay->addWidget(m_sidePredictLabel);
+  auto mkRow = [m_sidePanel = m_sidePanel](const QString &name, const QString &valColor,
+                                          QLabel **valueOut) {
+    auto *row = new QHBoxLayout();
+    row->setSpacing(4);
+    auto *k = new QLabel(name, m_sidePanel);
+    k->setStyleSheet("color:#6b778c;font-size:11px;");
+    k->setFixedWidth(52);
+    auto *v = new QLabel(QStringLiteral("--.--"), m_sidePanel);
+    v->setStyleSheet(QStringLiteral(
+                         "color:%1;font-size:14px;font-weight:600;"
+                         "font-family:Consolas,'Microsoft YaHei UI',monospace;")
+                         .arg(valColor));
+    v->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    v->setWordWrap(false);
+    v->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    row->addWidget(k, 0);
+    row->addWidget(v, 1);
+    *valueOut = v;
+    return row;
+  };
 
-  m_sideModeLabel = new QLabel(tr("本地"), m_sidePanel);
-  m_sideModeLabel->setStyleSheet("color:#888;font-size:10px;");
+  sideLay->addLayout(mkRow(tr("现价"), "#e8eaed", &m_sideCurrentLabel));
+  sideLay->addLayout(mkRow(tr("今高"), "#f07178", &m_sideHighLabel));
+  sideLay->addLayout(mkRow(tr("今低"), "#7fd99a", &m_sideLowLabel));
+  sideLay->addWidget(sep());
+  sideLay->addLayout(mkRow(tr("预高"), "#ff8b7a", &m_sidePredictHighLabel));
+  sideLay->addLayout(mkRow(tr("预低"), "#6bcB8a", &m_sidePredictLowLabel));
+  // 兼容旧字段：合并预测仍写 m_sidePredictLabel（可指向预高）
+  m_sidePredictLabel = m_sidePredictHighLabel;
+
+  m_sideModeLabel = new QLabel(tr("本地推演"), m_sidePanel);
+  m_sideModeLabel->setStyleSheet(
+      "color:#8b9bb4;font-size:11px;padding:6px 8px;"
+      "background:#1a2030;border-radius:8px;border:1px solid #2a3347;");
   m_sideModeLabel->setWordWrap(true);
-  sideLay->addWidget(m_sideModeLabel);
+  m_sideModeLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+  m_sideModeLabel->setMinimumHeight(48);
+  m_sideModeLabel->setMaximumHeight(72);
+  m_sideModeLabel->setToolTip(tr("预测来源与简要分析"));
+  sideLay->addWidget(m_sideModeLabel, 0);
 
-  // 命中率等次要信息不再占右侧栏
   m_sideHitRateLabel = nullptr;
-
-  sideLay->addSpacing(6);
-  sideLay->addWidget(mkTitle(tr("今高")));
-  m_sideHighLabel = mkValue(tr("--.--"), "#e74c3c");
-  sideLay->addWidget(m_sideHighLabel);
-
-  sideLay->addWidget(mkTitle(tr("今低")));
-  m_sideLowLabel = mkValue(tr("--.--"), "#27ae60");
-  sideLay->addWidget(m_sideLowLabel);
+  m_sideAdviceLabel = nullptr;
 
   sideLay->addStretch(1);
   body->addWidget(m_sidePanel, 0);
@@ -745,42 +770,62 @@ void ChartWindow::applyForecastPoints(
 void ChartWindow::updateSidePanelValues(double current, double predict,
                                         bool hasPredict, double high,
                                         double low, const QString &modeTag) {
-  if (m_sideCurrentLabel) {
-    if (current > 0.0)
-      m_sideCurrentLabel->setText(QString::number(current, 'f', 2));
-    else
-      m_sideCurrentLabel->setText(tr("--.--"));
-  }
-  if (m_sidePredictLabel) {
-    if (hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0)
-      m_sidePredictLabel->setText(
-          tr("高 %1  低 %2")
-              .arg(m_lastPredictHigh, 0, 'f', 2)
-              .arg(m_lastPredictLow, 0, 'f', 2));
-    else if (hasPredict && predict > 0.0)
-      m_sidePredictLabel->setText(QString::number(predict, 'f', 2));
-    else
-      m_sidePredictLabel->setText(tr("--.--"));
-  }
-  if (m_sideHighLabel) {
-    if (high > 0.0)
-      m_sideHighLabel->setText(QString::number(high, 'f', 2));
-    else
-      m_sideHighLabel->setText(tr("--.--"));
-  }
-  if (m_sideLowLabel) {
-    if (low > 0.0)
-      m_sideLowLabel->setText(QString::number(low, 'f', 2));
-    else
-      m_sideLowLabel->setText(tr("--.--"));
-  }
-  if (m_sideModeLabel) {
-    QString tag = modeTag.isEmpty() ? tr("本地") : modeTag;
-    if (tag.size() > 28)
-      tag = tag.left(28) + QStringLiteral("…");
-    m_sideModeLabel->setText(tag);
+  auto setNum = [](QLabel *lab, double v) {
+    if (!lab)
+      return;
+    lab->setText(v > 0.0 ? QString::number(v, 'f', 2) : QStringLiteral("--.--"));
+  };
+  setNum(m_sideCurrentLabel, current);
+  setNum(m_sideHighLabel, high);
+  setNum(m_sideLowLabel, low);
+
+  if (hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
+    setNum(m_sidePredictHighLabel, m_lastPredictHigh);
+    setNum(m_sidePredictLowLabel, m_lastPredictLow);
+  } else if (hasPredict && predict > 0.0) {
+    setNum(m_sidePredictHighLabel, predict);
+    if (m_sidePredictLowLabel)
+      m_sidePredictLowLabel->setText(QStringLiteral("--.--"));
+  } else {
+    setNum(m_sidePredictHighLabel, 0);
+    setNum(m_sidePredictLowLabel, 0);
   }
 
+  if (m_sideModeLabel) {
+    const QString tag = modeTag.isEmpty() ? tr("本地推演") : modeTag;
+    m_sideModeLabel->setText(tag);
+    m_sideModeLabel->setToolTip(tag);
+  }
+
+  // 预测变化时同步刷新图表标题（今高/今低 + 预测高/低）
+  if (isIntradayMode())
+    refreshIntradayTitle();
+}
+
+void ChartWindow::refreshIntradayTitle()
+{
+  if (!m_chart || !isIntradayMode())
+    return;
+  double high = 0.0, low = 0.0;
+  HistoryCache::instance().todayHigh(high);
+  HistoryCache::instance().todayLow(low);
+  const QString typeName =
+      currentTypeCode() == QStringLiteral("gj")
+          ? tr("伦敦金")
+          : (currentTypeCode() == QStringLiteral("ms") ? tr("民生") : tr("浙商"));
+  const int n = m_plotPoints.size();
+  QString predText;
+  if (m_hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
+    predText = tr("  |  预测高 %1  预测低 %2")
+                   .arg(m_lastPredictHigh, 0, 'f', 2)
+                   .arg(m_lastPredictLow, 0, 'f', 2);
+  }
+  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高 %3  今低 %4%5")
+                        .arg(typeName)
+                        .arg(n)
+                        .arg(high, 0, 'f', 2)
+                        .arg(low, 0, 'f', 2)
+                        .arg(predText));
 }
 
 void ChartWindow::requestOnlineForecast()
@@ -1516,25 +1561,7 @@ void ChartWindow::updateSeries() {
   HistoryCache::instance().todayHigh(high);
   HistoryCache::instance().todayLow(low);
 
-  const QString typeName =
-      currentTypeCode() == QStringLiteral("gj")
-          ? tr("伦敦金")
-          : (currentTypeCode() == QStringLiteral("ms") ? tr("民生")
-                                                       : tr("浙商"));
-
-  QString predText;
-  if (m_hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
-    predText = tr("  |  预测高 %1  预测低 %2")
-                   .arg(m_lastPredictHigh, 0, 'f', 2)
-                   .arg(m_lastPredictLow, 0, 'f', 2);
-  }
-
-  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高 %3  今低 %4%5")
-                        .arg(typeName)
-                        .arg(n)
-                        .arg(high, 0, 'f', 2)
-                        .arg(low, 0, 'f', 2)
-                        .arg(predText));
+  refreshIntradayTitle();
 
   updateMovingAverages();
   updateYesterdayOverlay();
@@ -1854,28 +1881,50 @@ void ChartWindow::applyChartTheme()
             m_currentSeries->setColor(QColor(255, 160, 160));
             m_currentSeries->setBorderColor(QColor(220, 80, 80));
         }
-        if (m_sideCurrentLabel)
-            m_sideCurrentLabel->setStyleSheet("color:#212529;font-size:16px;font-weight:bold;");
-        if (m_sidePredictLabel)
-            m_sidePredictLabel->setStyleSheet("color:#e74c3c;font-size:16px;font-weight:bold;");
-        if (m_sideHighLabel)
-            m_sideHighLabel->setStyleSheet("color:#e74c3c;font-size:16px;font-weight:bold;");
-        if (m_sideLowLabel)
-            m_sideLowLabel->setStyleSheet("color:#27ae60;font-size:16px;font-weight:bold;");
-        if (m_sideModeLabel)
-            m_sideModeLabel->setStyleSheet("color:#888;font-size:10px;");
-        if (m_sideClockLabel)
-            m_sideClockLabel->setStyleSheet("color:#0052d9;font-size:16px;font-weight:bold;");
-        if (m_sideAdviceLabel)
-            m_sideAdviceLabel->setStyleSheet("color:#666;font-size:11px;");
-        if (m_sideHitRateLabel)
-            m_sideHitRateLabel->setStyleSheet("color:#0052d9;font-size:14px;font-weight:bold;");
+        // 侧栏始终深色卡片风格，避免浅色主题把数字刷成深色导致看不清
+        applySidePanelChrome();
     }
 
     if (m_chart->legend()) {
         m_chart->legend()->setLabelColor(dark ? QColor(220, 220, 220) : QColor(60, 60, 60));
         m_chart->legend()->setBackgroundVisible(false);
     }
+    applySidePanelChrome();
+}
+
+
+void ChartWindow::applySidePanelChrome()
+{
+    auto valStyle = [](const QString& color) {
+        return QStringLiteral(
+                   "color:%1;font-size:14px;font-weight:600;"
+                   "font-family:Consolas,'Microsoft YaHei UI',monospace;")
+            .arg(color);
+    };
+    if (m_sideClockLabel)
+        m_sideClockLabel->setStyleSheet(
+            "color:#5b8def;font-size:13px;font-weight:600;font-family:Consolas,monospace;");
+    if (m_sideSessionLabel)
+        m_sideSessionLabel->setStyleSheet(
+            "color:#a8b3c7;font-size:11px;padding:2px 6px;background:#1c2433;border-radius:8px;");
+    if (m_sideCurrentLabel)
+        m_sideCurrentLabel->setStyleSheet(valStyle("#e8eaed"));
+    if (m_sideHighLabel)
+        m_sideHighLabel->setStyleSheet(valStyle("#f07178"));
+    if (m_sideLowLabel)
+        m_sideLowLabel->setStyleSheet(valStyle("#7fd99a"));
+    if (m_sidePredictHighLabel)
+        m_sidePredictHighLabel->setStyleSheet(valStyle("#ff8b7a"));
+    if (m_sidePredictLowLabel)
+        m_sidePredictLowLabel->setStyleSheet(valStyle("#6bcb8a"));
+    if (m_sideModeLabel)
+        m_sideModeLabel->setStyleSheet(
+            "color:#8b9bb4;font-size:11px;padding:6px 8px;"
+            "background:#1a2030;border-radius:8px;border:1px solid #2a3347;");
+    if (m_sidePanel)
+        m_sidePanel->setStyleSheet(
+            "QFrame#sidePanel{background:#12161f;border:1px solid #2a3347;border-radius:12px;}"
+            "QLabel{background:transparent;}");
 }
 
 void ChartWindow::onMaOptionChanged()

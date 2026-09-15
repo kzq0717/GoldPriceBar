@@ -70,6 +70,8 @@ private:
     void applyForecastPoints(const QVector<QPair<QDateTime, double>>& forecast, const QString& modeTag);
     void requestOnlineForecast();
     void onOnlineForecastFinished();
+    void refreshIntradayTitle();
+    void applySidePanelChrome();
     void updateSidePanelValues(double current, double predict, bool hasPredict,
                                double high, double low, const QString& modeTag);
     int nearestPointIndex(qreal xMsecs) const;
@@ -112,6 +114,8 @@ private:
     QFrame* m_sidePanel = nullptr;
     QLabel* m_sideCurrentLabel = nullptr;
     QLabel* m_sidePredictLabel = nullptr;
+    QLabel* m_sidePredictHighLabel = nullptr;
+    QLabel* m_sidePredictLowLabel = nullptr;
     QLabel* m_sideHighLabel = nullptr;
     QLabel* m_sideLowLabel = nullptr;
     QLabel* m_sideModeLabel = nullptr;
