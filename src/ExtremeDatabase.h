@@ -29,6 +29,8 @@ struct ForecastLogEntry {
     double predHigh = 0;
     double predLow = 0;
     double basePrice = 0;
+    double actualHigh = 0;
+    double actualLow = 0;
 };
 
 class ExtremeDatabase : public QObject
