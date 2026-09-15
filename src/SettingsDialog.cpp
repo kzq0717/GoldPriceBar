@@ -120,11 +120,26 @@ void SettingsDialog::setupUi()
         form->addRow(tr("刷新频率："), m_intervalCombo);
 
         m_sourceCombo = new QComboBox(this);
-        m_sourceCombo->setMinimumWidth(200);
+        m_sourceCombo->setMinimumWidth(220);
+        // 与 jin.20021002.xyz / GoldAccumulationRealTimeMonitor 一致
         m_sourceCombo->addItem(tr("浙商积存金"), "zs");
         m_sourceCombo->addItem(tr("民生积存金"), "ms");
+        m_sourceCombo->addItem(tr("兴业积存金"), "cib");
+        m_sourceCombo->addItem(tr("工商积存金"), "icbc");
+        m_sourceCombo->addItem(tr("招商积存金"), "cmb");
+        m_sourceCombo->addItem(tr("广发积存金"), "cgb");
+        m_sourceCombo->addItem(tr("农业积存金"), "abc");
+        m_sourceCombo->addItem(tr("建设积存金"), "ccb");
+        m_sourceCombo->addItem(tr("中国银行积存金"), "boc");
+        m_sourceCombo->addItem(tr("京东24h金"), "jd");
         m_sourceCombo->addItem(tr("伦敦金 (XAU/USD)"), "gj");
         form->addRow(tr("数据源："), m_sourceCombo);
+        auto* srcHint = new QLabel(
+            tr("主源同公开聚合接口 type=码；招商失败时可走招行官方 Au99.99。"
+               "历史分时仍依赖本地采样/chart，脚本不提供历史查询。"), this);
+        srcHint->setWordWrap(true);
+        srcHint->setStyleSheet("color:#8b93a7;font-size:11px;");
+        form->addRow("", srcHint);
 
         auto* opacityLayout = new QHBoxLayout;
         m_opacitySlider = new QSlider(Qt::Horizontal, this);

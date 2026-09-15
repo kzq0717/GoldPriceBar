@@ -96,14 +96,15 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
 
 }
 
-QString ChartWindow::currentTypeCode() const {
-  const QString source = AppSettings::instance().dataSource();
-  if (source == QStringLiteral("ms"))
-    return QStringLiteral("ms");
-  if (source == QStringLiteral("gj") || source == QStringLiteral("xau"))
-    return QStringLiteral("gj");
-  return QStringLiteral("zs");
+QString ChartWindow::currentTypeCode() const
+{
+    return AppSettings::instance().dataSource().trimmed().isEmpty()
+               ? QStringLiteral("zs")
+               : (AppSettings::instance().dataSource() == QStringLiteral("xau")
+                      ? QStringLiteral("gj")
+                      : AppSettings::instance().dataSource().trimmed().toLower());
 }
+
 
 void ChartWindow::setupChart() {
   m_series = new QLineSeries(this);

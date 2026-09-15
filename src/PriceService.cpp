@@ -44,11 +44,18 @@ PriceService::~PriceService()
 
 QString PriceService::currentTypeCode() const
 {
-    const QString source = AppSettings::instance().dataSource();
-    if (source == QStringLiteral("ms"))
-        return QStringLiteral("ms");
-    if (source == QStringLiteral("gj") || source == QStringLiteral("xau"))
-        return QStringLiteral("gj");
+    // 与 jin.20021002.xyz / 油猴脚本约定一致的 type 码
+    static const QStringList kKnown = {
+        QStringLiteral("ms"),  QStringLiteral("zs"),  QStringLiteral("cib"),
+        QStringLiteral("icbc"),QStringLiteral("cmb"), QStringLiteral("cgb"),
+        QStringLiteral("abc"), QStringLiteral("ccb"), QStringLiteral("boc"),
+        QStringLiteral("jd"),  QStringLiteral("gj"),  QStringLiteral("xau"),
+    };
+    QString source = AppSettings::instance().dataSource().trimmed().toLower();
+    if (source == QStringLiteral("xau"))
+        source = QStringLiteral("gj");
+    if (kKnown.contains(source))
+        return source;
     return QStringLiteral("zs");
 }
 
@@ -285,11 +292,20 @@ void PriceService::requestPriceFromBackup(int backupIndex)
     const QString type = currentTypeCode();
 
     if (backupIndex == 0) {
+        // 主源：jin 聚合（与 GoldAccumulationRealTimeMonitor 相同 apiBase）
         url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
-    } else if (backupIndex == 1) {
+    } else if (type == QStringLiteral("cmb") && backupIndex == 1) {
+        // 招行官方公开接口（油猴脚本备用路径）
+        url = QUrl(QStringLiteral("https://m.cmbchina.com/api/rate/gold"));
+    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd"))
+               && backupIndex == 1) {
         url = QUrl(AppSettings::instance().backupPriceUrl1());
-    } else if (backupIndex == 2) {
+    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd"))
+               && backupIndex == 2) {
         url = QUrl(AppSettings::instance().backupPriceUrl2());
+    } else if (type == QStringLiteral("cmb") && backupIndex == 2) {
+        // 招行失败后再试国际金仅作趋势参考
+        url = QUrl(AppSettings::instance().backupPriceUrl1());
     } else {
         ++m_consecutiveFail;
         emit fetchFailed(tr("全部数据源失败"));
@@ -435,8 +451,33 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
     }
 
     if (tried == 1) {
-        // gold-api.com
+        // 招行官方 Au99.99 或 gold-api.com
         if (!doc.isObject()) { tryNext(); return; }
+        if (currentTypeCode() == QStringLiteral("cmb")) {
+            const QJsonObject root = doc.object();
+            const QJsonArray items = root.value(QStringLiteral("body"))
+                                         .toObject()
+                                         .value(QStringLiteral("data"))
+                                         .toArray();
+            double price = 0, change = 0;
+            for (const QJsonValue& v : items) {
+                const QJsonObject it = v.toObject();
+                if (it.value(QStringLiteral("variety")).toString()
+                    == QStringLiteral("Au99.99")) {
+                    price = it.value(QStringLiteral("curPrice")).toString().toDouble();
+                    if (price <= 0)
+                        price = it.value(QStringLiteral("curPrice")).toDouble();
+                    change = it.value(QStringLiteral("upDown")).toString().toDouble();
+                    if (qFuzzyIsNull(change))
+                        change = it.value(QStringLiteral("upDown")).toDouble();
+                    break;
+                }
+            }
+            if (!applyPrice(price, change, tr("招商银行·官方"), QStringLiteral("¥")))
+                tryNext();
+            return;
+        }
+        // gold-api.com
         const QJsonObject o = doc.object();
         const double price = o.value(QStringLiteral("price")).toDouble();
         if (!applyPrice(price, 0.0, tr("伦敦金·备用gold-api"), QStringLiteral("USD")))
