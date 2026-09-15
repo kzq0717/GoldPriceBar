@@ -613,7 +613,24 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
     HistoryCache::instance().todayHigh(actHigh);
     HistoryCache::instance().todayLow(actLow);
     const QTime nowT = QTime::currentTime();
-    const double dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+    // 交易时段进度：积存金 09:00–23:30；伦敦金近似 0–24
+    double dayFrac = 0.0;
+    {
+        const QString code = currentTypeCode();
+        if (code == QStringLiteral("gj")) {
+            dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+        } else {
+            const int startM = 9 * 60;
+            const int endM = 23 * 60 + 30;
+            const int nowM = nowT.hour() * 60 + nowT.minute();
+            if (nowM <= startM)
+                dayFrac = 0.0;
+            else if (nowM >= endM)
+                dayFrac = 1.0;
+            else
+                dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
+        }
+    }
     const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac);
     if (!fr.valid)
         return false;
@@ -655,8 +672,9 @@ void ChartWindow::updateForecast() {
       double actH = 0, actL = 0;
       HistoryCache::instance().todayHigh(actH);
       HistoryCache::instance().todayLow(actL);
-      m_forecastModeTag = tr("本地 · 振幅%1")
-                              .arg(qMax(0.0, actH - actL), 0, 'f', 2);
+      m_forecastModeTag = tr("本地 · 今幅%1 预幅%2")
+                              .arg(qMax(0.0, actH - actL), 0, 'f', 2)
+                              .arg(qMax(0.0, predHigh - predLow), 0, 'f', 2);
       if (!AppSettings::instance().xaiApiKey().trimmed().isEmpty()
           && !AppSettings::instance().forecastOnline())
         m_forecastModeTag = tr("本地（请开启「大模型」开关）");
@@ -1348,13 +1366,13 @@ void ChartWindow::updateSeries() {
                                                        : tr("浙商"));
 
   QString predText;
-  if (m_hasPredict && m_lastPredictHigh > 0.0) {
-    predText = tr("  |  预测高 %1 低 %2")
+  if (m_hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
+    predText = tr("  |  预测高 %1  预测低 %2")
                    .arg(m_lastPredictHigh, 0, 'f', 2)
                    .arg(m_lastPredictLow, 0, 'f', 2);
   }
 
-  m_chart->setTitle(tr("%1 · 今日分时（%2点）  高 %3  低 %4%5")
+  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高 %3  今低 %4%5")
                         .arg(typeName)
                         .arg(n)
                         .arg(high, 0, 'f', 2)
