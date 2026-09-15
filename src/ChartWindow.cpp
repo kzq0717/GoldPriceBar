@@ -254,14 +254,34 @@ void ChartWindow::setupChart() {
       "QFrame#chartToolbar QComboBox{"
       "  background:#1c2433;color:#e8eaed;"
       "  border:1px solid #2f3a4f;border-radius:8px;"
-      "  padding:4px 10px;min-height:28px;min-width:140px;"
+      "  padding:4px 8px;min-height:28px;max-width:96px;"
       "  font-size:12px;"
       "}"
       "QFrame#chartToolbar QComboBox:hover{border-color:#5b8def;}"
-      "QFrame#chartToolbar QComboBox::drop-down{border:none;width:22px;}"
+      "QFrame#chartToolbar QComboBox::drop-down{border:none;width:18px;}"
       "QFrame#chartToolbar QComboBox QAbstractItemView{"
       "  background:#1c2433;color:#e8eaed;border:1px solid #2f3a4f;"
       "  selection-background-color:#2a4a7a;"
+      "}"
+      "QFrame#chartToolbar QDateEdit{"
+      "  background:#1c2433;color:#e8eaed;"
+      "  border:1px solid #2f3a4f;border-radius:8px;"
+      "  padding:3px 6px;min-height:28px;max-width:118px;"
+      "  font-size:12px;"
+      "}"
+      "QFrame#chartToolbar QDateEdit:disabled{"
+      "  color:#5c6b77;background:#141922;border-color:#252c3a;"
+      "}"
+      "QFrame#chartToolbar QDateEdit:hover:!disabled{border-color:#5b8def;}"
+      "QFrame#chartToolbar QDateEdit::drop-down{border:none;width:18px;}"
+      "QFrame#chartToolbar QPushButton#periodQuery{"
+      "  background:#1a3a5c;color:#7eb6ff;"
+      "  border:1px solid #5b8def;border-radius:8px;"
+      "  padding:4px 12px;min-height:28px;font-size:12px;font-weight:600;"
+      "}"
+      "QFrame#chartToolbar QPushButton#periodQuery:hover{background:#234a72;}"
+      "QFrame#chartToolbar QPushButton#periodQuery:disabled{"
+      "  background:#141922;color:#5c6b77;border-color:#252c3a;"
       "}"
       "QFrame#chartToolbar QToolButton#maPill{"
       "  background:#1c2433;color:#9aa8bc;"
@@ -290,7 +310,8 @@ void ChartWindow::setupChart() {
   auto *periodHint = new QLabel(tr("周期"), m_toolbar);
   periodHint->setObjectName(QStringLiteral("tbHint"));
   m_periodCombo = new QComboBox(m_toolbar);
-  m_periodCombo->setMinimumWidth(100);
+  m_periodCombo->setFixedWidth(92);
+  m_periodCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
   m_periodCombo->addItem(tr("今日分时"), 0);
   m_periodCombo->addItem(tr("按日期"), 1);
   connect(m_periodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -303,6 +324,7 @@ void ChartWindow::setupChart() {
     de->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
     de->setMinimumDate(QDate(2015, 1, 1));
     de->setMaximumDate(QDate::currentDate());
+    de->setFixedWidth(116);
     de->setEnabled(false);
   }
   connect(m_dateFromEdit, &QDateEdit::dateChanged, this, [this](QDate d) {
@@ -314,7 +336,7 @@ void ChartWindow::setupChart() {
       m_dateFromEdit->setDate(d);
   });
   m_queryPeriodBtn = new QPushButton(tr("查询"), m_toolbar);
-  m_queryPeriodBtn->setObjectName(QStringLiteral("exportCsv"));
+  m_queryPeriodBtn->setObjectName(QStringLiteral("periodQuery"));
   m_queryPeriodBtn->setCursor(Qt::PointingHandCursor);
   m_queryPeriodBtn->setEnabled(false);
   m_queryPeriodBtn->setToolTip(tr("起止至少 1 天：同一天显示分时；跨天显示日线收盘"));
@@ -1924,18 +1946,17 @@ void ChartWindow::loadIntradayForDate(const QDate& day)
         return;
     }
 
-    m_plotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, currentTypeCode());
-    if (m_plotPoints.isEmpty()) {
-        m_plotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, QStringLiteral("zs"));
-    }
-    if (m_plotPoints.isEmpty()) {
-        m_plotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, QStringLiteral("gj"));
-    }
+    auto raw = ExtremeDatabase::instance().loadIntradaySamples(day, currentTypeCode());
+    if (raw.isEmpty())
+        raw = ExtremeDatabase::instance().loadIntradaySamples(day, QStringLiteral("zs"));
+    if (raw.isEmpty())
+        raw = ExtremeDatabase::instance().loadIntradaySamples(day, QStringLiteral("gj"));
 
-    if (m_plotPoints.isEmpty()) {
+    if (raw.isEmpty()) {
         if (m_chart)
             m_chart->setTitle(
-                tr("%1 · 无本地分时样本\n（仅程序运行当日会写入 intraday_samples；历史日请选跨天看日线）")
+                tr("%1 · 无本地分时样本\n"
+                   "（仅软件运行期间写入；公开接口无法补历史分钟线）")
                     .arg(day.toString(QStringLiteral("yyyy-MM-dd"))));
         if (m_axisX)
             m_axisX->setRange(QDateTime(day, QTime(0, 0)), QDateTime(day, QTime(23, 59)));
@@ -1943,38 +1964,109 @@ void ChartWindow::loadIntradayForDate(const QDate& day)
         return;
     }
 
-    // 直接绘制本地分时点（勿走 updateSeries，避免被今日缓存覆盖）
-    double hi = m_plotPoints.first().second, lo = hi;
+    // 先找真实高低，再按分钟桶降采样，避免点过密
+    int rawHi = 0, rawLo = 0;
+    for (int i = 1; i < raw.size(); ++i) {
+        if (raw.at(i).second > raw.at(rawHi).second)
+            rawHi = i;
+        if (raw.at(i).second < raw.at(rawLo).second)
+            rawLo = i;
+    }
+    const double dayHigh = raw.at(rawHi).second;
+    const double dayLow = raw.at(rawLo).second;
+    const QDateTime tFirst = raw.first().first;
+    const QDateTime tLast = raw.last().first;
+
+    QVector<QPair<QDateTime, double>> sampled;
+    sampled.reserve(qMin(raw.size(), 500));
+    QString lastMinuteKey;
+    for (int i = 0; i < raw.size(); ++i) {
+        const auto& pt = raw.at(i);
+        const QString mk = pt.first.toString(QStringLiteral("HH:mm"));
+        const bool force = (i == rawHi || i == rawLo || i == 0 || i == raw.size() - 1);
+        if (force || mk != lastMinuteKey) {
+            sampled.append(pt);
+            lastMinuteKey = mk;
+        } else {
+            // 同分钟保留最新价
+            sampled.last() = pt;
+            if (i == rawHi || i == rawLo)
+                sampled.last() = pt;
+        }
+    }
+    // 再二次抽稀到约 400 点
+    m_plotPoints.clear();
+    if (sampled.size() <= 400) {
+        m_plotPoints = sampled;
+    } else {
+        const int step = sampled.size() / 400 + 1;
+        for (int i = 0; i < sampled.size(); i += step)
+            m_plotPoints.append(sampled.at(i));
+        if (m_plotPoints.isEmpty() || m_plotPoints.last().first != sampled.last().first)
+            m_plotPoints.append(sampled.last());
+        // 强制保留高低点
+        auto hasNear = [&](const QDateTime& ts, double price) {
+            for (const auto& p : m_plotPoints) {
+                if (p.first == ts || (qAbs(p.second - price) < 1e-6
+                                      && qAbs(p.first.secsTo(ts)) < 120))
+                    return true;
+            }
+            return false;
+        };
+        if (!hasNear(raw.at(rawHi).first, dayHigh))
+            m_plotPoints.append(raw.at(rawHi));
+        if (!hasNear(raw.at(rawLo).first, dayLow))
+            m_plotPoints.append(raw.at(rawLo));
+        std::sort(m_plotPoints.begin(), m_plotPoints.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+    }
+
     int hiIdx = 0, loIdx = 0;
     for (int i = 0; i < m_plotPoints.size(); ++i) {
-        const double p = m_plotPoints.at(i).second;
-        m_series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), p);
-        if (p > hi) { hi = p; hiIdx = i; }
-        if (p < lo) { lo = p; loIdx = i; }
+        m_series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(),
+                         m_plotPoints.at(i).second);
+        if (m_plotPoints.at(i).second > m_plotPoints.at(hiIdx).second)
+            hiIdx = i;
+        if (m_plotPoints.at(i).second < m_plotPoints.at(loIdx).second)
+            loIdx = i;
     }
+    const double hi = m_plotPoints.at(hiIdx).second;
+    const double lo = m_plotPoints.at(loIdx).second;
     const double margin = qMax(0.5, (hi - lo) * 0.12);
     if (m_axisY)
         m_axisY->setRange(lo - margin, hi + margin);
+
     if (m_highSeries) {
-        m_highSeries->clear();
         m_highSeries->append(m_plotPoints.at(hiIdx).first.toMSecsSinceEpoch(), hi);
         m_highSeries->setVisible(true);
     }
     if (m_lowSeries) {
-        m_lowSeries->clear();
         m_lowSeries->append(m_plotPoints.at(loIdx).first.toMSecsSinceEpoch(), lo);
         m_lowSeries->setVisible(true);
     }
-    if (m_chart)
-        m_chart->setTitle(tr("%1 分时（%2点）  高 %3  低 %4")
-                              .arg(day.toString(QStringLiteral("yyyy-MM-dd")))
-                              .arg(m_plotPoints.size())
-                              .arg(hi, 0, 'f', 2)
-                              .arg(lo, 0, 'f', 2));
-    updateSidePanelValues(m_plotPoints.last().second, 0, false, hi, lo, tr("历史分时"));
-    if (m_axisX && !m_plotPoints.isEmpty()) {
-        m_axisX->setRange(QDateTime(day, QTime(0, 0)), QDateTime(day, QTime(23, 59, 59)));
+
+    // 时间轴：按实际采样起止，略留边距（不是强制 0～24 点空白）
+    if (m_axisX) {
+        const QDateTime x0 = tFirst.addSecs(-300);
+        const QDateTime x1 = tLast.addSecs(300);
+        m_axisX->setRange(x0, x1);
+        m_axisX->setFormat(QStringLiteral("HH:mm"));
     }
+
+    const QString span = tr("%1–%2")
+                             .arg(tFirst.toString(QStringLiteral("HH:mm")))
+                             .arg(tLast.toString(QStringLiteral("HH:mm")));
+    if (m_chart)
+        m_chart->setTitle(
+            tr("%1 本地分时  %2  （原始%3点→显示%4点）  高 %5  低 %6")
+                .arg(day.toString(QStringLiteral("yyyy-MM-dd")))
+                .arg(span)
+                .arg(raw.size())
+                .arg(m_plotPoints.size())
+                .arg(dayHigh, 0, 'f', 2)
+                .arg(dayLow, 0, 'f', 2));
+    updateSidePanelValues(m_plotPoints.last().second, 0, false, dayHigh, dayLow,
+                          tr("历史分时·本地采样"));
 }
 
 void ChartWindow::loadDailyRange(const QDate& from, const QDate& to)
