@@ -169,26 +169,47 @@ void AppSettings::setDcaLastNotifiedDate(const QString& isoDate)
 
 bool AppSettings::proxyEnabled() const { return m_proxyEnabled; }
 void AppSettings::setProxyEnabled(bool on)
-{ if (m_proxyEnabled != on) { m_proxyEnabled = on; emit settingsChanged(); } }
+{
+    if (m_proxyEnabled != on) {
+        m_proxyEnabled = on;
+        applyNetworkProxy();
+        emit settingsChanged();
+    }
+}
 
 QString AppSettings::proxyHost() const { return m_proxyHost; }
 void AppSettings::setProxyHost(const QString& host)
 {
-    if (m_proxyHost != host) { m_proxyHost = host.trimmed(); emit settingsChanged(); }
+    const QString h = host.trimmed();
+    if (m_proxyHost != h) {
+        m_proxyHost = h;
+        applyNetworkProxy();
+        emit settingsChanged();
+    }
 }
 
 int AppSettings::proxyPort() const { return m_proxyPort; }
 void AppSettings::setProxyPort(int port)
 {
     port = qBound(1, port, 65535);
-    if (m_proxyPort != port) { m_proxyPort = port; emit settingsChanged(); }
+    if (m_proxyPort != port) {
+        m_proxyPort = port;
+        applyNetworkProxy();
+        emit settingsChanged();
+    }
 }
 
 void AppSettings::applyNetworkProxy() const
 {
-    if (m_proxyEnabled && !m_proxyHost.isEmpty()) {
-        QNetworkProxy proxy(QNetworkProxy::HttpProxy, m_proxyHost, static_cast<quint16>(m_proxyPort));
+    if (m_proxyEnabled && !m_proxyHost.isEmpty() && m_proxyPort > 0) {
+        // 本地常见：Clash HTTP 7890 / SOCKS5 7891；也可手动指定
+        QNetworkProxy::ProxyType type = QNetworkProxy::HttpProxy;
+        const QString hostLower = m_proxyHost.toLower();
+        if (m_proxyPort == 7891 || hostLower.contains(QStringLiteral("socks")))
+            type = QNetworkProxy::Socks5Proxy;
+        QNetworkProxy proxy(type, m_proxyHost, static_cast<quint16>(m_proxyPort));
         QNetworkProxy::setApplicationProxy(proxy);
+        // Gemini / xAI / 行情请求均走 QNetworkAccessManager，会使用 application proxy
     } else {
         QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::NoProxy));
     }
@@ -332,6 +353,7 @@ void AppSettings::save()
     s.setValue("proxyEnabled", m_proxyEnabled);
     s.setValue("proxyHost", m_proxyHost);
     s.setValue("proxyPort", m_proxyPort);
+    applyNetworkProxy();
     s.setValue("smartAlertMa", m_smartAlertMa);
     s.setValue("smartAlertPercentile", m_smartAlertPercentile);
     s.setValue("percentileLow", m_percentileLow);
