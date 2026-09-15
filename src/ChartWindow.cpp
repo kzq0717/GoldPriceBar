@@ -23,6 +23,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QComboBox>
+#include <QDateEdit>
 #include <QSet>
 #include <QList>
 #include <algorithm>
@@ -289,11 +290,35 @@ void ChartWindow::setupChart() {
   auto *periodHint = new QLabel(tr("周期"), m_toolbar);
   periodHint->setObjectName(QStringLiteral("tbHint"));
   m_periodCombo = new QComboBox(m_toolbar);
-  m_periodCombo->setMinimumWidth(148);
-  m_periodCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-  fillPeriodCombo();
+  m_periodCombo->setMinimumWidth(100);
+  m_periodCombo->addItem(tr("今日分时"), 0);
+  m_periodCombo->addItem(tr("按日期"), 1);
   connect(m_periodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ChartWindow::onPeriodChanged);
+
+  m_dateFromEdit = new QDateEdit(QDate::currentDate(), m_toolbar);
+  m_dateToEdit = new QDateEdit(QDate::currentDate(), m_toolbar);
+  for (QDateEdit* de : {m_dateFromEdit, m_dateToEdit}) {
+    de->setCalendarPopup(true);
+    de->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    de->setMinimumDate(QDate(2015, 1, 1));
+    de->setMaximumDate(QDate::currentDate());
+    de->setEnabled(false);
+  }
+  connect(m_dateFromEdit, &QDateEdit::dateChanged, this, [this](QDate d) {
+    if (m_dateToEdit && m_dateToEdit->date() < d)
+      m_dateToEdit->setDate(d);
+  });
+  connect(m_dateToEdit, &QDateEdit::dateChanged, this, [this](QDate d) {
+    if (m_dateFromEdit && m_dateFromEdit->date() > d)
+      m_dateFromEdit->setDate(d);
+  });
+  m_queryPeriodBtn = new QPushButton(tr("查询"), m_toolbar);
+  m_queryPeriodBtn->setObjectName(QStringLiteral("exportCsv"));
+  m_queryPeriodBtn->setCursor(Qt::PointingHandCursor);
+  m_queryPeriodBtn->setEnabled(false);
+  m_queryPeriodBtn->setToolTip(tr("起止至少 1 天：同一天显示分时；跨天显示日线收盘"));
+  connect(m_queryPeriodBtn, &QPushButton::clicked, this, &ChartWindow::applyPeriodSelection);
 
   // 均线：胶囊式可勾选按钮（替代下拉菜单）
   auto makeMaPill = [this](const QString& text, QAction** actionOut) {
@@ -338,6 +363,12 @@ void ChartWindow::setupChart() {
 
   tb->addWidget(periodHint);
   tb->addWidget(m_periodCombo);
+  tb->addWidget(m_dateFromEdit);
+  auto *dash = new QLabel(QStringLiteral("—"), m_toolbar);
+  dash->setObjectName(QStringLiteral("tbHint"));
+  tb->addWidget(dash);
+  tb->addWidget(m_dateToEdit);
+  tb->addWidget(m_queryPeriodBtn);
   tb->addSpacing(8);
   auto *vdiv1 = new QFrame(m_toolbar);
   vdiv1->setFrameShape(QFrame::VLine);
@@ -1800,36 +1831,20 @@ void ChartWindow::closeEvent(QCloseEvent *event) {
 
 void ChartWindow::fillPeriodCombo()
 {
-    if (!m_periodCombo)
-        return;
-    m_periodCombo->blockSignals(true);
-    m_periodCombo->clear();
-    // data: 0 = 今日分时；否则 YYYYMM
-    m_periodCombo->addItem(tr("今日分时"), 0);
-
-    const QDate today = QDate::currentDate();
-    int year = today.year();
-    int startMonth = 7;
-    // 若当前早于 7 月，则从上一年 7 月起
-    if (today.month() < 7) {
-        year = today.year() - 1;
-    }
-    QDate d(year, 7, 1);
-    const QDate end(today.year(), today.month(), 1);
-    while (d <= end) {
-        const int key = d.year() * 100 + d.month();
-        m_periodCombo->addItem(tr("%1年%2月").arg(d.year()).arg(d.month()), key);
-        d = d.addMonths(1);
-    }
-    m_periodCombo->setCurrentIndex(0);
-    m_periodCombo->blockSignals(false);
+    // 周期下拉在构造时已填充（今日 / 按日期）
 }
 
 bool ChartWindow::isIntradayMode() const
 {
     if (!m_periodCombo)
         return true;
-    return m_periodCombo->currentData().toInt() == 0;
+    // 今日，或按日期且起止为同一天 → 分时
+    if (m_periodCombo->currentData().toInt() == 0)
+        return true;
+    if (m_dateFromEdit && m_dateToEdit
+        && m_dateFromEdit->date() == m_dateToEdit->date())
+        return true;
+    return false;
 }
 
 void ChartWindow::setForecastVisible(bool on)
@@ -1840,99 +1855,205 @@ void ChartWindow::setForecastVisible(bool on)
         m_forecastLowSeries->setVisible(on);
     if (m_currentSeries)
         m_currentSeries->setVisible(on);
-    // 月份模式仍可用高低点系列
 }
 
 void ChartWindow::onPeriodChanged(int)
 {
-    if (isIntradayMode()) {
+    const bool custom = m_periodCombo && m_periodCombo->currentData().toInt() == 1;
+    if (m_dateFromEdit)
+        m_dateFromEdit->setEnabled(custom);
+    if (m_dateToEdit)
+        m_dateToEdit->setEnabled(custom);
+    if (m_queryPeriodBtn)
+        m_queryPeriodBtn->setEnabled(custom);
+
+    if (!custom) {
+        if (m_dateFromEdit)
+            m_dateFromEdit->setDate(QDate::currentDate());
+        if (m_dateToEdit)
+            m_dateToEdit->setDate(QDate::currentDate());
         setWindowTitle(tr("今日分时曲线"));
         setForecastVisible(true);
-        m_axisX->setFormat(QStringLiteral("HH:mm"));
+        if (m_axisX)
+            m_axisX->setFormat(QStringLiteral("HH:mm"));
         fetchChartFromApi();
-    } else {
-        setForecastVisible(false);
-        m_axisX->setFormat(QStringLiteral("MM-dd"));
-        updateMonthSeries();
     }
 }
 
-void ChartWindow::updateMonthSeries()
+void ChartWindow::applyPeriodSelection()
 {
-    if (!m_periodCombo)
+    if (!m_dateFromEdit || !m_dateToEdit)
         return;
-    const int key = m_periodCombo->currentData().toInt();
-    if (key <= 0)
+    QDate from = m_dateFromEdit->date();
+    QDate to = m_dateToEdit->date();
+    if (!from.isValid() || !to.isValid())
         return;
+    if (to < from)
+        qSwap(from, to);
+    // 最小 1 天（同一天）
+    if (from == to) {
+        setForecastVisible(from == QDate::currentDate());
+        if (m_axisX)
+            m_axisX->setFormat(QStringLiteral("HH:mm"));
+        loadIntradayForDate(from);
+    } else {
+        setForecastVisible(false);
+        if (m_axisX)
+            m_axisX->setFormat(QStringLiteral("MM-dd"));
+        loadDailyRange(from, to);
+    }
+}
 
-    const int year = key / 100;
-    const int month = key % 100;
-    setWindowTitle(tr("%1年%2月走势").arg(year).arg(month));
+void ChartWindow::loadIntradayForDate(const QDate& day)
+{
+    if (!day.isValid() || !m_series)
+        return;
+    setWindowTitle(tr("%1 分时").arg(day.toString(QStringLiteral("yyyy-MM-dd"))));
 
     m_series->clear();
     if (m_forecastSeries) m_forecastSeries->clear();
     if (m_forecastLowSeries) m_forecastLowSeries->clear();
-    m_currentSeries->clear();
-    m_highSeries->clear();
-    m_lowSeries->clear();
+    if (m_currentSeries) m_currentSeries->clear();
+    if (m_highSeries) m_highSeries->clear();
+    if (m_lowSeries) m_lowSeries->clear();
     hideCrosshair();
+    m_hasPredict = false;
 
-    m_plotPoints = ExtremeDatabase::instance().loadMonthCloses(
-        year, month, currentTypeCode());
-
-    if (m_plotPoints.isEmpty()) {
-        m_chart->setTitle(tr("%1年%2月 · 暂无本地日线数据\n"
-                             "（公开接口仅提供当日分时；请保持程序运行以累积日线）")
-                              .arg(year).arg(month));
-        const QDate start(year, month, 1);
-        const QDate end = start.addMonths(1).addDays(-1);
-        m_axisX->setRange(QDateTime(start, QTime(0, 0)), QDateTime(end, QTime(23, 59)));
-        m_axisY->setRange(800.0, 1200.0);
+    if (day == QDate::currentDate()) {
+        fetchChartFromApi();
         return;
     }
 
-    double minP = m_plotPoints.first().second;
-    double maxP = minP;
-    for (const auto& p : m_plotPoints) {
-        m_series->append(p.first.toMSecsSinceEpoch(), p.second);
-        minP = qMin(minP, p.second);
-        maxP = qMax(maxP, p.second);
+    m_plotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, currentTypeCode());
+    if (m_plotPoints.isEmpty()) {
+        m_plotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, QStringLiteral("zs"));
+    }
+    if (m_plotPoints.isEmpty()) {
+        m_plotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, QStringLiteral("gj"));
     }
 
-    // 高低标记
-    int hi = 0, lo = 0;
-    for (int i = 1; i < m_plotPoints.size(); ++i) {
-        if (m_plotPoints.at(i).second > m_plotPoints.at(hi).second)
-            hi = i;
-        if (m_plotPoints.at(i).second < m_plotPoints.at(lo).second)
-            lo = i;
+    if (m_plotPoints.isEmpty()) {
+        if (m_chart)
+            m_chart->setTitle(
+                tr("%1 · 无本地分时样本\n（仅程序运行当日会写入 intraday_samples；历史日请选跨天看日线）")
+                    .arg(day.toString(QStringLiteral("yyyy-MM-dd"))));
+        if (m_axisX)
+            m_axisX->setRange(QDateTime(day, QTime(0, 0)), QDateTime(day, QTime(23, 59)));
+        updateSidePanelValues(0, 0, false, 0, 0, tr("无数据"));
+        return;
     }
-    m_highSeries->append(m_plotPoints.at(hi).first.toMSecsSinceEpoch(),
-                         m_plotPoints.at(hi).second);
-    m_lowSeries->append(m_plotPoints.at(lo).first.toMSecsSinceEpoch(),
-                        m_plotPoints.at(lo).second);
 
-    const QDate start(year, month, 1);
-    const QDate endDate = start.addMonths(1).addDays(-1);
-    m_axisX->setRange(QDateTime(start, QTime(0, 0)).addDays(-1),
-                      QDateTime(endDate, QTime(23, 59)).addDays(1));
-    const double margin = qMax(0.5, (maxP - minP) * 0.12);
-    m_axisY->setRange(minP - margin, maxP + margin);
-
-    double mh = 0, ml = 0;
-    int days = 0;
-    ExtremeDatabase::instance().monthRange(year, month, currentTypeCode(), mh, ml, days);
-    m_chart->setTitle(tr("%1年%2月日线（%3天）  高 %4  低 %5")
-                          .arg(year).arg(month).arg(m_plotPoints.size())
-                          .arg(mh > 0 ? mh : maxP, 0, 'f', 2)
-                          .arg(ml > 0 ? ml : minP, 0, 'f', 2));
-
-    updateSidePanelValues(
-        m_plotPoints.last().second, 0.0, false,
-        mh > 0 ? mh : maxP, ml > 0 ? ml : minP, tr("月线"));
+    // 直接绘制本地分时点（勿走 updateSeries，避免被今日缓存覆盖）
+    double hi = m_plotPoints.first().second, lo = hi;
+    int hiIdx = 0, loIdx = 0;
+    for (int i = 0; i < m_plotPoints.size(); ++i) {
+        const double p = m_plotPoints.at(i).second;
+        m_series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), p);
+        if (p > hi) { hi = p; hiIdx = i; }
+        if (p < lo) { lo = p; loIdx = i; }
+    }
+    const double margin = qMax(0.5, (hi - lo) * 0.12);
+    if (m_axisY)
+        m_axisY->setRange(lo - margin, hi + margin);
+    if (m_highSeries) {
+        m_highSeries->clear();
+        m_highSeries->append(m_plotPoints.at(hiIdx).first.toMSecsSinceEpoch(), hi);
+        m_highSeries->setVisible(true);
+    }
+    if (m_lowSeries) {
+        m_lowSeries->clear();
+        m_lowSeries->append(m_plotPoints.at(loIdx).first.toMSecsSinceEpoch(), lo);
+        m_lowSeries->setVisible(true);
+    }
+    if (m_chart)
+        m_chart->setTitle(tr("%1 分时（%2点）  高 %3  低 %4")
+                              .arg(day.toString(QStringLiteral("yyyy-MM-dd")))
+                              .arg(m_plotPoints.size())
+                              .arg(hi, 0, 'f', 2)
+                              .arg(lo, 0, 'f', 2));
+    updateSidePanelValues(m_plotPoints.last().second, 0, false, hi, lo, tr("历史分时"));
+    if (m_axisX && !m_plotPoints.isEmpty()) {
+        m_axisX->setRange(QDateTime(day, QTime(0, 0)), QDateTime(day, QTime(23, 59, 59)));
+    }
 }
 
+void ChartWindow::loadDailyRange(const QDate& from, const QDate& to)
+{
+    if (!m_series)
+        return;
+    setWindowTitle(tr("%1 ~ %2 日线")
+                       .arg(from.toString(QStringLiteral("yyyy-MM-dd")))
+                       .arg(to.toString(QStringLiteral("yyyy-MM-dd"))));
 
+    m_series->clear();
+    if (m_forecastSeries) m_forecastSeries->clear();
+    if (m_forecastLowSeries) m_forecastLowSeries->clear();
+    if (m_currentSeries) m_currentSeries->clear();
+    if (m_highSeries) m_highSeries->clear();
+    if (m_lowSeries) m_lowSeries->clear();
+    hideCrosshair();
+    m_hasPredict = false;
+
+    m_plotPoints = ExtremeDatabase::instance().loadDailyClosesRange(
+        from, to, currentTypeCode());
+    if (m_plotPoints.isEmpty())
+        m_plotPoints = ExtremeDatabase::instance().loadDailyClosesRange(
+            from, to, QStringLiteral("gj"));
+
+    if (m_plotPoints.isEmpty()) {
+        if (m_chart)
+            m_chart->setTitle(tr("%1 ~ %2 · 无本地日线（请运行历史导入脚本或保持程序累积）")
+                                  .arg(from.toString(QStringLiteral("yyyy-MM-dd")))
+                                  .arg(to.toString(QStringLiteral("yyyy-MM-dd"))));
+        if (m_axisX)
+            m_axisX->setRange(QDateTime(from, QTime(0, 0)), QDateTime(to, QTime(23, 59)));
+        updateSidePanelValues(0, 0, false, 0, 0, tr("无数据"));
+        return;
+    }
+
+    double minP = m_plotPoints.first().second, maxP = minP;
+    int hi = 0, lo = 0;
+    for (int i = 0; i < m_plotPoints.size(); ++i) {
+        m_series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(),
+                         m_plotPoints.at(i).second);
+        if (m_plotPoints.at(i).second > maxP) {
+            maxP = m_plotPoints.at(i).second;
+            hi = i;
+        }
+        if (m_plotPoints.at(i).second < minP) {
+            minP = m_plotPoints.at(i).second;
+            lo = i;
+        }
+    }
+    if (m_highSeries) {
+        m_highSeries->append(m_plotPoints.at(hi).first.toMSecsSinceEpoch(), maxP);
+        m_highSeries->setVisible(true);
+    }
+    if (m_lowSeries) {
+        m_lowSeries->append(m_plotPoints.at(lo).first.toMSecsSinceEpoch(), minP);
+        m_lowSeries->setVisible(true);
+    }
+    if (m_axisX)
+        m_axisX->setRange(QDateTime(from, QTime(0, 0)).addDays(-1),
+                          QDateTime(to, QTime(23, 59)).addDays(1));
+    const double margin = qMax(0.5, (maxP - minP) * 0.12);
+    if (m_axisY)
+        m_axisY->setRange(minP - margin, maxP + margin);
+    if (m_chart)
+        m_chart->setTitle(tr("%1 ~ %2 日线（%3天）  高 %4  低 %5")
+                              .arg(from.toString(QStringLiteral("yyyy-MM-dd")))
+                              .arg(to.toString(QStringLiteral("yyyy-MM-dd")))
+                              .arg(m_plotPoints.size())
+                              .arg(maxP, 0, 'f', 2)
+                              .arg(minP, 0, 'f', 2));
+    updateSidePanelValues(m_plotPoints.last().second, 0, false, maxP, minP, tr("日线区间"));
+}
+
+void ChartWindow::updateMonthSeries()
+{
+    // 兼容旧调用：按当前日期控件查询
+    applyPeriodSelection();
+}
 
 void ChartWindow::onExportCsv()
 {

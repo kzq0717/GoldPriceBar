@@ -20,6 +20,7 @@ class QNetworkReply;
 class QLabel;
 class QFrame;
 class QComboBox;
+class QDateEdit;
 class QListWidget;
 class QToolButton;
 class QPushButton;
@@ -62,6 +63,10 @@ private:
     void updateMonthSeries();
     void fetchChartFromApi();
     void fillPeriodCombo();
+    void applyPeriodSelection();
+    void loadIntradayForDate(const QDate& day);
+    void loadDailyRange(const QDate& from, const QDate& to);
+
     bool isIntradayMode() const;
     QString currentTypeCode() const;
     void updateCrosshair(const QPoint& viewPos);
@@ -92,6 +97,10 @@ private:
     void setCurrentMarker(qint64 xMs, double y, bool startPulse = true);
 
     QComboBox* m_periodCombo = nullptr;
+    QDateEdit* m_dateFromEdit = nullptr;
+    QDateEdit* m_dateToEdit = nullptr;
+    QPushButton* m_queryPeriodBtn = nullptr;
+
     QFrame* m_toolbar = nullptr;
     QToolButton* m_maMenuBtn = nullptr;
     QToolButton* m_ma5Btn = nullptr;

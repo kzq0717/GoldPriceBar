@@ -481,6 +481,35 @@ bool ExtremeDatabase::purgeIntradayOlderThan(int keepDays)
 }
 
 
+QVector<QPair<QDateTime, double>> ExtremeDatabase::loadDailyClosesRange(
+    const QDate& from, const QDate& to, const QString& source) const
+{
+    QVector<QPair<QDateTime, double>> out;
+    if (!m_open || !from.isValid() || !to.isValid() || from > to)
+        return out;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT trade_date, close_price, high_price, low_price FROM daily_bars "
+        "WHERE source=? AND trade_date>=? AND trade_date<=? ORDER BY trade_date ASC"));
+    q.addBindValue(src);
+    q.addBindValue(from.toString(Qt::ISODate));
+    q.addBindValue(to.toString(Qt::ISODate));
+    if (!q.exec()) {
+        qWarning() << "loadDailyClosesRange:" << q.lastError().text();
+        return out;
+    }
+    while (q.next()) {
+        const QDate d = QDate::fromString(q.value(0).toString(), Qt::ISODate);
+        const double close = q.value(1).toDouble();
+        if (!d.isValid() || close <= 0.0)
+            continue;
+        out.append({QDateTime(d, QTime(15, 0)), close});
+    }
+    return out;
+}
+
 QVector<QPair<QDate, double>> ExtremeDatabase::loadRecentDailyCloses(
     int maxDays, const QString& source) const
 {
