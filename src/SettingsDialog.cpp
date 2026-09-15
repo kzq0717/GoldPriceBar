@@ -534,6 +534,8 @@ void SettingsDialog::onAccept()
     settings.setOpacity(m_opacitySlider->value() / 100.0);
     settings.setAutoStart(m_autoStartCheck->isChecked());
     settings.setForecastOnline(m_forecastSlider->value() >= 1);
+    if (m_providerCombo)
+        settings.setLlmProvider(m_providerCombo->currentData().toString());
     settings.setXaiApiKey(m_apiKeyEdit->text().trimmed());
     settings.setXaiModel(m_modelCombo->currentText().trimmed());
     settings.setDatabaseDir(m_dbDirEdit->text().trimmed());

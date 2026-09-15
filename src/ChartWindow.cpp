@@ -843,19 +843,29 @@ void ChartWindow::requestOnlineForecast() {
     model = (provider == QStringLiteral("gemini")) ? QStringLiteral("gemini-2.0-flash")
                                                    : QStringLiteral("grok-4.6");
 
+  const QString nowStr = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
   const QString systemPrompt = QStringLiteral(
-      "你是黄金短线分析助手。根据用户提供的今日分时与已出现高低，估计「当日剩余时段」可能达到的最高价与最低价。"
-      "只输出一个 JSON 对象，不要 Markdown。格式："
-      "{\"pred_high\":0.0,\"pred_low\":0.0,\"brief\":\"一句话理由\"}。"
-      "pred_high 不得低于已出现今高，pred_low 不得高于已出现今低；幅度应克制，避免极端跳跃。这不是投资建议。");
+      "你是资深黄金/贵金属短线分析师。综合：①用户给出的今日分时与已实现高低；"
+      "②你所掌握的最新宏观与消息面知识（美元指数、美联储/利率预期、地缘冲突、央行购金、ETF 流向、重要经济数据等）；"
+      "估计「今日剩余交易时段」可能触及的最高价与最低价。"
+      "只输出一个 JSON 对象，不要 Markdown、不要代码围栏。字段："
+      "{\"pred_high\":number,\"pred_low\":number,\"bias\":\"偏多|偏空|震荡\","
+      "\"brief\":\"不超过40字，含消息面或技术面理由\",\"confidence\":0.0到1.0}。"
+      "硬性约束：pred_high >= 已出现今高；pred_low <= 已出现今低；"
+      "预测全日振幅建议约在现价的 0.2%~1.5%（积存金人民币/克）或等价比例，避免无依据的极端跳跃。"
+      "这不是投资建议。");
 
   const QString userPrompt =
-      QStringLiteral("品种:%1\n现价:%2\n已出现今高:%3 今低:%4\n最近分时:\n%5\n请给出今日预测最高/最低 JSON。")
-          .arg(src)
+      QStringLiteral(
+          "时间(本地):%1\n品种代码:%2（zs/ms=积存金元/克，gj=伦敦金美元/盎司）\n"
+          "现价:%3\n已出现今高:%4 今低:%5\n最近分时(时间 价格):\n%6\n"
+          "请结合消息面与分时结构，输出今日剩余时段预测最高/最低 JSON。")
+          .arg(nowStr, src)
           .arg(lastPrice, 0, 'f', 2)
           .arg(actH > 0 ? actH : lastPrice, 0, 'f', 2)
           .arg(actL > 0 ? actL : lastPrice, 0, 'f', 2)
           .arg(seriesText);
+
 
   QNetworkRequest request;
   request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.7.7"));
@@ -882,8 +892,9 @@ void ChartWindow::requestOnlineForecast() {
     contents.append(userMsg);
     body.insert(QStringLiteral("contents"), contents);
     QJsonObject genCfg;
-    genCfg.insert(QStringLiteral("temperature"), 0.2);
-    genCfg.insert(QStringLiteral("maxOutputTokens"), 400);
+    genCfg.insert(QStringLiteral("temperature"), 0.35);
+    genCfg.insert(QStringLiteral("maxOutputTokens"), 512);
+    genCfg.insert(QStringLiteral("responseMimeType"), QStringLiteral("application/json"));
     body.insert(QStringLiteral("generationConfig"), genCfg);
     reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
   } else {
@@ -955,14 +966,30 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
 
   if (reply->error() != QNetworkReply::NoError) {
     const QString err = reply->errorString();
+    const QByteArray errBody = reply->readAll();
+    Logger::warn(QStringLiteral("Online forecast HTTP error: %1 body=%2")
+                     .arg(err, QString::fromUtf8(errBody.left(400))));
     reply->deleteLater();
     fallback(tr("在线失败·本地"));
-    Q_UNUSED(err);
     return;
   }
 
   const QByteArray raw = reply->readAll();
   reply->deleteLater();
+  // Gemini 业务错误：HTTP 200 但带 error 对象
+  {
+    QJsonParseError pe0{};
+    const QJsonDocument d0 = QJsonDocument::fromJson(raw, &pe0);
+    if (pe0.error == QJsonParseError::NoError && d0.isObject()) {
+      const QJsonObject eo = d0.object().value(QStringLiteral("error")).toObject();
+      if (!eo.isEmpty()) {
+        const QString msg = eo.value(QStringLiteral("message")).toString();
+        Logger::warn(QStringLiteral("Online forecast API error: %1").arg(msg));
+        fallback(tr("API错误·本地"));
+        return;
+      }
+    }
+  }
 
   QJsonParseError pe{};
   const QJsonDocument doc = QJsonDocument::fromJson(raw, &pe);
@@ -1032,12 +1059,18 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
     predLow = qMin(predLow, actL);
   if (!m_plotPoints.isEmpty()) {
     const double px = m_plotPoints.last().second;
-    const double hard = px * 0.006;
+    // 大模型允许约 ±1.8% 扩张，避免结果被压成与今高/今低相同
+    const double hard = px * 0.018;
     predHigh = qMin(predHigh, qMax(actH > 0 ? actH : px, px) + hard);
     predLow = qMax(predLow, qMin(actL > 0 ? actL : px, px) - hard);
+    const double minGap = qMax(px * 0.0005, 0.08);
+    if (actH > 0)
+      predHigh = qMax(predHigh, actH + minGap * 0.25);
+    if (actL > 0)
+      predLow = qMin(predLow, actL - minGap * 0.25);
     if (predHigh < predLow) {
-      predHigh = qMax(actH > 0 ? actH : px, px);
-      predLow = qMin(actL > 0 ? actL : px, px);
+      predHigh = qMax(actH > 0 ? actH : px, px) + minGap;
+      predLow = qMin(actL > 0 ? actL : px, px) - minGap;
     }
   }
 
@@ -1046,9 +1079,14 @@ void ChartWindow::onOnlineForecastFinished(QNetworkReply *reply) {
   m_lastPredictPrice = predHigh;
   m_hasPredict = true;
   const QString brief = jo.value(QStringLiteral("brief")).toString();
+  const QString bias = jo.value(QStringLiteral("bias")).toString();
   const QString prov = AppSettings::instance().llmProvider();
-  m_forecastModeTag = (prov == QStringLiteral("gemini") ? tr("Gemini") : tr("Grok"))
-                      + (brief.isEmpty() ? QString() : QStringLiteral("·") + brief.left(24));
+  QString tag = (prov == QStringLiteral("gemini") ? tr("Gemini") : tr("Grok"));
+  if (!bias.isEmpty())
+    tag += QStringLiteral("·") + bias.left(8);
+  if (!brief.isEmpty())
+    tag += QStringLiteral("·") + brief.left(28);
+  m_forecastModeTag = tag;
 
   if (m_forecastSeries) {
     m_forecastSeries->clear();
