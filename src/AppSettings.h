@@ -113,6 +113,17 @@ public:
     /** 应用 QNetworkProxy::setApplicationProxy */
     void applyNetworkProxy() const;
 
+    /** 行情 URL（可在 ini 中改，%1=品种 zs/ms/gj） */
+    QString primaryPriceUrl() const;
+    void setPrimaryPriceUrl(const QString& u);
+    QString chartUrl() const;
+    void setChartUrl(const QString& u);
+    QString backupPriceUrl1() const;
+    void setBackupPriceUrl1(const QString& u);
+    QString backupPriceUrl2() const;
+    void setBackupPriceUrl2(const QString& u);
+
+
     /** 智能预警：相对 MA5日 / 近20日分位 */
     bool smartAlertMa() const;
     void setSmartAlertMa(bool on);
@@ -193,6 +204,11 @@ private:
     bool m_proxyEnabled = false;
     QString m_proxyHost;
     int m_proxyPort = 7890;
+    QString m_primaryPriceUrl;
+    QString m_chartUrl;
+    QString m_backupPriceUrl1;
+    QString m_backupPriceUrl2;
+
     bool m_smartAlertMa = true;
     bool m_smartAlertPercentile = true;
     int m_percentileLow = 20;

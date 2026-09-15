@@ -52,6 +52,10 @@ public:
     double highHitRatePercent() const;
     double lowHitRatePercent() const;
     double meanAbsError() const;
+    /** 从 forecast_logs 已结算记录重建命中统计（与 py 日线无关） */
+    void loadFromDatabase(const QString& source = QString());
+    void resetStats();
+
     int pendingCount() const { return m_pendingRanges.size(); }
 
 private:

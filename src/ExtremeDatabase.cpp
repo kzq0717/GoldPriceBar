@@ -692,6 +692,53 @@ QVector<ForecastLogEntry> ExtremeDatabase::loadForecastLogsForDay(const QDate& d
     return out;
 }
 
+QVector<ForecastLogEntry> ExtremeDatabase::loadSettledForecasts(int limit,
+                                                                const QString& source) const
+{
+    QVector<ForecastLogEntry> out;
+    if (!m_open || limit <= 0)
+        return out;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    if (source.isEmpty()) {
+        q.prepare(QStringLiteral(
+            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price, "
+            "actual_high, actual_low FROM forecast_logs "
+            "WHERE settled=1 AND actual_high IS NOT NULL AND actual_low IS NOT NULL "
+            "AND actual_high>0 AND actual_low>0 "
+            "ORDER BY id DESC LIMIT ?"));
+        q.addBindValue(limit);
+    } else {
+        q.prepare(QStringLiteral(
+            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price, "
+            "actual_high, actual_low FROM forecast_logs "
+            "WHERE settled=1 AND source=? AND actual_high IS NOT NULL AND actual_low IS NOT NULL "
+            "AND actual_high>0 AND actual_low>0 "
+            "ORDER BY id DESC LIMIT ?"));
+        q.addBindValue(source);
+        q.addBindValue(limit);
+    }
+    if (!q.exec()) {
+        qWarning() << "loadSettledForecasts:" << q.lastError().text();
+        return out;
+    }
+    while (q.next()) {
+        ForecastLogEntry e;
+        e.id = q.value(0).toLongLong();
+        e.madeAt = QDateTime::fromString(q.value(1).toString(), Qt::ISODate);
+        e.source = q.value(2).toString();
+        e.mode = q.value(3).toString();
+        e.brief = q.value(4).toString();
+        e.predHigh = q.value(5).toDouble();
+        e.predLow = q.value(6).toDouble();
+        e.basePrice = q.value(7).toDouble();
+        e.actualHigh = q.value(8).toDouble();
+        e.actualLow = q.value(9).toDouble();
+        out.append(e);
+    }
+    return out;
+}
+
 int ExtremeDatabase::settleForecasts(const QString& source, double actualHigh, double actualLow,
                                      const QDateTime& now)
 {

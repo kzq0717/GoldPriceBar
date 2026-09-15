@@ -1,4 +1,5 @@
 #include "ForecastTracker.h"
+#include "ExtremeDatabase.h"
 #include <QtGlobal>
 #include <QtMath>
 
@@ -118,4 +119,32 @@ double ForecastTracker::meanAbsError() const
     if (m_errCount <= 0)
         return 0.0;
     return m_absErrorSum / static_cast<double>(m_errCount);
+}
+
+
+void ForecastTracker::resetStats()
+{
+    m_highHits = m_highMisses = m_lowHits = m_lowMisses = 0;
+    m_absErrorSum = 0.0;
+    m_errCount = 0;
+}
+
+void ForecastTracker::loadFromDatabase(const QString& source)
+{
+    resetStats();
+    const auto rows = ExtremeDatabase::instance().loadSettledForecasts(300, source);
+    for (const auto& e : rows) {
+        if (e.predHigh <= 0 || e.predLow <= 0 || e.actualHigh <= 0 || e.actualLow <= 0)
+            continue;
+        m_absErrorSum += qAbs(e.actualHigh - e.predHigh) + qAbs(e.actualLow - e.predLow);
+        m_errCount += 2;
+        if (isHit(e.predHigh, e.actualHigh))
+            ++m_highHits;
+        else
+            ++m_highMisses;
+        if (isHit(e.predLow, e.actualLow))
+            ++m_lowHits;
+        else
+            ++m_lowMisses;
+    }
 }

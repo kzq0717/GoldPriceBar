@@ -582,10 +582,13 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
     double ah = 0.0, al = 0.0;
     HistoryCache::instance().todayHigh(ah);
     HistoryCache::instance().todayLow(al);
-    if (ah > 0.0 && al > 0.0)
+    if (ah > 0.0 && al > 0.0) {
       ForecastTracker::instance().evaluateDayRange(ah, al);
-    else
+      ExtremeDatabase::instance().settleForecasts(currentTypeCode(), ah, al);
+      ForecastTracker::instance().loadFromDatabase(currentTypeCode());
+    } else {
       ForecastTracker::instance().evaluateWithActual(price, m_plotPoints);
+    }
   }
 
   updateSidePanelValues(
@@ -668,6 +671,7 @@ void ChartWindow::onPulseTick()
 
 void ChartWindow::showEvent(QShowEvent *event) {
   reloadForecastHistory();
+  ForecastTracker::instance().loadFromDatabase(currentTypeCode());
 
   QWidget::showEvent(event);
   fetchChartFromApi();
@@ -1467,6 +1471,7 @@ void ChartWindow::onOnlineForecastFinished()
   HistoryCache::instance().todayLow(low);
   const double cur = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
   updateSidePanelValues(cur, predHigh, true, high, low, m_forecastModeTag);
+  ForecastTracker::instance().loadFromDatabase(currentTypeCode());
   Logger::info(QStringLiteral("Online forecast OK high=%1 low=%2 tag=%3")
                    .arg(predHigh, 0, 'f', 2)
                    .arg(predLow, 0, 'f', 2)
@@ -1520,7 +1525,7 @@ void ChartWindow::fetchChartFromApi() {
   m_chart->setTitle(tr("正在加载分时数据…"));
 
   const QUrl url(
-      QStringLiteral("https://jin.20021002.xyz/api.php?action=chart&type=%1")
+      AppSettings::instance().chartUrl()
           .arg(currentTypeCode()));
   QNetworkRequest request(url);
   request.setHeader(QNetworkRequest::UserAgentHeader,
@@ -2471,17 +2476,29 @@ void ChartWindow::updateClockAndAdvice()
 
     if (m_sideHitRateLabel) {
         const auto& ft = ForecastTracker::instance();
-        if (ft.totalEvaluated() > 0)
+        if (ft.totalEvaluated() > 0) {
             m_sideHitRateLabel->setText(
-                tr("%1% (%2评)")
+                tr("%1% (%2组)")
                     .arg(ft.hitRatePercent(), 0, 'f', 0)
-                    .arg(ft.totalEvaluated() / 2)); // 高低各算一次
-        else
-            m_sideHitRateLabel->setText(tr("样本不足"));
-        m_sideHitRateLabel->setToolTip(
-            tr("高命中 %1% / 低命中 %2%")
-                .arg(ft.highHitRatePercent(), 0, 'f', 0)
-                .arg(ft.lowHitRatePercent(), 0, 'f', 0));
+                    .arg(ft.totalEvaluated() / 2));
+            m_sideHitRateLabel->setToolTip(
+                tr("来自已结算预测日志（非日线导入）
+高命中 %1% / 低命中 %2% / 待结算 %3")
+                    .arg(ft.highHitRatePercent(), 0, 'f', 0)
+                    .arg(ft.lowHitRatePercent(), 0, 'f', 0)
+                    .arg(ft.pendingCount()));
+        } else if (ft.pendingCount() > 0) {
+            m_sideHitRateLabel->setText(tr("待结算%1").arg(ft.pendingCount()));
+            m_sideHitRateLabel->setToolTip(
+                tr("已有预测登记，到期后用今高/今低结算才会计入命中率。"
+                   "历史日线脚本不会产生预测命中样本。"));
+        } else {
+            m_sideHitRateLabel->setText(tr("暂无预测"));
+            m_sideHitRateLabel->setToolTip(
+                tr("命中率统计的是「预测高/低 vs 实际今高/低」。"
+                   "import_historical_gold.py 只导入日线，不生成预测样本。"
+                   "开启大模型或本地预测并运行一段时间后才会有命中数据。"));
+        }
     }
 
     if (m_sideAdviceLabel)

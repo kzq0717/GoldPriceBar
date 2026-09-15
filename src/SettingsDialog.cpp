@@ -367,6 +367,17 @@ void SettingsDialog::setupUi()
     // ---- 4 高级 ----
     {
         auto* form = makePage(tr("高级与数据"));
+        m_primaryUrlEdit = new QLineEdit(this);
+        m_primaryUrlEdit->setPlaceholderText(tr("主行情 URL，%1=品种"));
+        form->addRow(tr("主行情URL："), m_primaryUrlEdit);
+        m_chartUrlEdit = new QLineEdit(this);
+        m_chartUrlEdit->setPlaceholderText(tr("分时 chart URL，%1=品种"));
+        form->addRow(tr("分时URL："), m_chartUrlEdit);
+        auto* urlHint = new QLabel(tr("也可直接编辑配置文件中的 primaryPriceUrl / chartUrl（无需重编译）"), this);
+        urlHint->setWordWrap(true);
+        urlHint->setStyleSheet("color:#8b93a7;font-size:11px;");
+        form->addRow("", urlHint);
+
         m_dbDirEdit = new QLineEdit(this);
         m_dbDirBrowseBtn = new QPushButton(tr("浏览…"), this);
         auto* dbLay = new QHBoxLayout;
@@ -478,6 +489,10 @@ void SettingsDialog::loadFromSettings()
 
     m_autoStartCheck->setChecked(settings.autoStart());
     m_dbDirEdit->setText(settings.databaseDir());
+    if (m_primaryUrlEdit)
+        m_primaryUrlEdit->setText(settings.primaryPriceUrl());
+    if (m_chartUrlEdit)
+        m_chartUrlEdit->setText(settings.chartUrl());
 
     m_alertHighSpin->setValue(settings.alertHigh());
     if (m_planEnabledCheck)
@@ -566,6 +581,10 @@ void SettingsDialog::onAccept()
     settings.setXaiApiKey(m_apiKeyEdit->text().trimmed());
     settings.setXaiModel(m_modelCombo->currentText().trimmed());
     settings.setDatabaseDir(m_dbDirEdit->text().trimmed());
+    if (m_primaryUrlEdit)
+        settings.setPrimaryPriceUrl(m_primaryUrlEdit->text().trimmed());
+    if (m_chartUrlEdit)
+        settings.setChartUrl(m_chartUrlEdit->text().trimmed());
     settings.setAlertHigh(m_alertHighSpin->value());
     if (m_planEnabledCheck)
         settings.setPlanEnabled(m_planEnabledCheck->isChecked());

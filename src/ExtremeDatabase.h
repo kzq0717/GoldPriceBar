@@ -96,6 +96,11 @@ public:
     QVector<ForecastLogEntry> loadForecastLogsForDay(const QDate& day,
                                                      const QString& source = QString()) const;
 
+    /** 已结算预测样本（用于命中率）；limit 最近条数 */
+    QVector<ForecastLogEntry> loadSettledForecasts(int limit = 200,
+                                                   const QString& source = QString()) const;
+
+
     /** 结算未到期预测（用今高/今低） */
     int settleForecasts(const QString& source, double actualHigh, double actualLow,
                         const QDateTime& now = QDateTime::currentDateTime());

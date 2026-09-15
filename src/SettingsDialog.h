@@ -64,6 +64,8 @@ private:
     QPointer<class QNetworkReply> m_modelsReply;
 
     QLineEdit* m_dbDirEdit = nullptr;
+    QLineEdit* m_primaryUrlEdit = nullptr;
+    QLineEdit* m_chartUrlEdit = nullptr;
     QPushButton* m_dbDirBrowseBtn = nullptr;
 
     QDoubleSpinBox* m_alertHighSpin = nullptr;

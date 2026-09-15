@@ -187,8 +187,7 @@ void PriceService::requestChartSeed()
         m_network = new QNetworkAccessManager(this);
 
     // 全日分时：https://jin.20021002.xyz/api.php?action=chart&type=zs
-    const QUrl url(QStringLiteral("https://jin.20021002.xyz/api.php?action=chart&type=%1")
-                       .arg(currentTypeCode()));
+    const QUrl url(AppSettings::instance().chartUrl().arg(currentTypeCode()));
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader,
                       QStringLiteral("GoldPriceBarLite/0.1.5"));
@@ -286,14 +285,11 @@ void PriceService::requestPriceFromBackup(int backupIndex)
     const QString type = currentTypeCode();
 
     if (backupIndex == 0) {
-        // 主源：公开积存金/伦敦金接口
-        url = QUrl(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1").arg(type));
+        url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
     } else if (backupIndex == 1) {
-        // 备用1：gold-api.com（XAU/USD 盎司）— 仅国际金参考
-        url = QUrl(QStringLiteral("https://api.gold-api.com/price/XAU"));
+        url = QUrl(AppSettings::instance().backupPriceUrl1());
     } else if (backupIndex == 2) {
-        // 备用2：goldprice.dev spot
-        url = QUrl(QStringLiteral("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT"));
+        url = QUrl(AppSettings::instance().backupPriceUrl2());
     } else {
         ++m_consecutiveFail;
         emit fetchFailed(tr("全部数据源失败"));

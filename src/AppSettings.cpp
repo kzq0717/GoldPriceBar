@@ -240,6 +240,48 @@ void AppSettings::applyNetworkProxy() const
 
 
 bool AppSettings::smartAlertMa() const { return m_smartAlertMa; }
+QString AppSettings::primaryPriceUrl() const
+{
+    if (m_primaryPriceUrl.trimmed().isEmpty())
+        return QStringLiteral("https://jin.20021002.xyz/api.php?type=%1");
+    return m_primaryPriceUrl;
+}
+void AppSettings::setPrimaryPriceUrl(const QString& u)
+{
+    if (m_primaryPriceUrl != u) { m_primaryPriceUrl = u.trimmed(); emit settingsChanged(); }
+}
+QString AppSettings::chartUrl() const
+{
+    if (m_chartUrl.trimmed().isEmpty())
+        return QStringLiteral("https://jin.20021002.xyz/api.php?action=chart&type=%1");
+    return m_chartUrl;
+}
+void AppSettings::setChartUrl(const QString& u)
+{
+    if (m_chartUrl != u) { m_chartUrl = u.trimmed(); emit settingsChanged(); }
+}
+QString AppSettings::backupPriceUrl1() const
+{
+    if (m_backupPriceUrl1.trimmed().isEmpty())
+        return QStringLiteral("https://api.gold-api.com/price/XAU");
+    return m_backupPriceUrl1;
+}
+void AppSettings::setBackupPriceUrl1(const QString& u)
+{
+    if (m_backupPriceUrl1 != u) { m_backupPriceUrl1 = u.trimmed(); emit settingsChanged(); }
+}
+QString AppSettings::backupPriceUrl2() const
+{
+    if (m_backupPriceUrl2.trimmed().isEmpty())
+        return QStringLiteral("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT");
+    return m_backupPriceUrl2;
+}
+void AppSettings::setBackupPriceUrl2(const QString& u)
+{
+    if (m_backupPriceUrl2 != u) { m_backupPriceUrl2 = u.trimmed(); emit settingsChanged(); }
+}
+
+
 void AppSettings::setSmartAlertMa(bool on)
 { if (m_smartAlertMa != on) { m_smartAlertMa = on; emit settingsChanged(); } }
 
@@ -334,6 +376,17 @@ void AppSettings::load()
     m_proxyEnabled = s.value("proxyEnabled", false).toBool();
     m_proxyHost = s.value("proxyHost", "").toString();
     m_proxyPort = s.value("proxyPort", 7890).toInt();
+    m_primaryPriceUrl = s.value("primaryPriceUrl", "").toString();
+    m_chartUrl = s.value("chartUrl", "").toString();
+    m_backupPriceUrl1 = s.value("backupPriceUrl1", "").toString();
+    m_backupPriceUrl2 = s.value("backupPriceUrl2", "").toString();
+    // 首次写入默认值，便于用户在 ini 中改
+    if (!s.contains("primaryPriceUrl")) {
+        s.setValue("primaryPriceUrl", QStringLiteral("https://jin.20021002.xyz/api.php?type=%1"));
+        s.setValue("chartUrl", QStringLiteral("https://jin.20021002.xyz/api.php?action=chart&type=%1"));
+        s.setValue("backupPriceUrl1", QStringLiteral("https://api.gold-api.com/price/XAU"));
+        s.setValue("backupPriceUrl2", QStringLiteral("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT"));
+    }
     m_smartAlertMa = s.value("smartAlertMa", true).toBool();
     m_smartAlertPercentile = s.value("smartAlertPercentile", true).toBool();
     m_percentileLow = s.value("percentileLow", 20).toInt();
@@ -388,6 +441,10 @@ void AppSettings::save()
     s.setValue("proxyEnabled", m_proxyEnabled);
     s.setValue("proxyHost", m_proxyHost);
     s.setValue("proxyPort", m_proxyPort);
+    s.setValue("primaryPriceUrl", primaryPriceUrl());
+    s.setValue("chartUrl", chartUrl());
+    s.setValue("backupPriceUrl1", backupPriceUrl1());
+    s.setValue("backupPriceUrl2", backupPriceUrl2());
     applyNetworkProxy();
     s.setValue("smartAlertMa", m_smartAlertMa);
     s.setValue("smartAlertPercentile", m_smartAlertPercentile);
