@@ -2039,42 +2039,50 @@ void ChartWindow::updateMovingAverages()
         m_ma10Series->setVisible(want10 && intraday);
     m_ma20Series->setVisible(want20 && intraday);
 
+    // 勾选均线时绝不能关掉预测线
+    if (intraday)
+        setForecastVisible(true);
+
     if (!any || !intraday) {
         if (m_chart)
             m_chart->update();
         return;
     }
 
-    // 无点时仍尝试用日线水平均线（有尺度保护）
-    double lastPx = 0.0;
-    double pxMin = 0.0, pxMax = 0.0;
-    if (!m_plotPoints.isEmpty()) {
-        lastPx = m_plotPoints.last().second;
-        pxMin = pxMax = lastPx;
-        for (const auto& pt : m_plotPoints) {
-            pxMin = qMin(pxMin, pt.second);
-            pxMax = qMax(pxMax, pt.second);
-        }
-    } else if (m_axisY) {
-        pxMin = m_axisY->min();
-        pxMax = m_axisY->max();
-        lastPx = 0.5 * (pxMin + pxMax);
+    if (m_plotPoints.isEmpty()) {
+        if (m_chart)
+            m_chart->update();
+        return;
     }
-    const double pad = qMax(0.5, (pxMax - pxMin) * 0.08);
-    const double yLo = pxMin - pad;
-    const double yHi = pxMax + pad;
 
-    auto scaleOk = [&](double ma) {
-        if (ma <= 0.0 || lastPx <= 0.0)
-            return false;
-        return ma >= lastPx * 0.85 && ma <= lastPx * 1.15;
-    };
+    double lastPx = m_plotPoints.last().second;
+    double pxMin = lastPx, pxMax = lastPx;
+    for (const auto& pt : m_plotPoints) {
+        if (pt.second <= 0)
+            continue;
+        pxMin = qMin(pxMin, pt.second);
+        pxMax = qMax(pxMax, pt.second);
+    }
 
+    // 日线收盘：与现价尺度一致才画水平 MA（5/10/20 日）
     auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, currentTypeCode());
     if (closes.size() < 5)
         closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, QStringLiteral("zs"));
     if (closes.size() < 5)
         closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, QStringLiteral("gj"));
+
+    // 尺度纠正：日线若是另一单位（如美元盎司），按现价/末日线比值缩放
+    if (!closes.isEmpty() && lastPx > 0.0) {
+        const double lastClose = closes.last().second;
+        if (lastClose > 0.0) {
+            const double ratio = lastPx / lastClose;
+            // 明显不在同一量级（如 930 vs 2600）
+            if (ratio < 0.55 || ratio > 1.8) {
+                for (auto& c : closes)
+                    c.second *= ratio;
+            }
+        }
+    }
 
     auto smaDaily = [](const QVector<QPair<QDate, double>>& c, int n) -> double {
         if (c.size() < n)
@@ -2084,6 +2092,13 @@ void ChartWindow::updateMovingAverages()
             s += c.at(i).second;
         return s / static_cast<double>(n);
     };
+
+    auto nearPrice = [&](double ma) {
+        if (ma <= 0.0 || lastPx <= 0.0)
+            return false;
+        return ma >= lastPx * 0.80 && ma <= lastPx * 1.20;
+    };
+
     const double d5 = smaDaily(closes, 5);
     const double d10 = smaDaily(closes, 10);
     const double d20 = smaDaily(closes, 20);
@@ -2093,85 +2108,102 @@ void ChartWindow::updateMovingAverages()
     const qint64 x0 = t0.toMSecsSinceEpoch();
     const qint64 x1 = t1.toMSecsSinceEpoch();
 
-    bool drew5 = false, drew10 = false, drew20 = false;
-    if (want5 && scaleOk(d5)) {
-        m_ma5Series->append(x0, d5);
-        m_ma5Series->append(x1, d5);
-        m_ma5Series->setName(tr("MA5日"));
-        drew5 = true;
-    }
-    if (want10 && m_ma10Series && scaleOk(d10)) {
-        m_ma10Series->append(x0, d10);
-        m_ma10Series->append(x1, d10);
-        m_ma10Series->setName(tr("MA10日"));
-        drew10 = true;
-    }
-    if (want20 && scaleOk(d20)) {
-        m_ma20Series->append(x0, d20);
-        m_ma20Series->append(x1, d20);
-        m_ma20Series->setName(tr("MA20日"));
-        drew20 = true;
-    }
-
-    // 未画出的项：用分时滚动均线（前缀和 O(n)，勾选后立即可见）
+    // 分时滚动均线（保证勾选后一定有曲线，不依赖日线库）
     const int n = m_plotPoints.size();
-    if (n >= 2 && ((want5 && !drew5) || (want10 && !drew10) || (want20 && !drew20))) {
-        QVector<double> pref(n + 1, 0.0);
-        for (int i = 0; i < n; ++i)
-            pref[i + 1] = pref[i] + m_plotPoints.at(i).second;
-        auto winAvg = [&](int i, int win) -> double {
-            if (i + 1 < win)
-                return 0.0;
-            return (pref[i + 1] - pref[i + 1 - win]) / static_cast<double>(win);
-        };
-        const int step = qMax(1, n / 500);
-        if (want5 && !drew5)
-            m_ma5Series->setName(tr("MA5"));
-        if (want10 && !drew10 && m_ma10Series)
-            m_ma10Series->setName(tr("MA10"));
-        if (want20 && !drew20)
-            m_ma20Series->setName(tr("MA20"));
+    QVector<double> pref(n + 1, 0.0);
+    for (int i = 0; i < n; ++i)
+        pref[i + 1] = pref[i] + m_plotPoints.at(i).second;
+    auto winAvg = [&](int i, int win) -> double {
+        if (i + 1 < win)
+            return 0.0;
+        return (pref[i + 1] - pref[i + 1 - win]) / static_cast<double>(win);
+    };
+    const int step = qMax(1, n / 400);
 
+    auto fillRolling = [&](QLineSeries* series, int win, bool use) {
+        if (!series || !use)
+            return;
+        series->setName(win == 5 ? tr("MA5") : (win == 10 ? tr("MA10") : tr("MA20")));
         for (int i = 0; i < n; i += step) {
-            const qint64 x = m_plotPoints.at(i).first.toMSecsSinceEpoch();
-            if (want5 && !drew5) {
-                const double a = winAvg(i, 5);
-                if (a > 0.0)
-                    m_ma5Series->append(x, a);
-            }
-            if (want10 && !drew10 && m_ma10Series) {
-                const double a = winAvg(i, 10);
-                if (a > 0.0)
-                    m_ma10Series->append(x, a);
-            }
-            if (want20 && !drew20) {
-                const double a = winAvg(i, 20);
-                if (a > 0.0)
-                    m_ma20Series->append(x, a);
-            }
-        }
-        // 保证落到最新点
-        const int last = n - 1;
-        const qint64 xLast = m_plotPoints.at(last).first.toMSecsSinceEpoch();
-        if (want5 && !drew5) {
-            const double a = winAvg(last, 5);
+            const double a = winAvg(i, win);
             if (a > 0.0)
-                m_ma5Series->append(xLast, a);
+                series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), a);
         }
-        if (want10 && !drew10 && m_ma10Series) {
-            const double a = winAvg(last, 10);
-            if (a > 0.0)
-                m_ma10Series->append(xLast, a);
+        const double aLast = winAvg(n - 1, win);
+        if (aLast > 0.0)
+            series->append(m_plotPoints.last().first.toMSecsSinceEpoch(), aLast);
+    };
+
+    // 优先：有合格日线则画水平参考线；否则用分时滚动 MA
+    if (want5) {
+        if (nearPrice(d5)) {
+            m_ma5Series->append(x0, d5);
+            m_ma5Series->append(x1, d5);
+            m_ma5Series->setName(tr("MA5日"));
+            pxMin = qMin(pxMin, d5);
+            pxMax = qMax(pxMax, d5);
+        } else {
+            fillRolling(m_ma5Series, 5, true);
         }
-        if (want20 && !drew20) {
-            const double a = winAvg(last, 20);
-            if (a > 0.0)
-                m_ma20Series->append(xLast, a);
+    }
+    if (want10 && m_ma10Series) {
+        if (nearPrice(d10)) {
+            m_ma10Series->append(x0, d10);
+            m_ma10Series->append(x1, d10);
+            m_ma10Series->setName(tr("MA10日"));
+            pxMin = qMin(pxMin, d10);
+            pxMax = qMax(pxMax, d10);
+        } else {
+            fillRolling(m_ma10Series, 10, true);
+        }
+    }
+    if (want20) {
+        if (nearPrice(d20)) {
+            m_ma20Series->append(x0, d20);
+            m_ma20Series->append(x1, d20);
+            m_ma20Series->setName(tr("MA20日"));
+            pxMin = qMin(pxMin, d20);
+            pxMax = qMax(pxMax, d20);
+        } else {
+            fillRolling(m_ma20Series, 20, true);
         }
     }
 
-    if (m_axisY && pxMax > pxMin)
+    // Y 轴纳入均线与预测高低，避免预测虚线被裁掉
+    if (m_hasPredict) {
+        if (m_lastPredictHigh > 0)
+            pxMax = qMax(pxMax, m_lastPredictHigh);
+        if (m_lastPredictLow > 0)
+            pxMin = qMin(pxMin, m_lastPredictLow);
+    }
+    if (m_axisY && pxMax > pxMin) {
+        const double pad = qMax(0.3, (pxMax - pxMin) * 0.10);
+        const double curMin = m_axisY->min();
+        const double curMax = m_axisY->max();
+        // 只扩大、不无故压缩（防止把已有分时/预测挤没）
+        const double yLo = qMin(curMin, pxMin - pad);
+        const double yHi = qMax(curMax, pxMax + pad);
         m_axisY->setRange(yLo, yHi);
+    }
+
+    // 确保轴绑定（防止某些路径下系列未挂轴）
+    if (m_axisX && m_axisY) {
+        for (QLineSeries* s : {m_ma5Series, m_ma10Series, m_ma20Series,
+                               m_forecastSeries, m_forecastLowSeries}) {
+            if (!s)
+                continue;
+            const auto axes = s->attachedAxes();
+            if (!axes.contains(m_axisX))
+                s->attachAxis(m_axisX);
+            if (!axes.contains(m_axisY))
+                s->attachAxis(m_axisY);
+        }
+    }
+
+    if (m_forecastSeries)
+        m_forecastSeries->setVisible(true);
+    if (m_forecastLowSeries)
+        m_forecastLowSeries->setVisible(true);
 
     if (m_chart)
         m_chart->update();
