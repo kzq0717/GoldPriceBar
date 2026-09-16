@@ -61,13 +61,17 @@
 
 
 ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
+  Logger::info(QStringLiteral("ChartWindow ctor begin"));
   setWindowTitle(tr("今日分时曲线"));
   setMinimumSize(640, 360);
   resize(800, 440);
   setWindowFlags(Qt::Window);
 
+  Logger::info(QStringLiteral("ChartWindow: create NAM"));
   m_network = new QNetworkAccessManager(this);
+  Logger::info(QStringLiteral("ChartWindow: setupChart"));
   setupChart();
+  Logger::info(QStringLiteral("ChartWindow: setupChart done"));
   connect(&AppSettings::instance(), &AppSettings::settingsChanged, this,
           [this]() {
             applyChartTheme();
@@ -93,7 +97,7 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
   m_pulseTimer = new QTimer(this);
   m_pulseTimer->setInterval(450);
   connect(m_pulseTimer, &QTimer::timeout, this, &ChartWindow::onPulseTick);
-
+  Logger::info(QStringLiteral("ChartWindow ctor end"));
 }
 
 QString ChartWindow::currentTypeCode() const
@@ -211,18 +215,16 @@ void ChartWindow::setupChart() {
   m_axisY->setLabelsColor(QColor(92, 107, 119));
   m_chart->addAxis(m_axisY, Qt::AlignLeft);
 
-  for (QAbstractSeries *s : {static_cast<QAbstractSeries *>(m_series),
-                       static_cast<QAbstractSeries *>(m_ma5Series),
-                       static_cast<QAbstractSeries *>(m_ma10Series),
-                       static_cast<QAbstractSeries *>(m_ma20Series),
-                       static_cast<QAbstractSeries *>(m_yesterdaySeries),
-                             static_cast<QAbstractSeries *>(m_forecastSeries),
-                             static_cast<QAbstractSeries *>(m_forecastLowSeries),
-                             static_cast<QAbstractSeries *>(m_currentSeries),
-                             static_cast<QAbstractSeries *>(m_highSeries),
-                             static_cast<QAbstractSeries *>(m_lowSeries)}) {
-    s->attachAxis(m_axisX);
-    s->attachAxis(m_axisY);
+  const QList<QAbstractSeries*> seriesList = {
+      m_series, m_ma5Series, m_ma10Series, m_ma20Series, m_yesterdaySeries,
+      m_forecastSeries, m_forecastLowSeries, m_currentSeries, m_highSeries, m_lowSeries};
+  for (QAbstractSeries *s : seriesList) {
+    if (!s)
+      continue;
+    if (!s->attachedAxes().contains(m_axisX))
+      s->attachAxis(m_axisX);
+    if (!s->attachedAxes().contains(m_axisY))
+      s->attachAxis(m_axisY);
   }
 
   m_chartView = new QChartView(m_chart, this);
@@ -1656,6 +1658,10 @@ void ChartWindow::onChartReplyFinished(QNetworkReply *reply) {
 }
 
 void ChartWindow::updateSeries() {
+  if (!m_chart || !m_series || !m_axisX || !m_axisY) {
+    Logger::warn(QStringLiteral("updateSeries: chart not ready"));
+    return;
+  }
   m_lastRedraw.restart();
   m_series->clear();
   hideCrosshair();

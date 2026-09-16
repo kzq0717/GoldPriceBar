@@ -354,17 +354,24 @@ void PriceBarWindow::onSettingsClicked()
 
 void PriceBarWindow::onChartClicked()
 {
+    Logger::info(QStringLiteral("onChartClicked"));
     if (!m_chartWindow) {
-        m_chartWindow = new ChartWindow(this);
+        // 不作为 PriceBar 子控件，避免父子销毁顺序问题
+        Logger::info(QStringLiteral("Creating ChartWindow (no parent)"));
+        m_chartWindow = new ChartWindow(nullptr);
+        m_chartWindow->setAttribute(Qt::WA_DeleteOnClose, false);
         if (m_priceService) {
             connect(m_priceService, &PriceService::priceUpdated,
-                    m_chartWindow, &ChartWindow::onNewPrice);
+                    m_chartWindow, &ChartWindow::onNewPrice, Qt::QueuedConnection);
         }
+        Logger::info(QStringLiteral("ChartWindow created"));
     }
+    Logger::info(QStringLiteral("ChartWindow refreshData"));
     m_chartWindow->refreshData();
     m_chartWindow->show();
     m_chartWindow->raise();
     m_chartWindow->activateWindow();
+    Logger::info(QStringLiteral("ChartWindow shown"));
 }
 
 void PriceBarWindow::onSentimentClicked()

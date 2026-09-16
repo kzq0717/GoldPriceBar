@@ -168,11 +168,10 @@ void PriceService::onWatchdog()
 
     const qint64 staleMs = qMax(static_cast<qint64>(m_intervalMs) * 5, 30000LL);
     if (m_lastSuccessMs > 0 && (now - m_lastSuccessMs) > staleMs) {
-        Logger::warn(QStringLiteral("PriceService watchdog: no success for %1 ms")
+        Logger::warn(QStringLiteral("PriceService watchdog: no success for %1 ms (skip recreate)")
                          .arg(now - m_lastSuccessMs));
-        qWarning() << "PriceService watchdog: no success for" << (now - m_lastSuccessMs) << "ms";
-        // 只 recreate：内部会安全断开 pending，勿先 abortPending 再毁 NAM
-        recreateNetworkManager();
+        // 不再 recreateNetworkManager：与 reply 生命周期叠加易 0xc0000005
+        abortPending();
         requestPrice();
     }
 }
