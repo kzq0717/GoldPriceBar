@@ -68,7 +68,8 @@ if(WIN32)
 endif()
 
 if(MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8 /FS)
+    # /FS: 并行编译时串行写 PDB，避免 C1090
 endif()
 
 

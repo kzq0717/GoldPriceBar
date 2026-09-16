@@ -163,6 +163,9 @@ if "%USE_NINJA%"=="1" (
 )
 if errorlevel 1 (
   echo [ERROR] build failed
+  echo If C1090 PDB API failed: close Visual Studio, then:
+  echo   build.bat clean debug
+  echo or delete build\*.pdb and rebuild.
   echo.
   echo If error is C1083 type_traits / iostream:
   echo   1. Use: build.bat clean vs

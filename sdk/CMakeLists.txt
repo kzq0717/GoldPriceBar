@@ -30,7 +30,7 @@ endif()
 
 if(MSVC)
     # Required on Chinese Windows (code page 936): UTF-8 source without BOM
-    target_compile_options(goldsdk PRIVATE /W3 /EHsc /utf-8)
+    target_compile_options(goldsdk PRIVATE /W3 /EHsc /utf-8 /FS)
 else()
     target_compile_options(goldsdk PRIVATE -Wall -Wextra)
 endif()
