@@ -172,11 +172,6 @@ void PriceBarWindow::setupUi()
     m_chartButton->setFixedSize(28, 28);
     connect(m_chartButton, &QToolButton::clicked,
             this, &PriceBarWindow::onChartClicked);
-    {
-        auto* sentAct = nullptr;
-        // tray menu filled below if available
-        Q_UNUSED(sentAct);
-    }
 
     m_settingsButton = new QToolButton(this);
     m_settingsButton->setText(QStringLiteral("⚙"));
