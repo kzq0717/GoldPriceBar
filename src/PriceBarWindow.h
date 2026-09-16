@@ -100,7 +100,7 @@ private:
 
     PriceService* m_priceService = nullptr;
     SettingsDialog* m_settingsDialog = nullptr;
-    ChartWindow* m_chartWindow;
+    ChartWindow* m_chartWindow = nullptr;
     SentimentDialog* m_sentimentDialog = nullptr;
     QSystemTrayIcon* m_trayIcon = nullptr;
     QNetworkAccessManager* m_secondaryNam = nullptr;
