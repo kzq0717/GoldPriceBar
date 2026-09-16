@@ -77,12 +77,18 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     connect(&AppSettings::instance(), &AppSettings::settingsChanged,
             this, &PriceBarWindow::onSettingsChanged);
 
-    // 延后启动网络与热键，确保窗口先完成 show
-    QTimer::singleShot(0, this, [this]() {
-        Logger::info(QStringLiteral("Deferred start: price + hotkey"));
+    Logger::info(QStringLiteral("PriceBarWindow ctor: ui/tray done, scheduling network"));
+    // 分步延后：先行情，再热键（热键默认关闭）
+    QTimer::singleShot(100, this, [this]() {
+        Logger::info(QStringLiteral("Deferred: PriceService::start begin"));
         if (m_priceService)
             m_priceService->start();
+        Logger::info(QStringLiteral("Deferred: PriceService::start end"));
+    });
+    QTimer::singleShot(1500, this, [this]() {
+        Logger::info(QStringLiteral("Deferred: setupHotkey begin"));
         setupHotkey();
+        Logger::info(QStringLiteral("Deferred: setupHotkey end"));
     });
 
     if (!m_dcaTimer) {
@@ -885,20 +891,18 @@ void PriceBarWindow::toggleVisible()
 
 void PriceBarWindow::setupHotkey()
 {
+    if (!AppSettings::instance().hotkeyEnabled()) {
+        if (m_hotkey)
+            m_hotkey->unregisterHotkey();
+        Logger::info(QStringLiteral("Hotkey disabled in settings"));
+        return;
+    }
     if (!m_hotkey) {
         m_hotkey = new GlobalHotkey(this);
         connect(m_hotkey, &GlobalHotkey::activated, this, &PriceBarWindow::toggleVisible);
     }
-    if (AppSettings::instance().hotkeyEnabled()) {
-        if (!m_hotkey->registerHotkey()) {
-            if (m_trayIcon)
-                m_trayIcon->showMessage(
-                    tr("热键"),
-                    tr("Ctrl+Shift+G 注册失败（可能被占用）"),
-                    QSystemTrayIcon::Warning, 3000);
-        }
-    } else {
-        m_hotkey->unregisterHotkey();
+    if (!m_hotkey->registerHotkey()) {
+        Logger::warn(QStringLiteral("Hotkey not active (need GPB_ENABLE_HOTKEY=1 or register failed)"));
     }
 }
 

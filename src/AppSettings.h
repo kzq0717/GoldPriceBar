@@ -196,7 +196,7 @@ private:
     bool m_darkTheme = true;
     bool m_showMovingAverage = true;
     bool m_alertSound = false;
-    bool m_hotkeyEnabled = true;
+    bool m_hotkeyEnabled = false;
     bool m_quietHoursEnabled = false;
     QTime m_quietStart = QTime(22, 0);
     QTime m_quietEnd = QTime(8, 0);

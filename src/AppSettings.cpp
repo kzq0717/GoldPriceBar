@@ -368,7 +368,7 @@ void AppSettings::load()
     m_darkTheme          = s.value("darkTheme", true).toBool();
     m_showMovingAverage  = s.value("showMovingAverage", true).toBool();
     m_alertSound         = s.value("alertSound", false).toBool();
-    m_hotkeyEnabled      = s.value("hotkeyEnabled", true).toBool();
+    m_hotkeyEnabled      = s.value("hotkeyEnabled", false).toBool();
     m_quietHoursEnabled  = s.value("quietHoursEnabled", false).toBool();
     m_quietStart = QTime::fromString(s.value("quietStart", "22:00").toString(), "HH:mm");
     if (!m_quietStart.isValid()) m_quietStart = QTime(22, 0);

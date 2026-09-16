@@ -27,6 +27,7 @@ protected:
 
 private:
     bool m_registered = false;
+    bool m_filterInstalled = false;
     int m_id = 1;
 };
 
