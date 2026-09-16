@@ -18,6 +18,7 @@ Makefile
 *.suo
 *.user
 *.ncb
+*.venv/
 
 # Keep the shared VS Code Qt/CMake configuration under version control.
 !.vscode/
