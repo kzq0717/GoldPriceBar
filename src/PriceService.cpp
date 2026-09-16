@@ -301,6 +301,14 @@ void PriceService::onChartSeedFinished(QNetworkReply *reply) {
 }
 
 void PriceService::requestPrice() {
+    // 卡住的请求超过 8s 则放弃，避免永不更新
+    if (m_pendingReply) {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (m_requestStartMs > 0 && (now - m_requestStartMs) > 8000)
+            abortPending();
+        else
+            return;
+    }
     m_backupIndex = 0;
     requestPriceFromBackup(0);
 }
@@ -320,28 +328,45 @@ void PriceService::requestPriceFromBackup(int backupIndex) {
     m_backupIndex = backupIndex;
     QUrl url;
     const QString type = currentTypeCode();
+    const bool domestic = !(type == QStringLiteral("gj") || type == QStringLiteral("xau")
+                            || type == QStringLiteral("jd"));
+    static const QStringList kDomesticFallback = {
+        QStringLiteral("zs"), QStringLiteral("ms"), QStringLiteral("cib"),
+        QStringLiteral("icbc"), QStringLiteral("cmb"),
+    };
 
     if (backupIndex == 0) {
-        // 主源：jin 聚合（与 GoldAccumulationRealTimeMonitor 相同 apiBase）
         url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
-    } else if (type == QStringLiteral("cmb") && backupIndex == 1) {
-        // 招行官方公开接口（油猴脚本备用路径）
+    } else if (domestic && backupIndex >= 1 && backupIndex <= kDomesticFallback.size()) {
+        QString alt = kDomesticFallback.at(backupIndex - 1);
+        if (alt == type) {
+            requestPriceFromBackup(backupIndex + 1);
+            return;
+        }
+        Logger::info(QStringLiteral("Price fallback domestic type=%1 idx=%2").arg(alt).arg(backupIndex));
+        url = QUrl(AppSettings::instance().primaryPriceUrl().arg(alt));
+    } else if (type == QStringLiteral("cmb") && backupIndex == kDomesticFallback.size() + 1) {
         url = QUrl(QStringLiteral("https://m.cmbchina.com/api/rate/gold"));
-    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd")) && backupIndex == 1) {
+    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("xau")
+                || type == QStringLiteral("jd")) && backupIndex == 1) {
         url = QUrl(AppSettings::instance().backupPriceUrl1());
-    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd")) && backupIndex == 2) {
+    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("xau")
+                || type == QStringLiteral("jd")) && backupIndex == 2) {
         url = QUrl(AppSettings::instance().backupPriceUrl2());
-    } else if (type == QStringLiteral("cmb") && backupIndex == 2) {
-        // 招行失败后再试国际金仅作趋势参考
-        url = QUrl(AppSettings::instance().backupPriceUrl1());
     } else {
         ++m_consecutiveFail;
-        emit fetchFailed(tr("全部数据源失败"));
+        Logger::warn(QStringLiteral("Price all sources failed type=%1 fails=%2")
+                         .arg(type).arg(m_consecutiveFail));
+        emit fetchFailed(tr("全部数据源失败，请检查网络/代理"));
+        if (m_timer && m_consecutiveFail >= 3) {
+            const int backoff = qMin(m_intervalMs * 2, 15000);
+            m_timer->setInterval(qMax(m_intervalMs, backoff));
+        }
         return;
     }
 
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.6.3"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.3.10"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
     request.setTransferTimeout(10000);
@@ -404,22 +429,19 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
         // 国际金备用仅当主数据源为伦敦金(gj)时启用；
         // 浙商/民生与 XAU/USD 量纲不同，绝不能回退，否则预警/预测全错
         const QString type = currentTypeCode();
-        const bool allowUsdBackup = (type == QStringLiteral("gj") || type == QStringLiteral("xau"));
-        if (allowUsdBackup && tried < 2) {
+        const bool domestic = !(type == QStringLiteral("gj") || type == QStringLiteral("xau")
+                                || type == QStringLiteral("jd"));
+        const int maxTry = domestic ? 5 : 2;
+        if (tried < maxTry) {
             requestPriceFromBackup(tried + 1);
             return;
         }
         ++m_consecutiveFail;
-        if (m_consecutiveFail >= 5) {
-            recreateNetworkManager();
-            m_consecutiveFail = 0;
-        }
-        emit fetchFailed(tr("数据源失败（积存金无可用备用国际源）"));
-        // 连续失败时自适应拉长刷新，减轻接口压力
+        // 不 recreate NAM（易崩溃）
+        emit fetchFailed(tr("数据源失败，将自动重试"));
         if (m_timer && m_consecutiveFail >= 3) {
-            const int backoff = qMin(60000, m_intervalMs * (1 + m_consecutiveFail / 2));
-            if (m_timer->interval() < backoff)
-                m_timer->setInterval(backoff);
+            const int backoff = qMin(m_intervalMs * 2, 15000);
+            m_timer->setInterval(qMax(m_intervalMs, backoff));
         }
     };
 
@@ -538,7 +560,7 @@ void PriceService::requestHistorySeed() {
     // freegoldapi：长期日线（含近年 Yahoo 日线），用于填充 MA5日/MA20日
     const QUrl url(QStringLiteral("https://freegoldapi.com/data/latest.json"));
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.6.3"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.3.10"));
     request.setTransferTimeout(20000);
     QNetworkReply *reply = m_network->get(request);
     m_pendingHistory = reply;

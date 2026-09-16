@@ -1,27 +1,46 @@
 {
-    "version": 3,
-     "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
-     "configurePresets": [
-        {
-            "name": "debug",
-            "generator": "Ninja",
-            "description": "Use this preset for debug builds.",
-            "binaryDir": "${sourceDir}/build/debug",
-            "cacheVariables": {
-                "CMAKE_CXX_COMPILER":"clang-cl",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "CMAKE_BUILD_TYPE": "Debug",
-                "BUILD_TESTS": "ON",
-                "BUILD_EXAMPLES": "ON"
-            }
-        }
-     ],
-    "buildPresets": [
-        {
-            "name": "debug",
-            "configurePreset": "debug",
-            "description": "Build the project in debug mode.",
-            "targets": ["all"]
-        }
-    ]
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "Debug (Ninja + MSVC)",
+      "description": "VS Code / CMake Tools 调试推荐",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "QT6_ROOT_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
+        "CMAKE_PREFIX_PATH": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "QT6_ROOT_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
+        "CMAKE_PREFIX_PATH": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64"
+      }
+    },
+    {
+      "name": "debug-vs",
+      "displayName": "Debug (Visual Studio 2022)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build-vs",
+      "cacheVariables": {
+        "QT6_ROOT_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
+        "CMAKE_PREFIX_PATH": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "debug-vs", "configurePreset": "debug-vs", "configuration": "Debug" }
+  ]
 }

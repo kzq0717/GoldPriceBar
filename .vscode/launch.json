@@ -2,33 +2,42 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "(gdb) Windows 上的 Bash 启动",
-      "type": "cppdbg",
+      "name": "Debug GoldPriceBarLite",
+      "type": "cppvsdbg",
       "request": "launch",
-      "program": "输入程序名称，例如 ${workspaceFolder}/a.exe",
+      "program": "${workspaceFolder}/build/debug/GoldPriceBarLite.exe",
       "args": [],
-      "stopAtEntry": false,
-      "cwd": "${fileDirname}",
-      "environment": [],
-      "externalConsole": false,
-      "pipeTransport": {
-        "debuggerPath": "/usr/bin/gdb",
-        "pipeProgram": "${env:windir}\\system32\\bash.exe",
-        "pipeArgs": ["-c"],
-        "pipeCwd": ""
-      },
-      "setupCommands": [
+      "cwd": "${workspaceFolder}/build/debug",
+      "environment": [
         {
-          "description": "为 gdb 启用整齐打印",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
+          "name": "PATH",
+          "value": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/bin;${env:PATH}"
         },
         {
-          "description": "将反汇编风格设置为 Intel",
-          "text": "-gdb-set disassembly-flavor intel",
-          "ignoreFailures": true
+          "name": "QT_PLUGIN_PATH",
+          "value": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/plugins"
         }
-      ]
+      ],
+      "console": "internalConsole",
+      "preLaunchTask": "cmake-build-debug"
+    },
+    {
+      "name": "Debug (build.bat Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/Debug/GoldPriceBarLite.exe",
+      "cwd": "${workspaceFolder}/build/Debug",
+      "environment": [
+        {
+          "name": "PATH",
+          "value": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/bin;${env:PATH}"
+        },
+        {
+          "name": "QT_PLUGIN_PATH",
+          "value": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/plugins"
+        }
+      ],
+      "console": "internalConsole"
     }
   ]
 }
