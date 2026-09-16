@@ -62,27 +62,21 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     m_priceService = nullptr;
 
     // 行情服务整段延后到 show 之后，避免构造期崩溃
-    QTimer::singleShot(300, this, [this]() {
+    QTimer::singleShot(500, this, [this]() {
         Logger::info(QStringLiteral("Deferred: new PriceService"));
         m_priceService = new PriceService(this);
         Logger::info(QStringLiteral("Deferred: PriceService object OK"));
+        Logger::info(QStringLiteral("Deferred: connect priceUpdated"));
         connect(m_priceService, &PriceService::priceUpdated,
-                this, &PriceBarWindow::onPriceUpdated);
+                this, &PriceBarWindow::onPriceUpdated, Qt::QueuedConnection);
+        Logger::info(QStringLiteral("Deferred: connect fetchFailed"));
         connect(m_priceService, &PriceService::fetchFailed,
-                this, &PriceBarWindow::onFetchFailed);
-        connect(m_priceService, &PriceService::extremesUpdated, this, [this]() {
-            double high = 0.0;
-            if (HistoryCache::instance().todayHigh(high)) {
-                if (m_priceService && m_priceService->hasValidPrice())
-                    high = qMax(high, m_priceService->lastPrice());
-                m_highLabel->setText(tr("高 %1").arg(high, 0, 'f', 2));
-            }
-        });
-        if (m_chartWindow) {
-            connect(m_priceService, &PriceService::priceUpdated,
-                    m_chartWindow, &ChartWindow::onNewPrice);
-        }
-        Logger::info(QStringLiteral("Deferred: PriceService::start"));
+                this, &PriceBarWindow::onFetchFailed, Qt::QueuedConnection);
+        Logger::info(QStringLiteral("Deferred: connect extremesUpdated"));
+        connect(m_priceService, &PriceService::extremesUpdated,
+                this, &PriceBarWindow::onExtremesUpdated, Qt::QueuedConnection);
+        Logger::info(QStringLiteral("Deferred: all connects done"));
+        Logger::info(QStringLiteral("Deferred: PriceService::start call"));
         m_priceService->start();
         Logger::info(QStringLiteral("Deferred: PriceService::start returned"));
     });
@@ -324,6 +318,18 @@ void PriceBarWindow::onPriceUpdated(double price, double change, const QString& 
         HistoryCache::instance().todayLow(al);
         if (ah > 0 && al > 0)
             ExtremeDatabase::instance().settleForecasts(src, ah, al);
+    }
+}
+
+void PriceBarWindow::onExtremesUpdated()
+{
+    if (!m_highLabel)
+        return;
+    double high = 0.0;
+    if (HistoryCache::instance().todayHigh(high)) {
+        if (m_priceService && m_priceService->hasValidPrice())
+            high = qMax(high, m_priceService->lastPrice());
+        m_highLabel->setText(tr("高 %1").arg(high, 0, 'f', 2));
     }
 }
 

@@ -39,6 +39,7 @@ protected:
 
 private slots:
     void onPriceUpdated(double price, double change, const QString& sourceName);
+    void onExtremesUpdated();
     void onFetchFailed(const QString& error);
     void onSettingsClicked();
     void onChartClicked();

@@ -76,22 +76,37 @@ QString PriceService::currentTypeCode() const
 
 void PriceService::start()
 {
+    Logger::info(QStringLiteral("PriceService::start enter"));
     ensureTimers();
+    Logger::info(QStringLiteral("PriceService::start after timers"));
     if (!m_timer)
         return;
-    if (!m_timer->isActive()) {
-        m_intervalMs = AppSettings::instance().refreshIntervalMs();
-        if (m_intervalMs < 1000)
-            m_intervalMs = 1000;
+    if (m_timer->isActive())
+        return;
+
+    m_intervalMs = AppSettings::instance().refreshIntervalMs();
+    if (m_intervalMs < 1000)
+        m_intervalMs = 1000;
+
+    // 先只启动定时器，网络放到下一事件循环，隔离 NAM 崩溃
+    m_timer->start(m_intervalMs);
+    m_watchdog->start();
+    m_chartSeedTimer->start();
+    Logger::info(QStringLiteral("PriceService::start timers running, schedule net"));
+
+    QTimer::singleShot(300, this, [this]() {
+        Logger::info(QStringLiteral("PriceService: delayed net begin"));
         ensureNetwork();
+        Logger::info(QStringLiteral("PriceService: delayed net after NAM"));
         ExtremeDatabase::instance().purgeIntradayOlderThan(14);
+        Logger::info(QStringLiteral("PriceService: after purge"));
         requestHistorySeed();
+        Logger::info(QStringLiteral("PriceService: after history seed req"));
         requestChartSeed();
+        Logger::info(QStringLiteral("PriceService: after chart seed req"));
         requestPrice();
-        m_timer->start(m_intervalMs);
-        m_watchdog->start();
-        m_chartSeedTimer->start();
-    }
+        Logger::info(QStringLiteral("PriceService: after first price req"));
+    });
 }
 
 void PriceService::stop()
