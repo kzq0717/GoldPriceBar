@@ -46,6 +46,7 @@ private slots:
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
     void onSettingsChanged();
     void onAlertBlinkTick();
+    void ensureSecondaryNam();
     void onSecondaryTimer();
     void onSecondaryFinished(QNetworkReply* reply);
 

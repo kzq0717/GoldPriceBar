@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     QApplication::setApplicationName("GoldPriceBarLite");
-    QApplication::setApplicationVersion("1.3.3");
+    QApplication::setApplicationVersion("1.3.4");
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app.png")));
     QApplication::setOrganizationName("GoldPriceBarLite");
     QApplication::setOrganizationDomain("local");
@@ -105,6 +105,8 @@ int main(int argc, char *argv[])
     window.show();
     window.raise();
     window.activateWindow();
+    AppSettings::instance().applyNetworkProxy();
+    Logger::info(QStringLiteral("Proxy applied after window show"));
     Logger::info(QStringLiteral("Main window shown geo=%1,%2 %3x%4")
                      .arg(window.x()).arg(window.y())
                      .arg(window.width()).arg(window.height()));

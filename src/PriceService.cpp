@@ -16,6 +16,7 @@
 PriceService::PriceService(QObject* parent)
     : QObject(parent)
 {
+    Logger::info(QStringLiteral("PriceService ctor: timers"));
     m_timer = new QTimer(this);
     m_timer->setSingleShot(false);
     m_timer->setTimerType(Qt::CoarseTimer);
@@ -26,14 +27,26 @@ PriceService::PriceService(QObject* parent)
     m_watchdog->setSingleShot(false);
     connect(m_watchdog, &QTimer::timeout, this, &PriceService::onWatchdog);
 
-    // 定期用全日分时接口校正「今日最高/最低」（避免仅统计启动后轮询点）
     m_chartSeedTimer = new QTimer(this);
-    m_chartSeedTimer->setInterval(120000); // 2 分钟
+    m_chartSeedTimer->setInterval(120000);
     m_chartSeedTimer->setSingleShot(false);
     connect(m_chartSeedTimer, &QTimer::timeout, this, &PriceService::onChartSeedTimer);
 
-    m_network = new QNetworkAccessManager(this);
+    // NAM 延后到 ensureNetwork()，避免构造期与代理/SSL 初始化冲突导致 0xc0000005
+    m_network = nullptr;
     m_intervalMs = AppSettings::instance().refreshIntervalMs();
+    if (m_intervalMs < 1000)
+        m_intervalMs = 1000;
+    Logger::info(QStringLiteral("PriceService ctor: done interval=%1").arg(m_intervalMs));
+}
+
+void PriceService::ensureNetwork()
+{
+    if (m_network)
+        return;
+    Logger::info(QStringLiteral("PriceService: creating QNetworkAccessManager"));
+    m_network = new QNetworkAccessManager(this);
+    Logger::info(QStringLiteral("PriceService: NAM ready"));
 }
 
 PriceService::~PriceService()
@@ -62,9 +75,10 @@ QString PriceService::currentTypeCode() const
 void PriceService::start()
 {
     if (!m_timer->isActive()) {
+        ensureNetwork();
         ExtremeDatabase::instance().purgeIntradayOlderThan(14);
         requestHistorySeed();
-        requestChartSeed();   // 启动即拉全日分时，校正最高价
+        requestChartSeed();
         requestPrice();
         m_timer->start(m_intervalMs);
         m_watchdog->start();
@@ -142,6 +156,7 @@ void PriceService::onWatchdog()
 
 void PriceService::recreateNetworkManager()
 {
+    Logger::info(QStringLiteral("PriceService: recreateNetworkManager"));
     // 崩溃根因：reply 是 NAM 的子对象。对 reply abort/deleteLater 后再
     // deleteLater NAM，会二次销毁，QPointer::clear 前后都可能踩内存。
     // 正确做法：先断开信号并清空 QPointer，再只销毁 NAM（子 reply 随父销毁）。
@@ -188,6 +203,8 @@ void PriceService::abortPending()
 
 void PriceService::requestChartSeed()
 {
+    ensureNetwork();
+    if (!m_network) return;
     if (m_pendingChart)
         return;
     if (!m_network)
@@ -281,6 +298,11 @@ void PriceService::requestPrice()
 
 void PriceService::requestPriceFromBackup(int backupIndex)
 {
+    ensureNetwork();
+    if (!m_network) {
+        emit fetchFailed(tr("网络组件未初始化"));
+        return;
+    }
     if (m_pendingReply)
         return;
 
@@ -503,6 +525,8 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
 
 void PriceService::requestHistorySeed()
 {
+    ensureNetwork();
+    if (!m_network) return;
     if (m_historySeeded || m_pendingHistory)
         return;
     if (!m_network)
