@@ -14,23 +14,19 @@
 #include "SingleInstance.h"
 
 #ifdef Q_OS_WIN
-#  include <windows.h>
+#include <windows.h>
 #endif
 
-static void earlyFail(const QString& title, const QString& text)
-{
+static void earlyFail(const QString &title, const QString &text) {
 #ifdef Q_OS_WIN
-    MessageBoxW(nullptr,
-                reinterpret_cast<LPCWSTR>(text.utf16()),
-                reinterpret_cast<LPCWSTR>(title.utf16()),
-                MB_OK | MB_ICONERROR);
+    MessageBoxW(nullptr, reinterpret_cast<LPCWSTR>(text.utf16()), reinterpret_cast<LPCWSTR>(title.utf16()),
+        MB_OK | MB_ICONERROR);
 #else
     QMessageBox::critical(nullptr, title, text);
 #endif
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     // 便于从资源管理器双击：把 exe 同目录加入 DLL 搜索路径（部署后 Qt*.dll 在旁边）
 #ifdef Q_OS_WIN
     {
@@ -54,33 +50,28 @@ int main(int argc, char *argv[])
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app.png")));
     QApplication::setOrganizationName("GoldPriceBarLite");
     QApplication::setOrganizationDomain("local");
-
-    QApplication::setHighDpiScaleFactorRoundingPolicy(
-        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+    QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
     // 平台插件未部署时双击会“无反应”，尽量给出提示
     if (QGuiApplication::platformName().isEmpty()) {
-        earlyFail(QStringLiteral("启动失败"),
-                  QStringLiteral(
-                      "未能加载 Qt 平台插件（platforms/qwindows.dll）。\n\n"
-                      "请在本机执行：\n"
-                      "  build.bat deploy\n"
-                      "或：\n"
-                      "  deploy.bat\n"
-                      "或用 run_with_qt.bat 启动（会把 Qt bin 加入 PATH）。"));
+        earlyFail(QStringLiteral("启动失败"), QStringLiteral("未能加载 Qt 平台插件（platforms/qwindows.dll）。\n\n"
+                                                             "请在本机执行：\n"
+                                                             "  build.bat deploy\n"
+                                                             "或：\n"
+                                                             "  deploy.bat\n"
+                                                             "或用 run_with_qt.bat 启动（会把 Qt bin 加入 PATH）。"));
         return 2;
     }
 
     // 单实例
     SingleInstance single(QStringLiteral("GoldPriceBarLite_single_instance"));
     if (!single.tryLock()) {
-        earlyFail(QStringLiteral("已在运行"),
-                  QStringLiteral(
-                      "GoldPriceBarLite 已在运行。\n"
-                      "请查看系统托盘（右下角）图标，右键可「显示/隐藏价格条」。\n"
-                      "快捷键：Ctrl+Shift+G\n\n"
-                      "若确认已退出仍提示，可删除临时目录下：\n"
-                      "GoldPriceBarLite_single_instance.lock"));
+        earlyFail(
+            QStringLiteral("已在运行"), QStringLiteral("GoldPriceBarLite 已在运行。\n"
+                                                       "请查看系统托盘（右下角）图标，右键可「显示/隐藏价格条」。\n"
+                                                       "快捷键：Ctrl+Shift+G\n\n"
+                                                       "若确认已退出仍提示，可删除临时目录下：\n"
+                                                       "GoldPriceBarLite_single_instance.lock"));
         return 1;
     }
 
@@ -88,17 +79,17 @@ int main(int argc, char *argv[])
 
     Logger::init();
     CrashHandler::install();
+
     Logger::info(QStringLiteral("=== GoldPriceBarLite %1 BUILD MARKER deferred-PriceService ===")
-                     .arg(QApplication::applicationVersion()));
+            .arg(QApplication::applicationVersion()));
+
     Logger::info(QStringLiteral("Application start, version %1 platform=%2")
-                     .arg(QApplication::applicationVersion(),
-                          QGuiApplication::platformName()));
+            .arg(QApplication::applicationVersion(), QGuiApplication::platformName()));
 
     if (!ExtremeDatabase::instance().open()) {
         Logger::warn(QStringLiteral("SQLite open failed, extremes will not persist"));
     } else {
-        Logger::info(QStringLiteral("SQLite: %1")
-                         .arg(ExtremeDatabase::instance().databasePath()));
+        Logger::info(QStringLiteral("SQLite: %1").arg(ExtremeDatabase::instance().databasePath()));
     }
 
     Logger::info(QStringLiteral("Creating PriceBarWindow..."));
@@ -110,8 +101,10 @@ int main(int argc, char *argv[])
     AppSettings::instance().applyNetworkProxy();
     Logger::info(QStringLiteral("Proxy applied after window show"));
     Logger::info(QStringLiteral("Main window shown geo=%1,%2 %3x%4")
-                     .arg(window.x()).arg(window.y())
-                     .arg(window.width()).arg(window.height()));
+            .arg(window.x())
+            .arg(window.y())
+            .arg(window.width())
+            .arg(window.height()));
 
     const int code = app.exec();
     Logger::info(QStringLiteral("Application exit, code=%1").arg(code));

@@ -42,9 +42,8 @@
 #include <QtMath>
 #include <algorithm>
 
-PriceBarWindow::PriceBarWindow(QWidget* parent)
-    : QWidget(parent)
-{
+PriceBarWindow::PriceBarWindow(QWidget *parent) : QWidget(parent) {
+
     Logger::info(QStringLiteral("PriceBarWindow ctor step1 flags"));
     // 不用 Qt::Tool：部分环境会导致无任务栏入口且与托盘组合异常退出
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
@@ -66,15 +65,15 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
         Logger::info(QStringLiteral("Deferred: new PriceService"));
         m_priceService = new PriceService(this);
         Logger::info(QStringLiteral("Deferred: PriceService object OK"));
+
         Logger::info(QStringLiteral("Deferred: connect priceUpdated"));
-        connect(m_priceService, &PriceService::priceUpdated,
-                this, &PriceBarWindow::onPriceUpdated, Qt::QueuedConnection);
+        connect(
+            m_priceService, &PriceService::priceUpdated, this, &PriceBarWindow::onPriceUpdated, Qt::QueuedConnection);
         Logger::info(QStringLiteral("Deferred: connect fetchFailed"));
-        connect(m_priceService, &PriceService::fetchFailed,
-                this, &PriceBarWindow::onFetchFailed, Qt::QueuedConnection);
+        connect(m_priceService, &PriceService::fetchFailed, this, &PriceBarWindow::onFetchFailed, Qt::QueuedConnection);
         Logger::info(QStringLiteral("Deferred: connect extremesUpdated"));
-        connect(m_priceService, &PriceService::extremesUpdated,
-                this, &PriceBarWindow::onExtremesUpdated, Qt::QueuedConnection);
+        connect(m_priceService, &PriceService::extremesUpdated, this, &PriceBarWindow::onExtremesUpdated,
+            Qt::QueuedConnection);
         Logger::info(QStringLiteral("Deferred: all connects done"));
         Logger::info(QStringLiteral("Deferred: PriceService::start call"));
         m_priceService->start();
@@ -86,6 +85,7 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
         setupTray();
         Logger::info(QStringLiteral("Deferred: setupTray end"));
     });
+
     QTimer::singleShot(2000, this, [this]() {
         Logger::info(QStringLiteral("Deferred: setupHotkey begin"));
         setupHotkey();
@@ -99,6 +99,7 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
         m_dcaTimer->start();
         QTimer::singleShot(5000, this, &PriceBarWindow::checkDcaReminder);
     }
+
     if (!m_dailyReportTimer) {
         m_dailyReportTimer = new QTimer(this);
         m_dailyReportTimer->setInterval(30 * 1000);
@@ -111,20 +112,18 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     }
 
     // 初始位置：屏幕右上角附近
-    if (QScreen* screen = QApplication::primaryScreen()) {
+    if (QScreen *screen = QApplication::primaryScreen()) {
         const QRect geo = screen->availableGeometry();
         move(geo.right() - width() - 20, geo.top() + 40);
     }
 }
 
-PriceBarWindow::~PriceBarWindow()
-{
+PriceBarWindow::~PriceBarWindow() {
     AppSettings::instance().save();
 }
 
-void PriceBarWindow::setupUi()
-{
-    auto* layout = new QHBoxLayout(this);
+void PriceBarWindow::setupUi() {
+    auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(10, 4, 8, 4);
     layout->setSpacing(6);
 
@@ -184,16 +183,14 @@ void PriceBarWindow::setupUi()
     m_chartButton->setToolTip(tr("查看今日分时曲线"));
     m_chartButton->setAutoRaise(true);
     m_chartButton->setFixedSize(28, 28);
-    connect(m_chartButton, &QToolButton::clicked,
-            this, &PriceBarWindow::onChartClicked);
+    connect(m_chartButton, &QToolButton::clicked, this, &PriceBarWindow::onChartClicked);
 
     m_settingsButton = new QToolButton(this);
     m_settingsButton->setText(QStringLiteral("⚙"));
     m_settingsButton->setToolTip(tr("设置"));
     m_settingsButton->setAutoRaise(true);
     m_settingsButton->setFixedSize(28, 28);
-    connect(m_settingsButton, &QToolButton::clicked,
-            this, &PriceBarWindow::onSettingsClicked);
+    connect(m_settingsButton, &QToolButton::clicked, this, &PriceBarWindow::onSettingsClicked);
 
     layout->addWidget(m_sourceLabel);
     layout->addWidget(m_priceLabel);
@@ -216,8 +213,7 @@ void PriceBarWindow::setupUi()
     Logger::info(QStringLiteral("setupUi: done"));
 }
 
-void PriceBarWindow::setupTray()
-{
+void PriceBarWindow::setupTray() {
     m_trayIcon = new QSystemTrayIcon(this);
     {
         const QIcon appIcon(QStringLiteral(":/app.png"));
@@ -228,13 +224,10 @@ void PriceBarWindow::setupTray()
             m_trayIcon->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
         }
     }
-    m_trayIcon->setToolTip(tr("GoldPriceBarLite %1  |  Ctrl+Shift+G 显隐")
-        .arg(QApplication::applicationVersion()));
+    m_trayIcon->setToolTip(tr("GoldPriceBarLite %1  |  Ctrl+Shift+G 显隐").arg(QApplication::applicationVersion()));
 
-    auto* menu = new QMenu(this);
-    menu->addAction(tr("显示/隐藏价格条"), this, [this]() {
-        setVisible(!isVisible());
-    });
+    auto *menu = new QMenu(this);
+    menu->addAction(tr("显示/隐藏价格条"), this, [this]() { setVisible(!isVisible()); });
     menu->addAction(tr("分时曲线"), this, &PriceBarWindow::onChartClicked);
     menu->addAction(tr("今日摘要"), this, [this]() { showDailyReport(true); });
     menu->addAction(tr("宏观日程"), this, [this]() {
@@ -246,32 +239,28 @@ void PriceBarWindow::setupTray()
         AppSettings::instance().setDcaLastExecutedDate(today);
         AppSettings::instance().save();
         if (m_trayIcon)
-            m_trayIcon->showMessage(tr("定投"), tr("已记录今日定投执行"),
-                                    QSystemTrayIcon::Information, 3000);
+            m_trayIcon->showMessage(tr("定投"), tr("已记录今日定投执行"), QSystemTrayIcon::Information, 3000);
     });
     menu->addAction(tr("关于"), this, &PriceBarWindow::showAbout);
     menu->addAction(tr("检查更新"), this, [this]() {
-        auto* c = new UpdateChecker(this);
+        auto *c = new UpdateChecker(this);
         c->check(this, false);
     });
     menu->addSeparator();
-    auto* sentimentAct = menu->addAction(tr("黄金舆情 · 热点（需在设置中开启）"));
+    auto *sentimentAct = menu->addAction(tr("黄金舆情 · 热点（需在设置中开启）"));
     connect(sentimentAct, &QAction::triggered, this, &PriceBarWindow::onSentimentClicked);
     menu->addAction(tr("退出"), qApp, &QApplication::quit);
 
     m_trayIcon->setContextMenu(menu);
-    connect(m_trayIcon, &QSystemTrayIcon::activated,
-            this, &PriceBarWindow::onTrayActivated);
+    connect(m_trayIcon, &QSystemTrayIcon::activated, this, &PriceBarWindow::onTrayActivated);
     m_trayIcon->show();
 }
 
-void PriceBarWindow::updatePriceDisplay(double price, double change, const QString& sourceName)
-{
+void PriceBarWindow::updatePriceDisplay(double price, double change, const QString &sourceName) {
     m_sourceLabel->setText(sourceName);
     m_priceLabel->setText(QString::number(price, 'f', 2));
 
-    const QString changeText = (change >= 0 ? "+" : "")
-                               + QString::number(change, 'f', 2);
+    const QString changeText = (change >= 0 ? "+" : "") + QString::number(change, 'f', 2);
     m_changeLabel->setText(changeText);
 
     // 红涨绿跌
@@ -297,13 +286,11 @@ void PriceBarWindow::updatePriceDisplay(double price, double change, const QStri
     checkPlanAlerts(price);
 }
 
-void PriceBarWindow::applyOpacity()
-{
+void PriceBarWindow::applyOpacity() {
     setWindowOpacity(AppSettings::instance().opacity());
 }
 
-void PriceBarWindow::onPriceUpdated(double price, double change, const QString& sourceName)
-{
+void PriceBarWindow::onPriceUpdated(double price, double change, const QString &sourceName) {
     updatePriceDisplay(price, change, sourceName);
     updatePnLDisplay(price);
     evaluateSmartAlerts(price);
@@ -311,8 +298,7 @@ void PriceBarWindow::onPriceUpdated(double price, double change, const QString& 
     updateNetworkHealth();
     {
         const QString src = AppSettings::instance().dataSource();
-        ExtremeDatabase::instance().insertQuoteSample(
-            QDateTime::currentDateTime(), src, price, change);
+        ExtremeDatabase::instance().insertQuoteSample(QDateTime::currentDateTime(), src, price, change);
         double ah = 0, al = 0;
         HistoryCache::instance().todayHigh(ah);
         HistoryCache::instance().todayLow(al);
@@ -321,8 +307,7 @@ void PriceBarWindow::onPriceUpdated(double price, double change, const QString& 
     }
 }
 
-void PriceBarWindow::onExtremesUpdated()
-{
+void PriceBarWindow::onExtremesUpdated() {
     if (!m_highLabel)
         return;
     double high = 0.0;
@@ -333,8 +318,7 @@ void PriceBarWindow::onExtremesUpdated()
     }
 }
 
-void PriceBarWindow::onFetchFailed(const QString& error)
-{
+void PriceBarWindow::onFetchFailed(const QString &error) {
     updateNetworkHealth();
 
     m_priceLabel->setText(tr("--.--"));
@@ -342,8 +326,7 @@ void PriceBarWindow::onFetchFailed(const QString& error)
     m_changeLabel->setStyleSheet("color: #e67e22; font-size: 11px;");
 }
 
-void PriceBarWindow::onSettingsClicked()
-{
+void PriceBarWindow::onSettingsClicked() {
     if (!m_settingsDialog) {
         m_settingsDialog = new SettingsDialog(this);
     }
@@ -352,8 +335,7 @@ void PriceBarWindow::onSettingsClicked()
     m_settingsDialog->activateWindow();
 }
 
-void PriceBarWindow::onChartClicked()
-{
+void PriceBarWindow::onChartClicked() {
     Logger::info(QStringLiteral("onChartClicked"));
     if (!m_chartWindow) {
         // 不作为 PriceBar 子控件，避免父子销毁顺序问题
@@ -361,8 +343,8 @@ void PriceBarWindow::onChartClicked()
         m_chartWindow = new ChartWindow(nullptr);
         m_chartWindow->setAttribute(Qt::WA_DeleteOnClose, false);
         if (m_priceService) {
-            connect(m_priceService, &PriceService::priceUpdated,
-                    m_chartWindow, &ChartWindow::onNewPrice, Qt::QueuedConnection);
+            connect(m_priceService, &PriceService::priceUpdated, m_chartWindow, &ChartWindow::onNewPrice,
+                Qt::QueuedConnection);
         }
         Logger::info(QStringLiteral("ChartWindow created"));
     }
@@ -374,14 +356,11 @@ void PriceBarWindow::onChartClicked()
     Logger::info(QStringLiteral("ChartWindow shown"));
 }
 
-void PriceBarWindow::onSentimentClicked()
-{
+void PriceBarWindow::onSentimentClicked() {
     if (!AppSettings::instance().sentimentEnabled()) {
         if (m_trayIcon) {
             m_trayIcon->showMessage(
-                tr("黄金舆情"),
-                tr("请在设置中勾选「启用黄金舆情监测」后再打开。"),
-                QSystemTrayIcon::Information, 4000);
+                tr("黄金舆情"), tr("请在设置中勾选「启用黄金舆情监测」后再打开。"), QSystemTrayIcon::Information, 4000);
         }
         return;
     }
@@ -395,17 +374,13 @@ void PriceBarWindow::onSentimentClicked()
     m_sentimentDialog->refresh();
 }
 
-
-void PriceBarWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
-{
-    if (reason == QSystemTrayIcon::Trigger
-        || reason == QSystemTrayIcon::DoubleClick) {
+void PriceBarWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {
+    if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
         setVisible(!isVisible());
     }
 }
 
-void PriceBarWindow::onSettingsChanged()
-{
+void PriceBarWindow::onSettingsChanged() {
     applyOpacity();
     const int ms = AppSettings::instance().refreshIntervalMs();
     if (m_priceService)
@@ -436,9 +411,7 @@ void PriceBarWindow::onSettingsChanged()
     }
 }
 
-
-void PriceBarWindow::mousePressEvent(QMouseEvent* event)
-{
+void PriceBarWindow::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
         m_dragging = true;
         m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
@@ -448,11 +421,10 @@ void PriceBarWindow::mousePressEvent(QMouseEvent* event)
     QWidget::mousePressEvent(event);
 }
 
-void PriceBarWindow::mouseMoveEvent(QMouseEvent* event)
-{
+void PriceBarWindow::mouseMoveEvent(QMouseEvent *event) {
     if (m_dragging && (event->buttons() & Qt::LeftButton)) {
         QPoint pos = event->globalPosition().toPoint() - m_dragOffset;
-        QScreen* screen = QApplication::screenAt(event->globalPosition().toPoint());
+        QScreen *screen = QApplication::screenAt(event->globalPosition().toPoint());
         if (!screen)
             screen = QApplication::primaryScreen();
         if (screen) {
@@ -467,8 +439,7 @@ void PriceBarWindow::mouseMoveEvent(QMouseEvent* event)
     QWidget::mouseMoveEvent(event);
 }
 
-void PriceBarWindow::mouseReleaseEvent(QMouseEvent* event)
-{
+void PriceBarWindow::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton && m_dragging) {
         m_dragging = false;
         event->accept();
@@ -477,17 +448,14 @@ void PriceBarWindow::mouseReleaseEvent(QMouseEvent* event)
     QWidget::mouseReleaseEvent(event);
 }
 
-bool PriceBarWindow::eventFilter(QObject* watched, QEvent* event)
-{
+bool PriceBarWindow::eventFilter(QObject *watched, QEvent *event) {
     // 子控件（标签/按钮）会抢走鼠标，导致只能点空白处拖、纵向几乎拖不动
-    if (event->type() == QEvent::MouseButtonPress
-        || event->type() == QEvent::MouseMove
-        || event->type() == QEvent::MouseButtonRelease) {
-        auto* me = static_cast<QMouseEvent*>(event);
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
+        event->type() == QEvent::MouseButtonRelease) {
+        auto *me = static_cast<QMouseEvent *>(event);
         // 工具按钮左键交给自身点击；其余区域一律用于拖动
-        const bool isToolBtn = qobject_cast<QToolButton*>(watched) != nullptr;
-        if (isToolBtn && event->type() == QEvent::MouseButtonPress
-            && me->button() == Qt::LeftButton) {
+        const bool isToolBtn = qobject_cast<QToolButton *>(watched) != nullptr;
+        if (isToolBtn && event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
             return QWidget::eventFilter(watched, event);
         }
         if (event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
@@ -495,10 +463,9 @@ bool PriceBarWindow::eventFilter(QObject* watched, QEvent* event)
             m_dragOffset = me->globalPosition().toPoint() - frameGeometry().topLeft();
             return true;
         }
-        if (event->type() == QEvent::MouseMove && m_dragging
-            && (me->buttons() & Qt::LeftButton)) {
+        if (event->type() == QEvent::MouseMove && m_dragging && (me->buttons() & Qt::LeftButton)) {
             QPoint pos = me->globalPosition().toPoint() - m_dragOffset;
-            QScreen* screen = QApplication::screenAt(me->globalPosition().toPoint());
+            QScreen *screen = QApplication::screenAt(me->globalPosition().toPoint());
             if (!screen)
                 screen = QApplication::primaryScreen();
             if (screen) {
@@ -519,21 +486,19 @@ bool PriceBarWindow::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
-void PriceBarWindow::installDragFilter()
-{
-    const auto kids = findChildren<QWidget*>();
-    for (QWidget* w : kids) {
+void PriceBarWindow::installDragFilter() {
+    const auto kids = findChildren<QWidget *>();
+    for (QWidget *w : kids) {
         if (w == this)
             continue;
         w->installEventFilter(this);
         // 标签不抢焦点，便于拖动
-        if (qobject_cast<QLabel*>(w))
+        if (qobject_cast<QLabel *>(w))
             w->setAttribute(Qt::WA_TransparentForMouseEvents, false);
     }
 }
 
-void PriceBarWindow::relayoutBar()
-{
+void PriceBarWindow::relayoutBar() {
     if (!layout())
         return;
     layout()->activate();
@@ -547,15 +512,13 @@ void PriceBarWindow::relayoutBar()
     resize(w, h);
 }
 
-void PriceBarWindow::closeEvent(QCloseEvent* event)
-{
+void PriceBarWindow::closeEvent(QCloseEvent *event) {
     // 关闭时隐藏到托盘，而不是退出
     hide();
     event->ignore();
 }
 
-void PriceBarWindow::updateAlertIndicator(double price)
-{
+void PriceBarWindow::updateAlertIndicator(double price) {
     if (!m_alertDot)
         return;
 
@@ -591,8 +554,7 @@ void PriceBarWindow::updateAlertIndicator(double price)
         maybeTrayNotify(kind, price);
 }
 
-void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
-{
+void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price) {
     if (!m_trayIcon || !AppSettings::instance().trayNotifyOnAlert())
         return;
     if (kind == AlertKind::None)
@@ -602,7 +564,7 @@ void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
 
     const int cool = AppSettings::instance().alertCooldownSec();
     const QDateTime now = QDateTime::currentDateTime();
-    QDateTime* last = (kind == AlertKind::High) ? &m_lastHighNotify : &m_lastLowNotify;
+    QDateTime *last = (kind == AlertKind::High) ? &m_lastHighNotify : &m_lastLowNotify;
     if (last->isValid() && last->secsTo(now) < cool)
         return;
     *last = now;
@@ -610,32 +572,19 @@ void PriceBarWindow::maybeTrayNotify(AlertKind kind, double price)
     const QString title = tr("金价预警");
     QString body;
     if (kind == AlertKind::High) {
-        body = tr("现价 %1 ≥ 高预警 %2")
-                   .arg(price, 0, 'f', 2)
-                   .arg(AppSettings::instance().alertHigh(), 0, 'f', 2);
+        body = tr("现价 %1 ≥ 高预警 %2").arg(price, 0, 'f', 2).arg(AppSettings::instance().alertHigh(), 0, 'f', 2);
     } else {
-        body = tr("现价 %1 ≤ 低预警 %2")
-                   .arg(price, 0, 'f', 2)
-                   .arg(AppSettings::instance().alertLow(), 0, 'f', 2);
+        body = tr("现价 %1 ≤ 低预警 %2").arg(price, 0, 'f', 2).arg(AppSettings::instance().alertLow(), 0, 'f', 2);
     }
     m_trayIcon->showMessage(title, body, QSystemTrayIcon::Warning, 5000);
     if (AppSettings::instance().alertSound())
         QApplication::beep();
-    ExtremeDatabase::instance().insertAlertEvent(
-        QDateTime::currentDateTime(),
-        AppSettings::instance().dataSource(),
-        kind == AlertKind::High ? QStringLiteral("high") : QStringLiteral("low"),
-        price,
-        kind == AlertKind::High ? AppSettings::instance().alertHigh()
-                                : AppSettings::instance().alertLow(),
-        body);
+    ExtremeDatabase::instance().insertAlertEvent(QDateTime::currentDateTime(), AppSettings::instance().dataSource(),
+        kind == AlertKind::High ? QStringLiteral("high") : QStringLiteral("low"), price,
+        kind == AlertKind::High ? AppSettings::instance().alertHigh() : AppSettings::instance().alertLow(), body);
 }
 
-
-
-
-void PriceBarWindow::checkPlanAlerts(double price)
-{
+void PriceBarWindow::checkPlanAlerts(double price) {
     if (price <= 0.0 || !AppSettings::instance().planEnabled())
         return;
     if (AppSettings::instance().isInQuietHours())
@@ -643,20 +592,14 @@ void PriceBarWindow::checkPlanAlerts(double price)
     if (!m_trayIcon || !AppSettings::instance().trayNotifyOnAlert())
         return;
 
-    const auto& s = AppSettings::instance();
+    const auto &s = AppSettings::instance();
     QString msg;
     if (s.planInvalidPrice() > 0.0 && price <= s.planInvalidPrice())
-        msg = tr("现价 %1 触及计划失效价 %2，计划作废")
-                  .arg(price, 0, 'f', 2)
-                  .arg(s.planInvalidPrice(), 0, 'f', 2);
+        msg = tr("现价 %1 触及计划失效价 %2，计划作废").arg(price, 0, 'f', 2).arg(s.planInvalidPrice(), 0, 'f', 2);
     else if (s.planBuyPrice() > 0.0 && price <= s.planBuyPrice())
-        msg = tr("现价 %1 进入买入观察区（≤ %2）")
-                  .arg(price, 0, 'f', 2)
-                  .arg(s.planBuyPrice(), 0, 'f', 2);
+        msg = tr("现价 %1 进入买入观察区（≤ %2）").arg(price, 0, 'f', 2).arg(s.planBuyPrice(), 0, 'f', 2);
     else if (s.planSellPrice() > 0.0 && price >= s.planSellPrice())
-        msg = tr("现价 %1 进入卖出观察区（≥ %2）")
-                  .arg(price, 0, 'f', 2)
-                  .arg(s.planSellPrice(), 0, 'f', 2);
+        msg = tr("现价 %1 进入卖出观察区（≥ %2）").arg(price, 0, 'f', 2).arg(s.planSellPrice(), 0, 'f', 2);
     if (msg.isEmpty())
         return;
 
@@ -667,13 +610,10 @@ void PriceBarWindow::checkPlanAlerts(double price)
     m_lastPlanNotify = now;
     m_trayIcon->showMessage(tr("交易计划"), msg, QSystemTrayIcon::Information, 6000);
     ExtremeDatabase::instance().insertAlertEvent(
-        now, AppSettings::instance().dataSource(), QStringLiteral("plan"),
-        price, 0.0, msg);
+        now, AppSettings::instance().dataSource(), QStringLiteral("plan"), price, 0.0, msg);
 }
 
-
-void PriceBarWindow::updateSecondaryVisibility()
-{
+void PriceBarWindow::updateSecondaryVisibility() {
     const bool on = AppSettings::instance().showSecondaryPrice();
     if (!m_secondaryLabel)
         return;
@@ -701,16 +641,14 @@ void PriceBarWindow::updateSecondaryVisibility()
     }
 }
 
-void PriceBarWindow::ensureSecondaryNam()
-{
+void PriceBarWindow::ensureSecondaryNam() {
     if (!m_secondaryNam) {
         Logger::info(QStringLiteral("Creating secondary QNetworkAccessManager"));
         m_secondaryNam = new QNetworkAccessManager(this);
     }
 }
 
-void PriceBarWindow::onSecondaryTimer()
-{
+void PriceBarWindow::onSecondaryTimer() {
     ensureSecondaryNam();
 
     if (!AppSettings::instance().showSecondaryPrice())
@@ -722,22 +660,18 @@ void PriceBarWindow::onSecondaryTimer()
 
     // 主源已是伦敦金时，对照改拉浙商
     const QString primary = AppSettings::instance().dataSource();
-    const QString sec = (primary == QStringLiteral("gj") || primary == QStringLiteral("xau"))
-                            ? QStringLiteral("zs")
-                            : QStringLiteral("gj");
+    const QString sec = (primary == QStringLiteral("gj") || primary == QStringLiteral("xau")) ? QStringLiteral("zs")
+                                                                                              : QStringLiteral("gj");
     const QUrl url(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1").arg(sec));
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.3.0"));
     req.setTransferTimeout(8000);
-    QNetworkReply* reply = m_secondaryNam->get(req);
+    QNetworkReply *reply = m_secondaryNam->get(req);
     m_secondaryReply = reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        onSecondaryFinished(reply);
-    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { onSecondaryFinished(reply); });
 }
 
-void PriceBarWindow::onSecondaryFinished(QNetworkReply* reply)
-{
+void PriceBarWindow::onSecondaryFinished(QNetworkReply *reply) {
     if (m_secondaryReply.data() == reply)
         m_secondaryReply.clear();
     if (!reply)
@@ -763,15 +697,12 @@ void PriceBarWindow::onSecondaryFinished(QNetworkReply* reply)
     m_lastSecondaryPrice = price;
     if (m_lastPrice > 0.0) {
         evaluatePremium(m_lastPrice);
-        ExtremeDatabase::instance().insertSecondaryQuote(
-            QDateTime::currentDateTime(),
-            AppSettings::instance().dataSource(), m_lastPrice,
-            QStringLiteral("gj"), price);
+        ExtremeDatabase::instance().insertSecondaryQuote(QDateTime::currentDateTime(),
+            AppSettings::instance().dataSource(), m_lastPrice, QStringLiteral("gj"), price);
     }
 }
 
-void PriceBarWindow::onAlertBlinkTick()
-{
+void PriceBarWindow::onAlertBlinkTick() {
     if (!m_alertDot || m_alertKind == AlertKind::None)
         return;
 
@@ -781,20 +712,15 @@ void PriceBarWindow::onAlertBlinkTick()
         return;
     }
     if (m_alertKind == AlertKind::High) {
-        m_alertDot->setStyleSheet(
-            "color: #ff3333; font-size: 14px; font-weight: bold;");
-        m_alertDot->setToolTip(tr("高价预警：现价 ≥ %1")
-                                   .arg(AppSettings::instance().alertHigh(), 0, 'f', 2));
+        m_alertDot->setStyleSheet("color: #ff3333; font-size: 14px; font-weight: bold;");
+        m_alertDot->setToolTip(tr("高价预警：现价 ≥ %1").arg(AppSettings::instance().alertHigh(), 0, 'f', 2));
     } else {
-        m_alertDot->setStyleSheet(
-            "color: #2ecc71; font-size: 14px; font-weight: bold;");
-        m_alertDot->setToolTip(tr("低价预警：现价 ≤ %1")
-                                   .arg(AppSettings::instance().alertLow(), 0, 'f', 2));
+        m_alertDot->setStyleSheet("color: #2ecc71; font-size: 14px; font-weight: bold;");
+        m_alertDot->setToolTip(tr("低价预警：现价 ≤ %1").arg(AppSettings::instance().alertLow(), 0, 'f', 2));
     }
 }
 
-void PriceBarWindow::paintEvent(QPaintEvent* event)
-{
+void PriceBarWindow::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     if (width() < 2 || height() < 2)
         return;
@@ -829,25 +755,22 @@ void PriceBarWindow::paintEvent(QPaintEvent* event)
     }
 }
 
-void PriceBarWindow::applyTheme()
-{
+void PriceBarWindow::applyTheme() {
     const bool dark = AppSettings::instance().darkTheme();
     if (dark) {
-        setStyleSheet(
-            "PriceBarWindow { background: transparent; }"
-            "QToolButton {"
-            "  color: #c5cbe0;"
-            "  border: none;"
-            "  font-size: 13px;"
-            "  padding: 4px 6px;"
-            "  border-radius: 8px;"
-            "}"
-            "QToolButton:hover {"
-            "  background-color: rgba(91,141,239,40);"
-            "  color: #ffffff;"
-            "}"
-            "QLabel { background: transparent; }"
-        );
+        setStyleSheet("PriceBarWindow { background: transparent; }"
+                      "QToolButton {"
+                      "  color: #c5cbe0;"
+                      "  border: none;"
+                      "  font-size: 13px;"
+                      "  padding: 4px 6px;"
+                      "  border-radius: 8px;"
+                      "}"
+                      "QToolButton:hover {"
+                      "  background-color: rgba(91,141,239,40);"
+                      "  color: #ffffff;"
+                      "}"
+                      "QLabel { background: transparent; }");
         if (m_sourceLabel)
             m_sourceLabel->setStyleSheet("color:#8b93a7;font-size:11px;letter-spacing:0.3px;");
         if (m_priceLabel)
@@ -866,21 +789,19 @@ void PriceBarWindow::applyTheme()
             Q_UNUSED(c);
         }
     } else {
-        setStyleSheet(
-            "PriceBarWindow { background: transparent; }"
-            "QToolButton {"
-            "  color: #3d4a5c;"
-            "  border: none;"
-            "  font-size: 13px;"
-            "  padding: 4px 6px;"
-            "  border-radius: 8px;"
-            "}"
-            "QToolButton:hover {"
-            "  background-color: rgba(0,82,217,20);"
-            "  color: #0052d9;"
-            "}"
-            "QLabel { background: transparent; }"
-        );
+        setStyleSheet("PriceBarWindow { background: transparent; }"
+                      "QToolButton {"
+                      "  color: #3d4a5c;"
+                      "  border: none;"
+                      "  font-size: 13px;"
+                      "  padding: 4px 6px;"
+                      "  border-radius: 8px;"
+                      "}"
+                      "QToolButton:hover {"
+                      "  background-color: rgba(0,82,217,20);"
+                      "  color: #0052d9;"
+                      "}"
+                      "QLabel { background: transparent; }");
         if (m_sourceLabel)
             m_sourceLabel->setStyleSheet("color:#6b7c8f;font-size:11px;");
         if (m_priceLabel)
@@ -898,19 +819,14 @@ void PriceBarWindow::applyTheme()
     update();
 }
 
-
-void PriceBarWindow::mouseDoubleClickEvent(QMouseEvent* event)
-{
+void PriceBarWindow::mouseDoubleClickEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton)
         onChartClicked();
     QWidget::mouseDoubleClickEvent(event);
 }
 
-void PriceBarWindow::showAbout()
-{
-    QMessageBox::about(
-        this,
-        tr("关于 GoldPriceBarLite"),
+void PriceBarWindow::showAbout() {
+    QMessageBox::about(this, tr("关于 GoldPriceBarLite"),
         tr("<b>GoldPriceBarLite %1</b><br/>"
            "轻量级积存金/金价浮窗<br/><br/>"
            "数据来源：jin.20021002.xyz 公开接口<br/>"
@@ -919,8 +835,7 @@ void PriceBarWindow::showAbout()
             .arg(QApplication::applicationVersion()));
 }
 
-void PriceBarWindow::toggleVisible()
-{
+void PriceBarWindow::toggleVisible() {
     setVisible(!isVisible());
     if (isVisible()) {
         raise();
@@ -928,8 +843,7 @@ void PriceBarWindow::toggleVisible()
     }
 }
 
-void PriceBarWindow::setupHotkey()
-{
+void PriceBarWindow::setupHotkey() {
     if (!AppSettings::instance().hotkeyEnabled()) {
         if (m_hotkey)
             m_hotkey->unregisterHotkey();
@@ -945,8 +859,7 @@ void PriceBarWindow::setupHotkey()
     }
 }
 
-void PriceBarWindow::checkDcaReminder()
-{
+void PriceBarWindow::checkDcaReminder() {
     const int day = AppSettings::instance().dcaDayOfMonth();
     if (day <= 0 || !m_trayIcon)
         return;
@@ -962,9 +875,8 @@ void PriceBarWindow::checkDcaReminder()
         return;
 
     const QString note = AppSettings::instance().dcaNote().trimmed();
-    QString body = note.isEmpty()
-        ? tr("今天是定投日（每月 %1 日），记得买入积存金。").arg(day)
-        : tr("今天是定投日（每月 %1 日）\n%2").arg(day).arg(note);
+    QString body = note.isEmpty() ? tr("今天是定投日（每月 %1 日），记得买入积存金。").arg(day)
+                                  : tr("今天是定投日（每月 %1 日）\n%2").arg(day).arg(note);
 
     if (AppSettings::instance().dcaLastExecutedDate() == iso)
         body += tr("\n（今日已标记执行）");
@@ -976,10 +888,7 @@ void PriceBarWindow::checkDcaReminder()
     AppSettings::instance().save();
 }
 
-
-
-void PriceBarWindow::updatePnLDisplay(double price)
-{
+void PriceBarWindow::updatePnLDisplay(double price) {
     if (!m_pnlLabel)
         return;
     const double grams = AppSettings::instance().positionGrams();
@@ -995,9 +904,9 @@ void PriceBarWindow::updatePnLDisplay(double price)
     const QString color = pnl >= 0 ? QStringLiteral("#2ecc71") : QStringLiteral("#e74c3c");
     m_pnlLabel->setStyleSheet(QStringLiteral("color:%1;font-size:11px;font-weight:bold;").arg(color));
     m_pnlLabel->setText(tr("盈 %1 (%2%)")
-                            .arg(pnl, 0, 'f', 1)
-                            .arg(pct, 0, 'f', 2)
-                            .replace(QStringLiteral("盈 -"), QStringLiteral("亏 ")));
+            .arg(pnl, 0, 'f', 1)
+            .arg(pct, 0, 'f', 2)
+            .replace(QStringLiteral("盈 -"), QStringLiteral("亏 ")));
     if (pnl < 0)
         m_pnlLabel->setText(tr("亏 %1 (%2%)").arg(-pnl, 0, 'f', 1).arg(pct, 0, 'f', 2));
     else
@@ -1005,9 +914,12 @@ void PriceBarWindow::updatePnLDisplay(double price)
     relayoutBar();
 }
 
-double PriceBarWindow::computeMa5() const
-{
-    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, AppSettings::instance().dataSource() == QStringLiteral("ms") ? QStringLiteral("ms") : (AppSettings::instance().dataSource() == QStringLiteral("gj") ? QStringLiteral("gj") : QStringLiteral("zs")));
+double PriceBarWindow::computeMa5() const {
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(
+        10, AppSettings::instance().dataSource() == QStringLiteral("ms")
+                ? QStringLiteral("ms")
+                : (AppSettings::instance().dataSource() == QStringLiteral("gj") ? QStringLiteral("gj")
+                                                                                : QStringLiteral("zs")));
     if (closes.size() < 5)
         closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
     if (closes.size() < 5)
@@ -1018,25 +930,24 @@ double PriceBarWindow::computeMa5() const
     return s / 5.0;
 }
 
-double PriceBarWindow::computePercentile(double price) const
-{
+double PriceBarWindow::computePercentile(double price) const {
     QString src = AppSettings::instance().dataSource();
-    if (src == QStringLiteral("xau")) src = QStringLiteral("gj");
+    if (src == QStringLiteral("xau"))
+        src = QStringLiteral("gj");
     auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, src);
     if (closes.size() < 5)
         closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
     if (closes.isEmpty() || price <= 0.0)
         return 50.0;
     int below = 0;
-    for (const auto& c : closes) {
+    for (const auto &c : closes) {
         if (c.second < price)
             ++below;
     }
     return 100.0 * static_cast<double>(below) / static_cast<double>(closes.size());
 }
 
-void PriceBarWindow::evaluateSmartAlerts(double price)
-{
+void PriceBarWindow::evaluateSmartAlerts(double price) {
     if (price <= 0.0 || AppSettings::instance().isInQuietHours())
         return;
 
@@ -1071,8 +982,8 @@ void PriceBarWindow::evaluateSmartAlerts(double price)
     m_lastSmartNotify = now;
 
     // 闪点：分位高/站上均线偏红，其余偏绿
-    const bool bullish = reasons.join(QString()).contains(QStringLiteral("站上"))
-                         || reasons.join(QString()).contains(QStringLiteral("偏高"));
+    const bool bullish = reasons.join(QString()).contains(QStringLiteral("站上")) ||
+                         reasons.join(QString()).contains(QStringLiteral("偏高"));
     m_alertKind = bullish ? AlertKind::High : AlertKind::Low;
     if (m_alertDot) {
         m_alertDot->show();
@@ -1081,21 +992,17 @@ void PriceBarWindow::evaluateSmartAlerts(double price)
     }
     if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
         const QString shortMsg = reasons.join(QStringLiteral(" · "));
-        m_trayIcon->showMessage(tr("智能预警"), shortMsg.left(80),
-                                bullish ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information,
-                                3500);
+        m_trayIcon->showMessage(
+            tr("智能预警"), shortMsg.left(80), bullish ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information, 3500);
     }
-    ExtremeDatabase::instance().insertAlertEvent(
-        QDateTime::currentDateTime(),
-        AppSettings::instance().dataSource(),
-        bullish ? QStringLiteral("smart_high") : QStringLiteral("smart_low"),
-        price, 0.0, reasons.join(QStringLiteral(";")));
+    ExtremeDatabase::instance().insertAlertEvent(QDateTime::currentDateTime(), AppSettings::instance().dataSource(),
+        bullish ? QStringLiteral("smart_high") : QStringLiteral("smart_low"), price, 0.0,
+        reasons.join(QStringLiteral(";")));
     if (AppSettings::instance().alertSound())
         QApplication::beep();
 }
 
-void PriceBarWindow::evaluatePremium(double primaryPrice)
-{
+void PriceBarWindow::evaluatePremium(double primaryPrice) {
     if (!AppSettings::instance().premiumAlertEnabled())
         return;
     if (!AppSettings::instance().showSecondaryPrice())
@@ -1130,15 +1037,12 @@ void PriceBarWindow::evaluatePremium(double primaryPrice)
     m_lastPremiumNotify = now;
 
     if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
-        m_trayIcon->showMessage(
-            tr("溢价监测"),
-            tr("比值偏离 %1%（阈 %2%）").arg(devPct, 0, 'f', 1).arg(thr, 0, 'f', 1),
+        m_trayIcon->showMessage(tr("溢价监测"), tr("比值偏离 %1%（阈 %2%）").arg(devPct, 0, 'f', 1).arg(thr, 0, 'f', 1),
             QSystemTrayIcon::Warning, 3500);
     }
 }
 
-QString PriceBarWindow::buildDailyReportText() const
-{
+QString PriceBarWindow::buildDailyReportText() const {
     double high = 0.0, low = 0.0;
     HistoryCache::instance().todayHigh(high);
     HistoryCache::instance().todayLow(low);
@@ -1157,9 +1061,7 @@ QString PriceBarWindow::buildDailyReportText() const
     const double cost = AppSettings::instance().positionCost();
     if (grams > 0 && cost > 0 && price > 0) {
         const double pnl = (price - cost) * grams;
-        lines += tr("持仓浮盈亏：%1 元（%2 克）\n")
-                     .arg(pnl, 0, 'f', 1)
-                     .arg(grams, 0, 'f', 3);
+        lines += tr("持仓浮盈亏：%1 元（%2 克）\n").arg(pnl, 0, 'f', 1).arg(grams, 0, 'f', 3);
     }
     if (m_lastSecondaryPrice > 0)
         lines += tr("对照价：%1\n").arg(m_lastSecondaryPrice, 0, 'f', 2);
@@ -1167,8 +1069,7 @@ QString PriceBarWindow::buildDailyReportText() const
     return lines;
 }
 
-void PriceBarWindow::showDailyReport(bool force)
-{
+void PriceBarWindow::showDailyReport(bool force) {
     // 托盘气泡易被截断/遮挡，强制时用简洁对话框
     const QString text = buildDailyReportText();
     if (force) {
@@ -1188,8 +1089,7 @@ void PriceBarWindow::showDailyReport(bool force)
     }
 }
 
-void PriceBarWindow::checkDailyReport()
-{
+void PriceBarWindow::checkDailyReport() {
     if (!AppSettings::instance().dailyReportEnabled())
         return;
     if (AppSettings::instance().isInQuietHours())
@@ -1206,9 +1106,7 @@ void PriceBarWindow::checkDailyReport()
     showDailyReport(false);
 }
 
-
-void PriceBarWindow::updateNetworkHealth()
-{
+void PriceBarWindow::updateNetworkHealth() {
     if (!m_healthLabel || !m_priceService)
         return;
     if (!m_priceService)
@@ -1218,8 +1116,7 @@ void PriceBarWindow::updateNetworkHealth()
     const qint64 age = lastOk > 0 ? (QDateTime::currentMSecsSinceEpoch() - lastOk) : -1;
     const int cfg = m_priceService->configuredIntervalMs();
     const int cur = m_priceService->currentIntervalMs();
-    QString tip = tr("配置刷新 %1 ms\n实际间隔 %2 ms\n连续失败 %3")
-                      .arg(cfg).arg(cur).arg(fails);
+    QString tip = tr("配置刷新 %1 ms\n实际间隔 %2 ms\n连续失败 %3").arg(cfg).arg(cur).arg(fails);
     if (age >= 0)
         tip += tr("\n距上次成功 %1 秒").arg(age / 1000);
     if (EventCalendar::isHighImpactDay())
@@ -1235,8 +1132,7 @@ void PriceBarWindow::updateNetworkHealth()
     }
 }
 
-void PriceBarWindow::checkEventAlerts()
-{
+void PriceBarWindow::checkEventAlerts() {
     if (!AppSettings::instance().eventAlertEnabled())
         return;
     if (AppSettings::instance().isInQuietHours())
@@ -1250,7 +1146,6 @@ void PriceBarWindow::checkEventAlerts()
     AppSettings::instance().setEventAlertLastKey(key);
     AppSettings::instance().save();
     if (m_trayIcon) {
-        m_trayIcon->showMessage(tr("宏观日程"), text.left(60),
-                                QSystemTrayIcon::Warning, 4000);
+        m_trayIcon->showMessage(tr("宏观日程"), text.left(60), QSystemTrayIcon::Warning, 4000);
     }
 }

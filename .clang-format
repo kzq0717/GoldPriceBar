@@ -1,68 +1,35 @@
----
-Language: Cpp
 BasedOnStyle: LLVM
-AccessModifierOffset: -4
-AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: false
-AlignConsecutiveDeclarations: false
-AlignEscapedNewlines: Left
-AlignOperands: true
-AlignTrailingComments: true
-AllowAllParametersOfDeclarationOnNextLine: true
-AllowShortBlocksOnASingleLine: Empty
-AllowShortCaseLabelsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
-AlwaysBreakAfterDefinitionReturnType: None
-AlwaysBreakAfterReturnType: None
-AlwaysBreakBeforeMultilineStrings: false
-AlwaysBreakTemplateDeclarations: Yes
-BinPackArguments: true
-BinPackParameters: true
-BreakBeforeBinaryOperators: None
-BreakBeforeBraces: Attach
-BreakBeforeTernaryOperators: true
-BreakConstructorInitializers: BeforeColon
-BreakInheritanceList: BeforeColon
-ColumnLimit: 100
-CommentPragmas: '^ IWYU pragma:'
-CompactNamespaces: false
-ConstructorInitializerAllOnOneLineOrOnePerLine: false
-ConstructorInitializerIndentWidth: 4
-ContinuationIndentWidth: 4
-Cpp11BracedListStyle: true
-DerivePointerAlignment: false
-DisableFormat: false
-FixNamespaceComments: true
-IncludeBlocks: Preserve
-IndentCaseLabels: true
-IndentPPDirectives: None
+Language: Cpp
+Standard: Cpp11
+
+# ── 关闭 include 排序 / 重排（覆盖 LLVM 默认） ───
+# 项目中保存格式化时不要动头文件顺序。
+IncludeBlocks: Preserve       # 保留原始 #include 分块，不合并不重排
+SortIncludes: Never            # 不对 #include 行排序
+IncludeCategories: []          # 不按类别重排（仅当 IncludeBlocks 非 Preserve 时才生效，置空以防兜底）
+
 IndentWidth: 4
-IndentWrappedFunctionNames: false
-KeepEmptyLinesAtTheStartOfBlocks: false
-MaxEmptyLinesToKeep: 1
-NamespaceIndentation: None
-PointerAlignment: Left
-ReflowComments: true
-SortIncludes: true
-SpaceAfterCStyleCast: false
-SpaceAfterTemplateKeyword: true
-SpaceBeforeAssignmentOperators: true
-SpaceBeforeCpp11BracedList: false
-SpaceBeforeCtorInitializerColon: true
-SpaceBeforeInheritanceColon: true
-SpaceBeforeParens: ControlStatements
-SpaceBeforeRangeBasedForLoopColon: true
-SpaceInEmptyParentheses: false
-SpacesBeforeTrailingComments: 1
-SpacesInAngles: false
-SpacesInContainerLiterals: true
-SpacesInCStyleCastParentheses: false
-SpacesInParentheses: false
-SpacesInSquareBrackets: false
-Standard: c++17
 TabWidth: 4
 UseTab: Never
-# Qt-friendly: keep Q_OBJECT etc. readable
-...
+
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline # None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+
+AlignAfterOpenBracket: false
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+
+SpaceBeforeParens: ControlStatements
+SpacesBeforeTrailingComments: 1
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+SpacesInContainerLiterals: false
+
+AlignTrailingComments:
+  Kind: Always        # 开启尾随注释对齐（Always / Leave / Never）
+  OverEmptyLines: 0   # 跨空行时是否保持对齐，0 表示遇到空行即分段对齐
+  
+ColumnLimit: 120

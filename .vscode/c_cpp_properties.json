@@ -1,0 +1,26 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "windows-clang-x64",
+      "includePath": [
+        "${workspaceFolder}/SDK/include",
+        "${workspaceFolder}/SDK/src",
+        "${workspaceFolder}/UI/src",
+        "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/include",
+        "${workspaceFolder}/sdk/include",
+        "${workspaceFolder}/src"
+
+      ],
+      "defines": ["_WIN32", "_DEBUG", "_UNICODE"],
+      "compilerPath": "D:/InstallDir/LLVM/bin/clang-cl.exe",
+      "cppStandard": "c++20",
+      "intelliSenseMode": "windows-clang-x64",
+      "configurationProvider": "ms-vscode.cmake-tools",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "browse": {
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ]
+}

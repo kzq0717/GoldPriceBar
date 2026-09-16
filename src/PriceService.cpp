@@ -13,15 +13,12 @@
 #include <QDateTime>
 #include <QDate>
 
-PriceService::PriceService(QObject* parent)
-    : QObject(parent)
-{
+PriceService::PriceService(QObject *parent) : QObject(parent) {
     // 构造函数保持空：所有资源在 start()/ensureXxx 中创建（规避启动期 0xc0000005）
     Logger::info(QStringLiteral("PriceService ctor: empty OK"));
 }
 
-void PriceService::ensureTimers()
-{
+void PriceService::ensureTimers() {
     if (m_timer)
         return;
     Logger::info(QStringLiteral("PriceService: create timers"));
@@ -42,8 +39,7 @@ void PriceService::ensureTimers()
     Logger::info(QStringLiteral("PriceService: timers OK"));
 }
 
-void PriceService::ensureNetwork()
-{
+void PriceService::ensureNetwork() {
     if (m_network)
         return;
     Logger::info(QStringLiteral("PriceService: creating QNetworkAccessManager"));
@@ -51,20 +47,26 @@ void PriceService::ensureNetwork()
     Logger::info(QStringLiteral("PriceService: NAM ready"));
 }
 
-PriceService::~PriceService()
-{
+PriceService::~PriceService() {
     stop();
     abortPending();
 }
 
-QString PriceService::currentTypeCode() const
-{
+QString PriceService::currentTypeCode() const {
     // 与 jin.20021002.xyz / 油猴脚本约定一致的 type 码
     static const QStringList kKnown = {
-        QStringLiteral("ms"),  QStringLiteral("zs"),  QStringLiteral("cib"),
-        QStringLiteral("icbc"),QStringLiteral("cmb"), QStringLiteral("cgb"),
-        QStringLiteral("abc"), QStringLiteral("ccb"), QStringLiteral("boc"),
-        QStringLiteral("jd"),  QStringLiteral("gj"),  QStringLiteral("xau"),
+        QStringLiteral("ms"),
+        QStringLiteral("zs"),
+        QStringLiteral("cib"),
+        QStringLiteral("icbc"),
+        QStringLiteral("cmb"),
+        QStringLiteral("cgb"),
+        QStringLiteral("abc"),
+        QStringLiteral("ccb"),
+        QStringLiteral("boc"),
+        QStringLiteral("jd"),
+        QStringLiteral("gj"),
+        QStringLiteral("xau"),
     };
     QString source = AppSettings::instance().dataSource().trimmed().toLower();
     if (source == QStringLiteral("xau"))
@@ -74,8 +76,7 @@ QString PriceService::currentTypeCode() const
     return QStringLiteral("zs");
 }
 
-void PriceService::start()
-{
+void PriceService::start() {
     Logger::info(QStringLiteral("PriceService::start enter"));
     ensureTimers();
     Logger::info(QStringLiteral("PriceService::start after timers"));
@@ -109,15 +110,17 @@ void PriceService::start()
     });
 }
 
-void PriceService::stop()
-{
-    if (m_timer) m_timer->stop();
-    if (m_watchdog) m_watchdog->stop();
-    if (m_chartSeedTimer) m_chartSeedTimer->stop();
+void PriceService::stop() {
+    if (m_timer)
+        m_timer->stop();
+    if (m_watchdog)
+        m_watchdog->stop();
+    if (m_chartSeedTimer)
+        m_chartSeedTimer->stop();
     // 仅断开并清空指针；不在此 deleteLater reply（与 NAM 生命周期绑定）
     abortPending();
     if (m_pendingChart) {
-        QNetworkReply* r = m_pendingChart.data();
+        QNetworkReply *r = m_pendingChart.data();
         m_pendingChart.clear();
         if (r) {
             QObject::disconnect(r, nullptr, this, nullptr);
@@ -127,8 +130,7 @@ void PriceService::stop()
     }
 }
 
-void PriceService::setInterval(int intervalMs)
-{
+void PriceService::setInterval(int intervalMs) {
     if (intervalMs < 1000)
         intervalMs = 1000;
     m_intervalMs = intervalMs;
@@ -138,25 +140,21 @@ void PriceService::setInterval(int intervalMs)
     }
 }
 
-void PriceService::forceRefresh()
-{
+void PriceService::forceRefresh() {
     abortPending();
     requestChartSeed();
     requestPrice();
 }
 
-void PriceService::onTimeout()
-{
+void PriceService::onTimeout() {
     requestPrice();
 }
 
-void PriceService::onChartSeedTimer()
-{
+void PriceService::onChartSeedTimer() {
     requestChartSeed();
 }
 
-void PriceService::onWatchdog()
-{
+void PriceService::onWatchdog() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     if (m_pendingReply && m_requestStartMs > 0 && (now - m_requestStartMs) > 12000) {
@@ -168,16 +166,15 @@ void PriceService::onWatchdog()
 
     const qint64 staleMs = qMax(static_cast<qint64>(m_intervalMs) * 5, 30000LL);
     if (m_lastSuccessMs > 0 && (now - m_lastSuccessMs) > staleMs) {
-        Logger::warn(QStringLiteral("PriceService watchdog: no success for %1 ms (skip recreate)")
-                         .arg(now - m_lastSuccessMs));
+        Logger::warn(
+            QStringLiteral("PriceService watchdog: no success for %1 ms (skip recreate)").arg(now - m_lastSuccessMs));
         // 不再 recreateNetworkManager：与 reply 生命周期叠加易 0xc0000005
         abortPending();
         requestPrice();
     }
 }
 
-void PriceService::recreateNetworkManager()
-{
+void PriceService::recreateNetworkManager() {
     Logger::info(QStringLiteral("PriceService: recreateNetworkManager"));
     // 崩溃根因：reply 是 NAM 的子对象。对 reply abort/deleteLater 后再
     // deleteLater NAM，会二次销毁，QPointer::clear 前后都可能踩内存。
@@ -186,21 +183,21 @@ void PriceService::recreateNetworkManager()
     Logger::warn(QStringLiteral("PriceService: recreating QNetworkAccessManager"));
 
     if (m_pendingReply) {
-        QNetworkReply* r = m_pendingReply.data();
+        QNetworkReply *r = m_pendingReply.data();
         m_pendingReply.clear();
         m_requestStartMs = 0;
         if (r)
             QObject::disconnect(r, nullptr, this, nullptr);
     }
     if (m_pendingChart) {
-        QNetworkReply* r = m_pendingChart.data();
+        QNetworkReply *r = m_pendingChart.data();
         m_pendingChart.clear();
         if (r)
             QObject::disconnect(r, nullptr, this, nullptr);
     }
 
     if (m_network) {
-        QNetworkAccessManager* old = m_network;
+        QNetworkAccessManager *old = m_network;
         m_network = nullptr;
         // 不再对旧 reply 调用 deleteLater
         old->deleteLater();
@@ -208,11 +205,10 @@ void PriceService::recreateNetworkManager()
     m_network = new QNetworkAccessManager(this);
 }
 
-void PriceService::abortPending()
-{
+void PriceService::abortPending() {
     if (!m_pendingReply)
         return;
-    QNetworkReply* r = m_pendingReply.data();
+    QNetworkReply *r = m_pendingReply.data();
     m_pendingReply.clear();
     m_requestStartMs = 0;
     if (!r)
@@ -223,10 +219,10 @@ void PriceService::abortPending()
     r->deleteLater();
 }
 
-void PriceService::requestChartSeed()
-{
+void PriceService::requestChartSeed() {
     ensureNetwork();
-    if (!m_network) return;
+    if (!m_network)
+        return;
     if (m_pendingChart)
         return;
     if (!m_network)
@@ -235,23 +231,17 @@ void PriceService::requestChartSeed()
     // 全日分时：https://jin.20021002.xyz/api.php?action=chart&type=zs
     const QUrl url(AppSettings::instance().chartUrl().arg(currentTypeCode()));
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QStringLiteral("GoldPriceBarLite/0.1.5"));
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                         QNetworkRequest::AlwaysNetwork);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.1.5"));
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
     request.setTransferTimeout(15000);
 
-    QNetworkReply* reply = m_network->get(request);
+    QNetworkReply *reply = m_network->get(request);
     m_pendingChart = reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        onChartSeedFinished(reply);
-    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { onChartSeedFinished(reply); });
 }
 
-void PriceService::onChartSeedFinished(QNetworkReply* reply)
-{
+void PriceService::onChartSeedFinished(QNetworkReply *reply) {
     if (m_pendingChart.data() == reply)
         m_pendingChart.clear();
 
@@ -279,7 +269,7 @@ void PriceService::onChartSeedFinished(QNetworkReply* reply)
     chartPoints.reserve(arr.size());
 
     const qint64 nowSec = QDateTime::currentSecsSinceEpoch();
-    for (const QJsonValue& v : arr) {
+    for (const QJsonValue &v : arr) {
         if (!v.isObject())
             continue;
         const QJsonObject o = v.toObject();
@@ -294,15 +284,13 @@ void PriceService::onChartSeedFinished(QNetworkReply* reply)
         return;
 
     HistoryCache::instance().replaceFromChart(chartPoints);
-    ExtremeDatabase::instance().refreshDailyBarFromPoints(
-        QDate::currentDate(), currentTypeCode(), chartPoints);
+    ExtremeDatabase::instance().refreshDailyBarFromPoints(QDate::currentDate(), currentTypeCode(), chartPoints);
     HistoryCache::instance().persistExtremesToDb(currentTypeCode());
 
     // 若已有实时价，合并进缓存，保证最高不低于现价
     if (m_hasValidPrice && m_lastPrice > 0.0) {
         HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
-        ExtremeDatabase::instance().upsertDailyBar(
-            QDate::currentDate(), currentTypeCode(), m_lastPrice);
+        ExtremeDatabase::instance().upsertDailyBar(QDate::currentDate(), currentTypeCode(), m_lastPrice);
     }
 
     emit extremesUpdated();
@@ -312,14 +300,12 @@ void PriceService::onChartSeedFinished(QNetworkReply* reply)
         emit priceUpdated(m_lastPrice, m_lastChange, m_lastSourceName);
 }
 
-void PriceService::requestPrice()
-{
+void PriceService::requestPrice() {
     m_backupIndex = 0;
     requestPriceFromBackup(0);
 }
 
-void PriceService::requestPriceFromBackup(int backupIndex)
-{
+void PriceService::requestPriceFromBackup(int backupIndex) {
     ensureNetwork();
     if (!m_network) {
         emit fetchFailed(tr("网络组件未初始化"));
@@ -341,11 +327,9 @@ void PriceService::requestPriceFromBackup(int backupIndex)
     } else if (type == QStringLiteral("cmb") && backupIndex == 1) {
         // 招行官方公开接口（油猴脚本备用路径）
         url = QUrl(QStringLiteral("https://m.cmbchina.com/api/rate/gold"));
-    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd"))
-               && backupIndex == 1) {
+    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd")) && backupIndex == 1) {
         url = QUrl(AppSettings::instance().backupPriceUrl1());
-    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd"))
-               && backupIndex == 2) {
+    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("jd")) && backupIndex == 2) {
         url = QUrl(AppSettings::instance().backupPriceUrl2());
     } else if (type == QStringLiteral("cmb") && backupIndex == 2) {
         // 招行失败后再试国际金仅作趋势参考
@@ -357,26 +341,20 @@ void PriceService::requestPriceFromBackup(int backupIndex)
     }
 
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QStringLiteral("GoldPriceBarLite/0.6.3"));
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                         QNetworkRequest::AlwaysNetwork);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.6.3"));
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
     request.setTransferTimeout(10000);
     request.setRawHeader("Accept", "application/json");
 
-    QNetworkReply* reply = m_network->get(request);
+    QNetworkReply *reply = m_network->get(request);
     m_pendingReply = reply;
     m_requestStartMs = QDateTime::currentMSecsSinceEpoch();
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        onNetworkFinished(reply);
-    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { onNetworkFinished(reply); });
 }
 
-bool PriceService::applyPrice(double price, double change, const QString& name, const QString& currency)
-{
+bool PriceService::applyPrice(double price, double change, const QString &name, const QString &currency) {
     if (price <= 0.0)
         return false;
 
@@ -404,20 +382,16 @@ bool PriceService::applyPrice(double price, double change, const QString& name, 
     if (m_timer && m_intervalMs > 0 && m_timer->interval() != m_intervalMs)
         m_timer->setInterval(m_intervalMs);
 
-
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
-    ExtremeDatabase::instance().upsertDailyBar(
-        QDate::currentDate(), currentTypeCode(), m_lastPrice);
-    ExtremeDatabase::instance().insertIntradaySample(
-        QDateTime::currentDateTime(), currentTypeCode(), m_lastPrice);
+    ExtremeDatabase::instance().upsertDailyBar(QDate::currentDate(), currentTypeCode(), m_lastPrice);
+    ExtremeDatabase::instance().insertIntradaySample(QDateTime::currentDateTime(), currentTypeCode(), m_lastPrice);
     if ((++m_persistCounter % 12) == 0)
         HistoryCache::instance().persistExtremesToDb(currentTypeCode());
     emit priceUpdated(m_lastPrice, m_lastChange, m_lastSourceName);
     return true;
 }
 
-void PriceService::onNetworkFinished(QNetworkReply* reply)
-{
+void PriceService::onNetworkFinished(QNetworkReply *reply) {
     if (m_pendingReply.data() != reply) {
         reply->deleteLater();
         return;
@@ -447,13 +421,11 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
             if (m_timer->interval() < backoff)
                 m_timer->setInterval(backoff);
         }
-
     };
 
     if (reply->error() != QNetworkReply::NoError) {
         if (reply->error() != QNetworkReply::OperationCanceledError) {
-            Logger::warn(QStringLiteral("Price fetch error (src %1): %2")
-                             .arg(tried).arg(reply->errorString()));
+            Logger::warn(QStringLiteral("Price fetch error (src %1): %2").arg(tried).arg(reply->errorString()));
             tryNext();
         }
         reply->deleteLater();
@@ -472,7 +444,10 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
 
     if (tried == 0) {
         // jin 格式
-        if (!doc.isObject()) { tryNext(); return; }
+        if (!doc.isObject()) {
+            tryNext();
+            return;
+        }
         const QJsonObject root = doc.object();
         if (root.value(QStringLiteral("code")).toInt() != 200) {
             tryNext();
@@ -496,18 +471,18 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
 
     if (tried == 1) {
         // 招行官方 Au99.99 或 gold-api.com
-        if (!doc.isObject()) { tryNext(); return; }
+        if (!doc.isObject()) {
+            tryNext();
+            return;
+        }
         if (currentTypeCode() == QStringLiteral("cmb")) {
             const QJsonObject root = doc.object();
-            const QJsonArray items = root.value(QStringLiteral("body"))
-                                         .toObject()
-                                         .value(QStringLiteral("data"))
-                                         .toArray();
+            const QJsonArray items =
+                root.value(QStringLiteral("body")).toObject().value(QStringLiteral("data")).toArray();
             double price = 0, change = 0;
-            for (const QJsonValue& v : items) {
+            for (const QJsonValue &v : items) {
                 const QJsonObject it = v.toObject();
-                if (it.value(QStringLiteral("variety")).toString()
-                    == QStringLiteral("Au99.99")) {
+                if (it.value(QStringLiteral("variety")).toString() == QStringLiteral("Au99.99")) {
                     price = it.value(QStringLiteral("curPrice")).toString().toDouble();
                     if (price <= 0)
                         price = it.value(QStringLiteral("curPrice")).toDouble();
@@ -531,10 +506,16 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
 
     if (tried == 2) {
         // goldprice.dev
-        if (!doc.isObject()) { tryNext(); return; }
+        if (!doc.isObject()) {
+            tryNext();
+            return;
+        }
         const QJsonObject root = doc.object();
         const QJsonArray symbols = root.value(QStringLiteral("symbols")).toArray();
-        if (symbols.isEmpty()) { tryNext(); return; }
+        if (symbols.isEmpty()) {
+            tryNext();
+            return;
+        }
         const QJsonObject s0 = symbols.at(0).toObject();
         const double price = s0.value(QStringLiteral("price")).toString().toDouble();
         if (!applyPrice(price, 0.0, tr("伦敦金·备用goldprice.dev"), QStringLiteral("USD")))
@@ -545,10 +526,10 @@ void PriceService::onNetworkFinished(QNetworkReply* reply)
     tryNext();
 }
 
-void PriceService::requestHistorySeed()
-{
+void PriceService::requestHistorySeed() {
     ensureNetwork();
-    if (!m_network) return;
+    if (!m_network)
+        return;
     if (m_historySeeded || m_pendingHistory)
         return;
     if (!m_network)
@@ -557,19 +538,15 @@ void PriceService::requestHistorySeed()
     // freegoldapi：长期日线（含近年 Yahoo 日线），用于填充 MA5日/MA20日
     const QUrl url(QStringLiteral("https://freegoldapi.com/data/latest.json"));
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QStringLiteral("GoldPriceBarLite/0.6.3"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/0.6.3"));
     request.setTransferTimeout(20000);
-    QNetworkReply* reply = m_network->get(request);
+    QNetworkReply *reply = m_network->get(request);
     m_pendingHistory = reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        onHistoryFinished(reply);
-    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { onHistoryFinished(reply); });
     Logger::info(QStringLiteral("History seed request started (freegoldapi)"));
 }
 
-void PriceService::onHistoryFinished(QNetworkReply* reply)
-{
+void PriceService::onHistoryFinished(QNetworkReply *reply) {
     if (m_pendingHistory.data() == reply)
         m_pendingHistory.clear();
     if (!reply)
@@ -596,7 +573,7 @@ void PriceService::onHistoryFinished(QNetworkReply* reply)
     const QDate from = today.addDays(-40); // 多取一些，过滤后够 20 交易日
     int written = 0;
     // 数组可能从古到今：只取最近区间
-    for (const QJsonValue& v : arr) {
+    for (const QJsonValue &v : arr) {
         if (!v.isObject())
             continue;
         const QJsonObject o = v.toObject();
@@ -616,4 +593,3 @@ void PriceService::onHistoryFinished(QNetworkReply* reply)
     Logger::info(QStringLiteral("History seed wrote %1 daily bars").arg(written));
     emit extremesUpdated();
 }
-
