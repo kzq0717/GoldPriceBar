@@ -688,8 +688,18 @@ void PriceBarWindow::updateSecondaryVisibility()
     }
 }
 
+void PriceBarWindow::ensureSecondaryNam()
+{
+    if (!m_secondaryNam) {
+        Logger::info(QStringLiteral("Creating secondary QNetworkAccessManager"));
+        m_secondaryNam = new QNetworkAccessManager(this);
+    }
+}
+
 void PriceBarWindow::onSecondaryTimer()
 {
+    ensureSecondaryNam();
+
     if (!AppSettings::instance().showSecondaryPrice())
         return;
     if (m_secondaryReply)
