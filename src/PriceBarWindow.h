@@ -17,6 +17,7 @@ class QNetworkReply;
 class PriceService;
 class SettingsDialog;
 class ChartWindow;
+class SentimentDialog;
 class GlobalHotkey;
 
 class PriceBarWindow : public QWidget
@@ -41,6 +42,7 @@ private slots:
     void onFetchFailed(const QString& error);
     void onSettingsClicked();
     void onChartClicked();
+    void onSentimentClicked();
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
     void onSettingsChanged();
     void onAlertBlinkTick();
@@ -96,7 +98,8 @@ private:
 
     PriceService* m_priceService = nullptr;
     SettingsDialog* m_settingsDialog = nullptr;
-    ChartWindow* m_chartWindow = nullptr;
+    ChartWindow* m_chartWindow;
+    SentimentDialog* m_sentimentDialog = nullptr;
     QSystemTrayIcon* m_trayIcon = nullptr;
     QNetworkAccessManager* m_secondaryNam = nullptr;
     QPointer<QNetworkReply> m_secondaryReply;

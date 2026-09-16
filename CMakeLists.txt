@@ -43,6 +43,8 @@ set(PROJECT_SOURCES
     src/GlobalHotkey.h src/GlobalHotkey.cpp
     src/EventCalendar.h src/EventCalendar.cpp
     src/TradingSession.h src/TradingSession.cpp
+    src/SentimentService.h src/SentimentService.cpp
+    src/SentimentDialog.h src/SentimentDialog.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}

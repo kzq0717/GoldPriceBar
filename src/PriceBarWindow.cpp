@@ -2,6 +2,8 @@
 #include "PriceService.h"
 #include "SettingsDialog.h"
 #include "ChartWindow.h"
+#include "SentimentDialog.h"
+#include "SentimentService.h"
 #include "AppSettings.h"
 #include "HistoryCache.h"
 #include "UpdateChecker.h"
@@ -170,6 +172,11 @@ void PriceBarWindow::setupUi()
     m_chartButton->setFixedSize(28, 28);
     connect(m_chartButton, &QToolButton::clicked,
             this, &PriceBarWindow::onChartClicked);
+    {
+        auto* sentAct = nullptr;
+        // tray menu filled below if available
+        Q_UNUSED(sentAct);
+    }
 
     m_settingsButton = new QToolButton(this);
     m_settingsButton->setText(QStringLiteral("⚙"));
@@ -237,6 +244,8 @@ void PriceBarWindow::setupTray()
         c->check(this, false);
     });
     menu->addSeparator();
+    auto* sentimentAct = menu->addAction(tr("黄金舆情 · 热点"));
+    connect(sentimentAct, &QAction::triggered, this, &PriceBarWindow::onSentimentClicked);
     menu->addAction(tr("退出"), qApp, &QApplication::quit);
 
     m_trayIcon->setContextMenu(menu);
@@ -333,6 +342,19 @@ void PriceBarWindow::onChartClicked()
     m_chartWindow->raise();
     m_chartWindow->activateWindow();
 }
+
+void PriceBarWindow::onSentimentClicked()
+{
+    if (!m_sentimentDialog) {
+        m_sentimentDialog = new SentimentDialog(nullptr);
+        m_sentimentDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    }
+    m_sentimentDialog->show();
+    m_sentimentDialog->raise();
+    m_sentimentDialog->activateWindow();
+    m_sentimentDialog->refresh();
+}
+
 
 void PriceBarWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
 {
