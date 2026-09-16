@@ -44,7 +44,8 @@ private:
     void updateApiKeyPlaceholder();
 
     QComboBox* m_intervalCombo = nullptr;
-    QComboBox* m_sourceCombo = nullptr;
+    QComboBox* m_sourceCombo;
+    QCheckBox* m_sentimentCheck = nullptr;
     QSlider* m_opacitySlider = nullptr;
     QLabel* m_opacityValueLabel = nullptr;
     QCheckBox* m_autoStartCheck = nullptr;

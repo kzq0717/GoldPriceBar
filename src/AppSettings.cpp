@@ -35,8 +35,12 @@ void AppSettings::setAutoStart(bool enable)
 { if (m_autoStart != enable) { m_autoStart = enable; emit settingsChanged(); } }
 
 bool AppSettings::forecastOnline() const { return m_forecastOnline; }
+bool AppSettings::sentimentEnabled() const { return m_sentimentEnabled; }
 void AppSettings::setForecastOnline(bool online)
 { if (m_forecastOnline != online) { m_forecastOnline = online; emit settingsChanged(); } }
+
+void AppSettings::setSentimentEnabled(bool on)
+{ if (m_sentimentEnabled != on) { m_sentimentEnabled = on; emit settingsChanged(); } }
 
 int AppSettings::forecastIntervalSec() const { return m_forecastIntervalSec; }
 void AppSettings::setForecastIntervalSec(int sec)
@@ -342,6 +346,7 @@ void AppSettings::load()
     m_opacity            = s.value("opacity", 0.95).toDouble();
     m_autoStart          = s.value("autoStart", false).toBool();
     m_forecastOnline     = s.value("forecastOnline", false).toBool();
+    m_sentimentEnabled   = s.value("sentimentEnabled", false).toBool();
     m_forecastIntervalSec = s.value("forecastIntervalSec", 60).toInt();
     if (m_forecastIntervalSec < 15) m_forecastIntervalSec = 60;
     if (m_forecastIntervalSec > 3600) m_forecastIntervalSec = 3600;
@@ -413,6 +418,7 @@ void AppSettings::save()
     s.setValue("opacity", m_opacity);
     s.setValue("autoStart", m_autoStart);
     s.setValue("forecastOnline", m_forecastOnline);
+    s.setValue("sentimentEnabled", m_sentimentEnabled);
     s.setValue("forecastIntervalSec", m_forecastIntervalSec);
     s.setValue("xaiApiKey", m_xaiApiKey);
     s.setValue("xaiModel", m_xaiModel);

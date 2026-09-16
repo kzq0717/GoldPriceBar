@@ -25,6 +25,8 @@ public:
     void setAutoStart(bool enable);
 
     bool forecastOnline() const;
+    bool sentimentEnabled() const;
+    void setSentimentEnabled(bool on);
     void setForecastOnline(bool online);
     /** 大模型请求最小间隔（秒），默认 60，改后立即生效 */
     int forecastIntervalSec() const;
@@ -175,6 +177,7 @@ private:
     double m_opacity = 0.95;
     bool m_autoStart = false;
     bool m_forecastOnline = false;
+    bool m_sentimentEnabled = false;
     int m_forecastIntervalSec = 60;
     QString m_xaiApiKey;
     QString m_xaiModel = "grok-4.6";

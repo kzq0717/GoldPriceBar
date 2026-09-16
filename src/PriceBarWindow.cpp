@@ -8,6 +8,7 @@
 #include "HistoryCache.h"
 #include "UpdateChecker.h"
 #include "GlobalHotkey.h"
+#include "Logger.h"
 #include "ExtremeDatabase.h"
 #include "EventCalendar.h"
 
@@ -76,7 +77,13 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     connect(&AppSettings::instance(), &AppSettings::settingsChanged,
             this, &PriceBarWindow::onSettingsChanged);
 
-    m_priceService->start();
+    // 延后启动网络与热键，确保窗口先完成 show
+    QTimer::singleShot(0, this, [this]() {
+        Logger::info(QStringLiteral("Deferred start: price + hotkey"));
+        if (m_priceService)
+            m_priceService->start();
+        setupHotkey();
+    });
 
     if (!m_dcaTimer) {
         m_dcaTimer = new QTimer(this);
@@ -197,7 +204,7 @@ void PriceBarWindow::setupUi()
     applyTheme();
     installDragFilter();
     relayoutBar();
-    setupHotkey();
+    // 热键延后注册，避免构造阶段 native filter 引发异常退出
 }
 
 void PriceBarWindow::setupTray()
@@ -239,7 +246,7 @@ void PriceBarWindow::setupTray()
         c->check(this, false);
     });
     menu->addSeparator();
-    auto* sentimentAct = menu->addAction(tr("黄金舆情 · 热点"));
+    auto* sentimentAct = menu->addAction(tr("黄金舆情 · 热点（需在设置中开启）"));
     connect(sentimentAct, &QAction::triggered, this, &PriceBarWindow::onSentimentClicked);
     menu->addAction(tr("退出"), qApp, &QApplication::quit);
 
@@ -340,6 +347,15 @@ void PriceBarWindow::onChartClicked()
 
 void PriceBarWindow::onSentimentClicked()
 {
+    if (!AppSettings::instance().sentimentEnabled()) {
+        if (m_trayIcon) {
+            m_trayIcon->showMessage(
+                tr("黄金舆情"),
+                tr("请在设置中勾选「启用黄金舆情监测」后再打开。"),
+                QSystemTrayIcon::Information, 4000);
+        }
+        return;
+    }
     if (!m_sentimentDialog) {
         m_sentimentDialog = new SentimentDialog(nullptr);
         m_sentimentDialog->setAttribute(Qt::WA_DeleteOnClose, false);
@@ -383,7 +399,12 @@ void PriceBarWindow::onSettingsChanged()
         updatePnLDisplay(m_lastPrice);
     setupHotkey();
     applyTheme();
+    if (!AppSettings::instance().sentimentEnabled()) {
+        if (m_sentimentDialog)
+            m_sentimentDialog->hide();
+    }
 }
+
 
 void PriceBarWindow::mousePressEvent(QMouseEvent* event)
 {

@@ -134,6 +134,8 @@ void SettingsDialog::setupUi()
         m_sourceCombo->addItem(tr("京东24h金"), "jd");
         m_sourceCombo->addItem(tr("伦敦金 (XAU/USD)"), "gj");
         form->addRow(tr("数据源："), m_sourceCombo);
+        m_sentimentCheck = new QCheckBox(tr("启用黄金舆情监测（独立窗口）"), this);
+        form->addRow(tr("黄金舆情："), m_sentimentCheck);
         auto* srcHint = new QLabel(
             tr("主源同公开聚合接口 type=码；招商失败时可走招行官方 Au99.99。"
                "历史分时仍依赖本地采样/chart，脚本不提供历史查询。"), this);
@@ -497,6 +499,8 @@ void SettingsDialog::loadFromSettings()
     index = m_sourceCombo->findData(settings.dataSource());
     if (index < 0) index = 0;
     m_sourceCombo->setCurrentIndex(index);
+    if (m_sentimentCheck)
+        m_sentimentCheck->setChecked(settings.sentimentEnabled());
 
     const int opacityPercent = static_cast<int>(settings.opacity() * 100);
     m_opacitySlider->setValue(opacityPercent);
@@ -586,6 +590,8 @@ void SettingsDialog::onAccept()
 
     settings.setRefreshIntervalMs(m_intervalCombo->currentData().toInt());
     settings.setDataSource(m_sourceCombo->currentData().toString());
+    if (m_sentimentCheck)
+        settings.setSentimentEnabled(m_sentimentCheck->isChecked());
     settings.setOpacity(m_opacitySlider->value() / 100.0);
     settings.setAutoStart(m_autoStartCheck->isChecked());
     settings.setForecastOnline(m_forecastSlider->value() >= 1);

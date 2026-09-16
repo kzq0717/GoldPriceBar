@@ -29,7 +29,8 @@ bool GlobalHotkey::registerHotkey()
     // MOD_CONTROL | MOD_SHIFT, 'G'
     const UINT mods = MOD_CONTROL | MOD_SHIFT;
     const UINT vk = 0x47; // 'G'
-    if (RegisterHotKey(nullptr, m_id, mods, vk)) {
+    // 使用当前线程消息队列；id 避开常见冲突
+    if (RegisterHotKey(nullptr, m_id, mods | MOD_NOREPEAT, vk)) {
         m_registered = true;
         Logger::info(QStringLiteral("Global hotkey registered: Ctrl+Shift+G"));
         return true;
