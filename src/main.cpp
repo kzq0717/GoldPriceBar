@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     QApplication::setApplicationName("GoldPriceBarLite");
-    QApplication::setApplicationVersion("1.3.5");
+    QApplication::setApplicationVersion("1.3.6");
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app.png")));
     QApplication::setOrganizationName("GoldPriceBarLite");
     QApplication::setOrganizationDomain("local");
@@ -88,6 +88,8 @@ int main(int argc, char *argv[])
 
     Logger::init();
     CrashHandler::install();
+    Logger::info(QStringLiteral("=== GoldPriceBarLite %1 BUILD MARKER deferred-PriceService ===")
+                     .arg(QApplication::applicationVersion()));
     Logger::info(QStringLiteral("Application start, version %1 platform=%2")
                      .arg(QApplication::applicationVersion(),
                           QGuiApplication::platformName()));
