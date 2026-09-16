@@ -5,23 +5,98 @@
       "label": "cmake-configure-debug",
       "type": "shell",
       "command": "cmake --preset debug",
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
       "label": "cmake-build-debug",
       "type": "shell",
-      "command": "cmake --build --preset debug",
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": { "kind": "build", "isDefault": true },
+      "command": "cmake --build --preset debug --parallel",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
       "problemMatcher": ["$msCompile"],
       "dependsOn": "cmake-configure-debug"
     },
     {
+      "label": "cmake-clean-debug",
+      "type": "shell",
+      "command": "cmake --build --preset debug --target clean",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "cmake-configure-release",
+      "type": "shell",
+      "command": "cmake --preset release",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "cmake-build-release",
+      "type": "shell",
+      "command": "cmake --build --preset release --parallel",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": ["$msCompile"],
+      "dependsOn": "cmake-configure-release"
+    },
+    {
+      "label": "deploy-debug",
+      "type": "shell",
+      "command": "cmd /c deploy.bat \"${workspaceFolder}/build/debug/GoldPriceBarLite.exe\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "deploy-release",
+      "type": "shell",
+      "command": "cmd /c deploy.bat \"${workspaceFolder}/build/release/GoldPriceBarLite.exe\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "build.bat debug deploy",
       "type": "shell",
-      "command": "build.bat debug deploy",
-      "options": { "cwd": "${workspaceFolder}" },
+      "command": "cmd /c build.bat debug deploy",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "build.bat release deploy",
+      "type": "shell",
+      "command": "cmd /c build.bat release deploy",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": ["$msCompile"]
     }
   ]

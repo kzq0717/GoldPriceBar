@@ -1,9 +1,69 @@
 {
-  "cmake.configureOnOpen": true,
-  "cmake.sourceDirectory": "${workspaceFolder}",
-  "cmake.buildDirectory": "${workspaceFolder}/build/debug",
+  // 核心配置：使用 clangd 提供 C/C++ 语言服务与补全，避免与 Microsoft C/C++ 引擎冲突
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.intelliSenseCacheSize": 4096,
+  "C_Cpp.intelliSenseCachePath": "${workspaceFolder}/.vscode/ipch",
+  "C_Cpp.doxygen.generateOnType": true,
+  "C_Cpp.doxygen.generatedStyle": "/**",
+  "workbench.editor.revealIfOpen": true,
+
+  // 排除扫描与索引干扰
+  "C_Cpp.files.exclude": {
+    "**/build": true,
+    "**/out": true,
+    "**/.git": true,
+    "**/thirdparty": true
+  },
+
+  "files.watcherExclude": {
+    "**/build/**": true,
+    "**/out/**": true,
+    "**/.git/objects/**": true
+  },
+
+  // clangd 参数：指定编译数据库路径，启用后台索引与 clang-tidy，配置系统驱动驱动解析
+  "clangd.arguments": [
+    "--compile-commands-dir=build/debug",
+    "--background-index",
+    "--clang-tidy",
+    "--header-insertion=never",
+    "--query-driver=D:/InstallDir/LLVM/bin/clang-cl.exe,D:/InstallDir/LLVM/bin/clang*.exe,C:/Program Files/Microsoft Visual Studio/**/cl.exe"
+  ],
+
+  "editor.formatOnSave": true,
+
+  // CMake Tools 预设配置
   "cmake.useCMakePresets": "always",
-  "cmake.preferredGenerators": ["Ninja", "Visual Studio 17 2022"],
-  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
-  "cmake.options.statusBarVisibility": "visible"
+  "cmake.useVcpkg": false,
+
+  // 使用 clangd 格式化 C/C++ 代码（遵从项目根目录 .clang-format）
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "C_Cpp.default.intelliSenseMode": "clang-x64",
+  "cmake.cpptools.intelliSenseMode": "clang-x64",
+  "cmake.additionalBuildProblemMatchers": [],
+
+  // 集成终端配置
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.profiles.windows": {
+    "PowerShell": {
+      "source": "PowerShell"
+    },
+    "Command Prompt": {
+      "path": ["${env:windir}\\System32\\cmd.exe"]
+    }
+  },
+  "terminal.integrated.automationProfile.windows": {
+    "path": "powershell.exe",
+    "args": ["-NoProfile"]
+  },
+
+  // Qt 扩展配置
+  "qtConfigure.qtDir": "D:\\InstallDir\\Qt6.7\\6.7.3\\msvc2022_64",
+  "qt-core.qtInstallationRoot": "D:\\InstallDir\\Qt6.7\\6.7.3",
+  "qt-core.additionalQtPaths": ["D:\\InstallDir\\Qt6.7\\6.7.3\\msvc2022_64"]
 }

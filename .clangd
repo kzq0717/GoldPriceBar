@@ -1,0 +1,7 @@
+CompileFlags:
+  CompilationDatabase: "build/debug"
+  Add:
+    - "-Wno-unknown-warning-option"
+Diagnostics:
+  Suppress:
+    - "-Wunknown-attributes"

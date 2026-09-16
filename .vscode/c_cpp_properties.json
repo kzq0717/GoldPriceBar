@@ -4,21 +4,38 @@
     {
       "name": "windows-clang-x64",
       "includePath": [
-        "${workspaceFolder}/SDK/include",
-        "${workspaceFolder}/SDK/src",
-        "${workspaceFolder}/UI/src",
-        "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/include",
+        "${workspaceFolder}/src",
         "${workspaceFolder}/sdk/include",
-        "${workspaceFolder}/src"
-
+        "${workspaceFolder}/build/debug/GoldPriceBarLite_autogen/include",
+        "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/include/**",
+        "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/mkspecs/win32-msvc"
       ],
-      "defines": ["_WIN32", "_DEBUG", "_UNICODE"],
+      "defines": [
+        "_WIN32",
+        "_DEBUG",
+        "UNICODE",
+        "_UNICODE",
+        "QT_CORE_LIB",
+        "QT_GUI_LIB",
+        "QT_WIDGETS_LIB",
+        "QT_NETWORK_LIB",
+        "QT_CHARTS_LIB",
+        "QT_SQL_LIB",
+        "QT_OPENGL_LIB",
+        "QT_OPENGLWIDGETS_LIB"
+      ],
       "compilerPath": "D:/InstallDir/LLVM/bin/clang-cl.exe",
-      "cppStandard": "c++20",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
       "intelliSenseMode": "windows-clang-x64",
       "configurationProvider": "ms-vscode.cmake-tools",
-      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "compileCommands": "${workspaceFolder}/build/debug/compile_commands.json",
       "browse": {
+        "path": [
+          "${workspaceFolder}/src",
+          "${workspaceFolder}/sdk/include",
+          "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/include/**"
+        ],
         "limitSymbolsToIncludedHeaders": true
       }
     }

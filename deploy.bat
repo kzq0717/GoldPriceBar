@@ -19,7 +19,9 @@ set "EXE=%~1"
 if defined EXE goto have_exe
 
 set "EXE="
-if exist "build\Release\GoldPriceBarLite.exe" set "EXE=%cd%\build\Release\GoldPriceBarLite.exe"
+if exist "build\debug\GoldPriceBarLite.exe" set "EXE=%cd%\build\debug\GoldPriceBarLite.exe"
+if not defined EXE if exist "build\release\GoldPriceBarLite.exe" set "EXE=%cd%\build\release\GoldPriceBarLite.exe"
+if not defined EXE if exist "build\Release\GoldPriceBarLite.exe" set "EXE=%cd%\build\Release\GoldPriceBarLite.exe"
 if not defined EXE if exist "build\RelWithDebInfo\GoldPriceBarLite.exe" set "EXE=%cd%\build\RelWithDebInfo\GoldPriceBarLite.exe"
 if not defined EXE if exist "build\Debug\GoldPriceBarLite.exe" set "EXE=%cd%\build\Debug\GoldPriceBarLite.exe"
 if not defined EXE if exist "build\GoldPriceBarLite.exe" set "EXE=%cd%\build\GoldPriceBarLite.exe"
@@ -58,7 +60,15 @@ echo.
 
 REM Detect debug vs release from path
 set "WD_MODE=--release"
-echo %EXE% | findstr /i "\\Debug\\" >nul && set "WD_MODE=--debug"
+set "DLL_SUFFIX="
+echo %EXE% | findstr /i "\\Debug\\" >nul && (
+  set "WD_MODE=--debug"
+  set "DLL_SUFFIX=d"
+)
+echo %EXE% | findstr /i "\\debug\\" >nul && (
+  set "WD_MODE=--debug"
+  set "DLL_SUFFIX=d"
+)
 
 echo [1/2] windeployqt %WD_MODE% ...
 "%WDEPLOY%" %WD_MODE% --compiler-runtime --no-translations --force ^
@@ -76,19 +86,19 @@ if errorlevel 1 (
 echo.
 echo [2/2] verify key DLLs ...
 set "MISS=0"
-for %%D in (Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6Charts.dll Qt6Sql.dll) do (
-  if not exist "%EXEDIR%\%%D" (
-    echo   MISSING: %%D
+for %%D in (Qt6Core Qt6Gui Qt6Widgets Qt6Network Qt6Charts Qt6Sql) do (
+  if not exist "%EXEDIR%\%%D%DLL_SUFFIX%.dll" if not exist "%EXEDIR%\%%D.dll" (
+    echo   MISSING: %%D%DLL_SUFFIX%.dll
     set "MISS=1"
   ) else (
     echo   OK: %%D
   )
 )
-if not exist "%EXEDIR%\platforms\qwindows.dll" (
-  echo   MISSING: platforms\qwindows.dll
+if not exist "%EXEDIR%\platforms\qwindows%DLL_SUFFIX%.dll" if not exist "%EXEDIR%\platforms\qwindows.dll" (
+  echo   MISSING: platforms\qwindows%DLL_SUFFIX%.dll
   set "MISS=1"
 ) else (
-  echo   OK: platforms\qwindows.dll
+  echo   OK: platforms\qwindows
 )
 
 echo.

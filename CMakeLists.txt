@@ -14,6 +14,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 强制导出 compile_commands.json 供 clangd / VS Code IntelliSense 使用
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -78,6 +81,16 @@ install(TARGETS ${PROJECT_NAME}
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+# 自动同步 compile_commands.json 到 build 目录和项目根目录，确保各类编辑器和 LSP 工具无缝发现
+if(CMAKE_EXPORT_COMPILE_COMMANDS)
+    add_custom_target(sync_compile_commands ALL
+        ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/compile_commands.json"
+            "${CMAKE_SOURCE_DIR}/build/compile_commands.json"
+        COMMENT "Syncing compile_commands.json to build/"
+    )
+endif()
 
 message(STATUS "Project: ${PROJECT_NAME} v${PROJECT_VERSION} (UI+GoldSdk)")
 message(STATUS "Qt6 version: ${Qt6_VERSION}")

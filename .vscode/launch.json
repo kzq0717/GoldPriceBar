@@ -2,11 +2,12 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug GoldPriceBarLite",
+      "name": "Debug GoldPriceBarLite (VS Code)",
       "type": "cppvsdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/debug/GoldPriceBarLite.exe",
       "args": [],
+      "stopAtEntry": false,
       "cwd": "${workspaceFolder}/build/debug",
       "environment": [
         {
@@ -22,7 +23,28 @@
       "preLaunchTask": "cmake-build-debug"
     },
     {
-      "name": "Debug (build.bat Debug)",
+      "name": "Release GoldPriceBarLite (VS Code)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/release/GoldPriceBarLite.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/build/release",
+      "environment": [
+        {
+          "name": "PATH",
+          "value": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/bin;${env:PATH}"
+        },
+        {
+          "name": "QT_PLUGIN_PATH",
+          "value": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64/plugins"
+        }
+      ],
+      "console": "internalConsole",
+      "preLaunchTask": "cmake-build-release"
+    },
+    {
+      "name": "Debug (build.bat)",
       "type": "cppvsdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/Debug/GoldPriceBarLite.exe",

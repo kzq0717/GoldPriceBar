@@ -4,12 +4,17 @@
   "configurePresets": [
     {
       "name": "debug",
-      "displayName": "Debug (Ninja + MSVC)",
-      "description": "VS Code / CMake Tools 调试推荐",
+      "displayName": "Debug (Ninja + clang-cl)",
+      "description": "VS Code / CMake Tools 调试构建",
       "generator": "Ninja",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "D:/InstallDir/LLVM/bin/clang-cl.exe",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "QT6_ROOT_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
         "CMAKE_PREFIX_PATH": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64"
@@ -17,19 +22,26 @@
     },
     {
       "name": "release",
-      "displayName": "Release (Ninja)",
+      "displayName": "Release (Ninja + clang-cl)",
+      "description": "VS Code / CMake Tools 发布构建",
       "generator": "Ninja",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "D:/InstallDir/LLVM/bin/clang-cl.exe",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "QT6_ROOT_DIR": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64",
         "CMAKE_PREFIX_PATH": "D:/InstallDir/Qt6.7/6.7.3/msvc2022_64"
       }
     },
     {
       "name": "debug-vs",
-      "displayName": "Debug (Visual Studio 2022)",
-      "generator": "Visual Studio 17 2022",
+      "displayName": "Debug (Visual Studio 2026)",
+      "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build-vs",
       "cacheVariables": {
