@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     QApplication::setApplicationName("GoldPriceBarLite");
-    QApplication::setApplicationVersion("1.3.2");
+    QApplication::setApplicationVersion("1.3.3");
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/app.png")));
     QApplication::setOrganizationName("GoldPriceBarLite");
     QApplication::setOrganizationDomain("local");
@@ -99,8 +99,9 @@ int main(int argc, char *argv[])
                          .arg(ExtremeDatabase::instance().databasePath()));
     }
 
+    Logger::info(QStringLiteral("Creating PriceBarWindow..."));
     PriceBarWindow window;
-    // Tool 窗口不占任务栏：保证显示并置顶
+    Logger::info(QStringLiteral("PriceBarWindow created OK"));
     window.show();
     window.raise();
     window.activateWindow();

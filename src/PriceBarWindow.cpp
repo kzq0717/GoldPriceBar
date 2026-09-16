@@ -45,20 +45,20 @@
 PriceBarWindow::PriceBarWindow(QWidget* parent)
     : QWidget(parent)
 {
-    setWindowFlags(Qt::FramelessWindowHint
-                   | Qt::WindowStaysOnTopHint
-                   | Qt::Tool);
+    Logger::info(QStringLiteral("PriceBarWindow ctor step1 flags"));
+    // 不用 Qt::Tool：部分环境会导致无任务栏入口且与托盘组合异常退出
+    setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
-    setAttribute(Qt::WA_NoSystemBackground, true);
-    // 高度随内容自适应，不再锁死；宽度可随对照/盈亏展开
+    setAttribute(Qt::WA_ShowWithoutActivating, false);
     setMinimumWidth(280);
     setMinimumHeight(36);
     setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
 
+    Logger::info(QStringLiteral("PriceBarWindow ctor step2 setupUi"));
     setupUi();
-    setupTray();
+    Logger::info(QStringLiteral("PriceBarWindow ctor step3 applyOpacity"));
     applyOpacity();
-
+    Logger::info(QStringLiteral("PriceBarWindow ctor step4 PriceService"));
     m_priceService = new PriceService(this);
     connect(m_priceService, &PriceService::priceUpdated,
             this, &PriceBarWindow::onPriceUpdated);
@@ -77,15 +77,20 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     connect(&AppSettings::instance(), &AppSettings::settingsChanged,
             this, &PriceBarWindow::onSettingsChanged);
 
-    Logger::info(QStringLiteral("PriceBarWindow ctor: ui/tray done, scheduling network"));
-    // 分步延后：先行情，再热键（热键默认关闭）
-    QTimer::singleShot(100, this, [this]() {
+    Logger::info(QStringLiteral("PriceBarWindow ctor step5 schedule net + tray"));
+    // 托盘延后：避免构造期 QSystemTrayIcon 触发异常
+    QTimer::singleShot(50, this, [this]() {
+        Logger::info(QStringLiteral("Deferred: setupTray begin"));
+        setupTray();
+        Logger::info(QStringLiteral("Deferred: setupTray end"));
+    });
+    QTimer::singleShot(200, this, [this]() {
         Logger::info(QStringLiteral("Deferred: PriceService::start begin"));
         if (m_priceService)
             m_priceService->start();
         Logger::info(QStringLiteral("Deferred: PriceService::start end"));
     });
-    QTimer::singleShot(1500, this, [this]() {
+    QTimer::singleShot(2000, this, [this]() {
         Logger::info(QStringLiteral("Deferred: setupHotkey begin"));
         setupHotkey();
         Logger::info(QStringLiteral("Deferred: setupHotkey end"));
@@ -207,10 +212,12 @@ void PriceBarWindow::setupUi()
     layout->addWidget(m_chartButton);
     layout->addWidget(m_settingsButton);
 
+    Logger::info(QStringLiteral("setupUi: applyTheme"));
     applyTheme();
+    Logger::info(QStringLiteral("setupUi: dragFilter+relayout"));
     installDragFilter();
     relayoutBar();
-    // 热键延后注册，避免构造阶段 native filter 引发异常退出
+    Logger::info(QStringLiteral("setupUi: done"));
 }
 
 void PriceBarWindow::setupTray()
@@ -761,7 +768,11 @@ void PriceBarWindow::onAlertBlinkTick()
 void PriceBarWindow::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
+    if (width() < 2 || height() < 2)
+        return;
     QPainter p(this);
+    if (!p.isActive())
+        return;
     p.setRenderHint(QPainter::Antialiasing, true);
     const bool dark = AppSettings::instance().darkTheme();
     QPainterPath path;

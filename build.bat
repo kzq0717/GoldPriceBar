@@ -5,11 +5,14 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 REM GoldPriceBarLite v1.0 build
-REM Usage: build.bat [clean] [vs|ninja] [deploy] [start]
+REM Usage: build.bat [clean] [vs|ninja] [debug|release] [deploy] [start]
+REM   debug   = CMAKE_BUILD_TYPE/Debug (VS: --config Debug)
 
 if not defined QT6_ROOT set "QT6_ROOT=D:\InstallDir\Qt6.7\6.7.3\msvc2022_64"
 set "BUILD_DIR=build"
 set "CONFIG=Release"
+echo %* | findstr /i /c:"debug" >nul && set "CONFIG=Debug"
+echo %* | findstr /i /c:"release" >nul && set "CONFIG=Release"
 set "ARCH=x64"
 
 set "DO_CLEAN=0"
@@ -31,6 +34,7 @@ echo ========================================
 echo   GoldPriceBarLite build v1.0
 echo ========================================
 echo   QT6_ROOT = %QT6_ROOT%
+echo   CONFIG   = %CONFIG%
 echo ========================================
 echo.
 
