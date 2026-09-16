@@ -16,7 +16,15 @@
 PriceService::PriceService(QObject* parent)
     : QObject(parent)
 {
-    Logger::info(QStringLiteral("PriceService ctor: timers"));
+    // 构造函数保持空：所有资源在 start()/ensureXxx 中创建（规避启动期 0xc0000005）
+    Logger::info(QStringLiteral("PriceService ctor: empty OK"));
+}
+
+void PriceService::ensureTimers()
+{
+    if (m_timer)
+        return;
+    Logger::info(QStringLiteral("PriceService: create timers"));
     m_timer = new QTimer(this);
     m_timer->setSingleShot(false);
     m_timer->setTimerType(Qt::CoarseTimer);
@@ -31,13 +39,7 @@ PriceService::PriceService(QObject* parent)
     m_chartSeedTimer->setInterval(120000);
     m_chartSeedTimer->setSingleShot(false);
     connect(m_chartSeedTimer, &QTimer::timeout, this, &PriceService::onChartSeedTimer);
-
-    // NAM 延后到 ensureNetwork()，避免构造期与代理/SSL 初始化冲突导致 0xc0000005
-    m_network = nullptr;
-    m_intervalMs = AppSettings::instance().refreshIntervalMs();
-    if (m_intervalMs < 1000)
-        m_intervalMs = 1000;
-    Logger::info(QStringLiteral("PriceService ctor: done interval=%1").arg(m_intervalMs));
+    Logger::info(QStringLiteral("PriceService: timers OK"));
 }
 
 void PriceService::ensureNetwork()
@@ -74,7 +76,13 @@ QString PriceService::currentTypeCode() const
 
 void PriceService::start()
 {
+    ensureTimers();
+    if (!m_timer)
+        return;
     if (!m_timer->isActive()) {
+        m_intervalMs = AppSettings::instance().refreshIntervalMs();
+        if (m_intervalMs < 1000)
+            m_intervalMs = 1000;
         ensureNetwork();
         ExtremeDatabase::instance().purgeIntradayOlderThan(14);
         requestHistorySeed();
@@ -88,9 +96,9 @@ void PriceService::start()
 
 void PriceService::stop()
 {
-    m_timer->stop();
-    m_watchdog->stop();
-    m_chartSeedTimer->stop();
+    if (m_timer) m_timer->stop();
+    if (m_watchdog) m_watchdog->stop();
+    if (m_chartSeedTimer) m_chartSeedTimer->stop();
     // 仅断开并清空指针；不在此 deleteLater reply（与 NAM 生命周期绑定）
     abortPending();
     if (m_pendingChart) {
@@ -109,7 +117,7 @@ void PriceService::setInterval(int intervalMs)
     if (intervalMs < 1000)
         intervalMs = 1000;
     m_intervalMs = intervalMs;
-    if (m_timer->isActive()) {
+    if (m_timer && m_timer->isActive()) {
         m_timer->stop();
         m_timer->start(m_intervalMs);
     }

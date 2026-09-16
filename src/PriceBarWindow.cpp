@@ -58,37 +58,39 @@ PriceBarWindow::PriceBarWindow(QWidget* parent)
     setupUi();
     Logger::info(QStringLiteral("PriceBarWindow ctor step3 applyOpacity"));
     applyOpacity();
-    Logger::info(QStringLiteral("PriceBarWindow ctor step4 PriceService"));
-    m_priceService = new PriceService(this);
-    connect(m_priceService, &PriceService::priceUpdated,
-            this, &PriceBarWindow::onPriceUpdated);
-    connect(m_priceService, &PriceService::fetchFailed,
-            this, &PriceBarWindow::onFetchFailed);
-    connect(m_priceService, &PriceService::extremesUpdated, this, [this]() {
-        // 全日分时写入后刷新词条「高」
-        double high = 0.0;
-        if (HistoryCache::instance().todayHigh(high)) {
-            if (m_priceService->hasValidPrice())
-                high = qMax(high, m_priceService->lastPrice());
-            m_highLabel->setText(tr("高 %1").arg(high, 0, 'f', 2));
+    Logger::info(QStringLiteral("PriceBarWindow ctor step4 skip PriceService (deferred)"));
+    m_priceService = nullptr;
+
+    // 行情服务整段延后到 show 之后，避免构造期崩溃
+    QTimer::singleShot(300, this, [this]() {
+        Logger::info(QStringLiteral("Deferred: new PriceService"));
+        m_priceService = new PriceService(this);
+        Logger::info(QStringLiteral("Deferred: PriceService object OK"));
+        connect(m_priceService, &PriceService::priceUpdated,
+                this, &PriceBarWindow::onPriceUpdated);
+        connect(m_priceService, &PriceService::fetchFailed,
+                this, &PriceBarWindow::onFetchFailed);
+        connect(m_priceService, &PriceService::extremesUpdated, this, [this]() {
+            double high = 0.0;
+            if (HistoryCache::instance().todayHigh(high)) {
+                if (m_priceService && m_priceService->hasValidPrice())
+                    high = qMax(high, m_priceService->lastPrice());
+                m_highLabel->setText(tr("高 %1").arg(high, 0, 'f', 2));
+            }
+        });
+        if (m_chartWindow) {
+            connect(m_priceService, &PriceService::priceUpdated,
+                    m_chartWindow, &ChartWindow::onNewPrice);
         }
+        Logger::info(QStringLiteral("Deferred: PriceService::start"));
+        m_priceService->start();
+        Logger::info(QStringLiteral("Deferred: PriceService::start returned"));
     });
 
-    connect(&AppSettings::instance(), &AppSettings::settingsChanged,
-            this, &PriceBarWindow::onSettingsChanged);
-
-    Logger::info(QStringLiteral("PriceBarWindow ctor step5 schedule net + tray"));
-    // 托盘延后：避免构造期 QSystemTrayIcon 触发异常
     QTimer::singleShot(50, this, [this]() {
         Logger::info(QStringLiteral("Deferred: setupTray begin"));
         setupTray();
         Logger::info(QStringLiteral("Deferred: setupTray end"));
-    });
-    QTimer::singleShot(200, this, [this]() {
-        Logger::info(QStringLiteral("Deferred: PriceService::start begin"));
-        if (m_priceService)
-            m_priceService->start();
-        Logger::info(QStringLiteral("Deferred: PriceService::start end"));
     });
     QTimer::singleShot(2000, this, [this]() {
         Logger::info(QStringLiteral("Deferred: setupHotkey begin"));
@@ -348,9 +350,10 @@ void PriceBarWindow::onChartClicked()
 {
     if (!m_chartWindow) {
         m_chartWindow = new ChartWindow(this);
-        // 新价格到达时，若曲线窗口已打开则自动刷新
-        connect(m_priceService, &PriceService::priceUpdated,
-                m_chartWindow, &ChartWindow::onNewPrice);
+        if (m_priceService) {
+            connect(m_priceService, &PriceService::priceUpdated,
+                    m_chartWindow, &ChartWindow::onNewPrice);
+        }
     }
     m_chartWindow->refreshData();
     m_chartWindow->show();
@@ -392,7 +395,8 @@ void PriceBarWindow::onSettingsChanged()
 {
     applyOpacity();
     const int ms = AppSettings::instance().refreshIntervalMs();
-    m_priceService->setInterval(ms);
+    if (m_priceService)
+        m_priceService->setInterval(ms);
     // 对照价与主行情使用相同刷新周期
     if (m_secondaryTimer) {
         const int secMs = qMax(1000, ms);
@@ -404,7 +408,8 @@ void PriceBarWindow::onSettingsChanged()
     }
     // 切换数据源后清空当日缓存，避免浙商与伦敦金价格混在同一曲线
     HistoryCache::instance().clear();
-    m_priceService->forceRefresh();
+    if (m_priceService)
+        m_priceService->forceRefresh();
     if (m_lastPrice > 0.0)
         updateAlertIndicator(m_lastPrice);
     updateSecondaryVisibility();
@@ -1182,6 +1187,8 @@ void PriceBarWindow::checkDailyReport()
 void PriceBarWindow::updateNetworkHealth()
 {
     if (!m_healthLabel || !m_priceService)
+        return;
+    if (!m_priceService)
         return;
     const int fails = m_priceService->consecutiveFail();
     const qint64 lastOk = m_priceService->lastSuccessMs();

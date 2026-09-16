@@ -44,6 +44,7 @@ private slots:
     void onHistoryFinished(QNetworkReply* reply);
 
 private:
+    void ensureTimers();
     void ensureNetwork();
     void requestPrice();
     void requestPriceFromBackup(int backupIndex);
