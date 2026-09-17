@@ -6,6 +6,11 @@
 #include <QXmlStreamReader>
 #include <QRegularExpression>
 #include <QSet>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QNetworkProxy>
+#include "AppSettings.h"
 #include <algorithm>
 
 SentimentService& SentimentService::instance()
@@ -59,8 +64,10 @@ void SentimentService::refresh()
     m_lastError.clear();
     m_pending.clear();
     m_feedIndex = 0;
-    // 公开 RSS：无需 Key；关键词聚焦黄金/金价
+    // 新浪财经国内黄金滚动资讯（免翻墙、国内极速）+ 谷歌新闻公开 RSS
     m_feedQueue = {
+        QStringLiteral(
+            "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k=%E9%BB%84%E9%87%91&num=20&page=1"),
         QStringLiteral(
             "https://news.google.com/rss/search?q=%E9%BB%84%E9%87%91%20OR%20%E9%87%91%E4%BB%B7%20OR%20XAU&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"),
         QStringLiteral(
@@ -80,12 +87,25 @@ void SentimentService::fetchNext()
         m_reply.clear();
     }
     const QUrl url(m_feedQueue.at(m_feedIndex));
+    // 新浪国内资讯强制直连不走代理；境外资讯按用户设置决定是否走代理
+    if (m_feedIndex == 0) {
+        m_nam->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+    } else {
+        if (AppSettings::instance().proxyEnabled()) {
+            QNetworkProxy p(QNetworkProxy::HttpProxy,
+                            AppSettings::instance().proxyHost(),
+                            static_cast<quint16>(AppSettings::instance().proxyPort()));
+            m_nam->setProxy(p);
+        } else {
+            m_nam->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+        }
+    }
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::UserAgentHeader,
-                  QStringLiteral("GoldPriceBarLite/1.3 SentimentMonitor"));
+                  QStringLiteral("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"));
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::NoLessSafeRedirectPolicy);
-    req.setTransferTimeout(20000);
+    req.setTransferTimeout(10000);
     m_reply = m_nam->get(req);
     connect(m_reply, &QNetworkReply::finished, this, [this]() {
         QNetworkReply* reply = m_reply.data();
@@ -95,21 +115,66 @@ void SentimentService::fetchNext()
             fetchNext();
             return;
         }
-        const QString feedName = (m_feedIndex == 0)
-                                     ? QStringLiteral("谷歌新闻·中文")
-                                     : QStringLiteral("谷歌新闻·英文");
+        QString feedName = QStringLiteral("新浪财经·黄金");
+        if (m_feedIndex == 1)
+            feedName = QStringLiteral("谷歌新闻·中文");
+        else if (m_feedIndex == 2)
+            feedName = QStringLiteral("谷歌新闻·英文");
+
         if (reply->error() != QNetworkReply::NoError
             && reply->error() != QNetworkReply::OperationCanceledError) {
             Logger::warn(QStringLiteral("Sentiment feed fail: %1 %2")
                              .arg(feedName, reply->errorString()));
             m_lastError = reply->errorString();
         } else {
-            parseRss(reply->readAll(), feedName);
+            const QByteArray body = reply->readAll();
+            if (body.trimmed().startsWith('{')) {
+                parseSinaJson(body);
+            } else {
+                parseRss(body, feedName);
+            }
         }
         reply->deleteLater();
         ++m_feedIndex;
         fetchNext();
     });
+}
+
+void SentimentService::parseSinaJson(const QByteArray& data)
+{
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject())
+        return;
+    const QJsonObject root = doc.object();
+    const QJsonObject result = root.value(QStringLiteral("result")).toObject();
+    const QJsonArray arr = result.value(QStringLiteral("data")).toArray();
+    for (const QJsonValue& v : arr) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject o = v.toObject();
+        SentimentItem item;
+        item.title = o.value(QStringLiteral("title")).toString().trimmed();
+        if (item.title.isEmpty())
+            continue;
+        item.summary = o.value(QStringLiteral("intro")).toString().trimmed();
+        item.link = o.value(QStringLiteral("url")).toString().trimmed();
+        item.source = o.value(QStringLiteral("media_name")).toString().trimmed();
+        if (item.source.isEmpty())
+            item.source = QStringLiteral("新浪财经");
+
+        qint64 ctime = o.value(QStringLiteral("ctime")).toString().toLongLong();
+        if (ctime <= 0)
+            ctime = static_cast<qint64>(o.value(QStringLiteral("ctime")).toDouble());
+        if (ctime > 0)
+            item.published = QDateTime::fromSecsSinceEpoch(ctime);
+        else
+            item.published = QDateTime::currentDateTime();
+
+        const QString blob = item.title + QStringLiteral(" ") + item.summary;
+        item.bias = classifyBias(blob);
+        m_pending.append(item);
+    }
 }
 
 void SentimentService::parseRss(const QByteArray& data, const QString& feedName)
@@ -194,7 +259,8 @@ void SentimentService::finishOk()
         emit updated();
     } else {
         if (m_lastError.isEmpty())
-            m_lastError = QStringLiteral("未解析到黄金相关条目（网络或 RSS 变更）");
+            m_lastError = QStringLiteral("网络异常：未能获取黄金舆情资讯（请检查网络连接或代理配置）");
+        Logger::warn(QStringLiteral("Sentiment failed: %1").arg(m_lastError));
         emit failed(m_lastError);
     }
 }

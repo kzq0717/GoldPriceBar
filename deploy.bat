@@ -72,7 +72,8 @@ echo %EXE% | findstr /i "\\debug\\" >nul && (
 
 echo [1/2] windeployqt %WD_MODE% ...
 "%WDEPLOY%" %WD_MODE% --compiler-runtime --no-translations --force ^
-  --network --sql --charts --widgets --gui --core ^
+  --network --sql --charts --widgets --gui --core --qml --quick ^
+  --qmldir "%cd%\qml" ^
   "%EXE%"
 if errorlevel 1 (
   echo [WARN] windeployqt with module flags failed, retry minimal...
@@ -86,7 +87,7 @@ if errorlevel 1 (
 echo.
 echo [2/2] verify key DLLs ...
 set "MISS=0"
-for %%D in (Qt6Core Qt6Gui Qt6Widgets Qt6Network Qt6Charts Qt6Sql) do (
+for %%D in (Qt6Core Qt6Gui Qt6Widgets Qt6Network Qt6Charts Qt6Sql Qt6Qml Qt6Quick) do (
   if not exist "%EXEDIR%\%%D%DLL_SUFFIX%.dll" if not exist "%EXEDIR%\%%D.dll" (
     echo   MISSING: %%D%DLL_SUFFIX%.dll
     set "MISS=1"

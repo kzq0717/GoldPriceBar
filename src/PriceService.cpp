@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QUrl>
 #include <QNetworkRequest>
+#include <QNetworkProxy>
 #include <QDebug>
 #include <QDateTime>
 #include <QDate>
@@ -42,9 +43,11 @@ void PriceService::ensureTimers() {
 void PriceService::ensureNetwork() {
     if (m_network)
         return;
-    Logger::info(QStringLiteral("PriceService: creating QNetworkAccessManager"));
+    Logger::info(QStringLiteral("PriceService: creating QNetworkAccessManager (direct NoProxy)"));
     m_network = new QNetworkAccessManager(this);
-    Logger::info(QStringLiteral("PriceService: NAM ready"));
+    // 实时金价获取默认直连不走代理，避免代理客户端未开启或端口不通导致行情无法获取
+    m_network->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+    Logger::info(QStringLiteral("PriceService: NAM ready (NoProxy configured)"));
 }
 
 PriceService::~PriceService() {
@@ -74,6 +77,22 @@ QString PriceService::currentTypeCode() const {
     if (kKnown.contains(source))
         return source;
     return QStringLiteral("zs");
+}
+
+QString PriceService::canonicalSourceName(const QString &type) {
+    const QString t = type.trimmed().toLower();
+    if (t == QStringLiteral("zs")) return QStringLiteral("浙商银行·积存金");
+    if (t == QStringLiteral("ms")) return QStringLiteral("民生银行·积存金");
+    if (t == QStringLiteral("cib")) return QStringLiteral("兴业银行·积存金");
+    if (t == QStringLiteral("icbc")) return QStringLiteral("工商银行·积存金");
+    if (t == QStringLiteral("cmb")) return QStringLiteral("招商银行·Au99.99");
+    if (t == QStringLiteral("gj") || t == QStringLiteral("xau")) return QStringLiteral("伦敦金现·国际金");
+    if (t == QStringLiteral("cgb")) return QStringLiteral("广发银行·积存金");
+    if (t == QStringLiteral("abc")) return QStringLiteral("农业银行·存金通");
+    if (t == QStringLiteral("ccb")) return QStringLiteral("建设银行·积存金");
+    if (t == QStringLiteral("boc")) return QStringLiteral("中国银行·积存金");
+    if (t == QStringLiteral("jd")) return QStringLiteral("京东金融·黄金");
+    return QStringLiteral("黄金现价");
 }
 
 void PriceService::start() {
@@ -157,8 +176,8 @@ void PriceService::onChartSeedTimer() {
 void PriceService::onWatchdog() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
-    if (m_pendingReply && m_requestStartMs > 0 && (now - m_requestStartMs) > 12000) {
-        qWarning() << "PriceService: request hung >12s, abort";
+    if (m_pendingReply && m_requestStartMs > 0 && (now - m_requestStartMs) > 10000) {
+        qWarning() << "PriceService: request hung >10s, abort";
         abortPending();
         requestPrice();
         return;
@@ -166,10 +185,14 @@ void PriceService::onWatchdog() {
 
     const qint64 staleMs = qMax(static_cast<qint64>(m_intervalMs) * 5, 30000LL);
     if (m_lastSuccessMs > 0 && (now - m_lastSuccessMs) > staleMs) {
+        const qint64 elapsed = now - m_lastSuccessMs;
         Logger::warn(
-            QStringLiteral("PriceService watchdog: no success for %1 ms (skip recreate)").arg(now - m_lastSuccessMs));
-        // 不再 recreateNetworkManager：与 reply 生命周期叠加易 0xc0000005
+            QStringLiteral("PriceService watchdog: no success for %1 ms").arg(elapsed));
         abortPending();
+        if (elapsed > 60000LL) {
+            Logger::warn(QStringLiteral("PriceService watchdog: recreating network manager after 60s failure"));
+            recreateNetworkManager();
+        }
         requestPrice();
     }
 }
@@ -203,6 +226,7 @@ void PriceService::recreateNetworkManager() {
         old->deleteLater();
     }
     m_network = new QNetworkAccessManager(this);
+    m_network->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
 }
 
 void PriceService::abortPending() {
@@ -322,56 +346,74 @@ void PriceService::requestPriceFromBackup(int backupIndex) {
     if (m_pendingReply)
         return;
 
-    if (!m_network)
-        m_network = new QNetworkAccessManager(this);
-
     m_backupIndex = backupIndex;
     QUrl url;
+    QString refererHeader;
     const QString type = currentTypeCode();
-    const bool domestic = !(type == QStringLiteral("gj") || type == QStringLiteral("xau")
-                            || type == QStringLiteral("jd"));
-    static const QStringList kDomesticFallback = {
-        QStringLiteral("zs"), QStringLiteral("ms"), QStringLiteral("cib"),
-        QStringLiteral("icbc"), QStringLiteral("cmb"),
-    };
 
-    if (backupIndex == 0) {
-        url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
-    } else if (domestic && backupIndex >= 1 && backupIndex <= kDomesticFallback.size()) {
-        QString alt = kDomesticFallback.at(backupIndex - 1);
-        if (alt == type) {
-            requestPriceFromBackup(backupIndex + 1);
+    if (type == QStringLiteral("cmb")) {
+        // 招商银行: 0=jin主源, 1=招行官方接口
+        if (backupIndex == 0) {
+            url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
+        } else if (backupIndex == 1) {
+            url = QUrl(QStringLiteral("https://m.cmbchina.com/api/rate/gold"));
+        } else {
+            ++m_consecutiveFail;
+            emit fetchFailed(tr("刷新中..."));
+            if (m_timer && m_consecutiveFail >= 3) {
+                const int backoff = qMin(m_intervalMs * 2, 15000);
+                m_timer->setInterval(qMax(m_intervalMs, backoff));
+            }
             return;
         }
-        Logger::info(QStringLiteral("Price fallback domestic type=%1 idx=%2").arg(alt).arg(backupIndex));
-        url = QUrl(AppSettings::instance().primaryPriceUrl().arg(alt));
-    } else if (type == QStringLiteral("cmb") && backupIndex == kDomesticFallback.size() + 1) {
-        url = QUrl(QStringLiteral("https://m.cmbchina.com/api/rate/gold"));
-    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("xau")
-                || type == QStringLiteral("jd")) && backupIndex == 1) {
-        url = QUrl(AppSettings::instance().backupPriceUrl1());
-    } else if ((type == QStringLiteral("gj") || type == QStringLiteral("xau")
-                || type == QStringLiteral("jd")) && backupIndex == 2) {
-        url = QUrl(AppSettings::instance().backupPriceUrl2());
-    } else {
-        ++m_consecutiveFail;
-        Logger::warn(QStringLiteral("Price all sources failed type=%1 fails=%2")
-                         .arg(type).arg(m_consecutiveFail));
-        emit fetchFailed(tr("全部数据源失败，请检查网络/代理"));
-        if (m_timer && m_consecutiveFail >= 3) {
-            const int backoff = qMin(m_intervalMs * 2, 15000);
-            m_timer->setInterval(qMax(m_intervalMs, backoff));
+    } else if (type == QStringLiteral("gj") || type == QStringLiteral("xau")) {
+        // 国际金现货: 0=jin主源, 1=新浪hf_XAU, 2=gold-api, 3=goldprice.dev
+        if (backupIndex == 0) {
+            url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
+        } else if (backupIndex == 1) {
+            url = QUrl(QStringLiteral("https://hq.sinajs.cn/list=hf_XAU"));
+            refererHeader = QStringLiteral("https://finance.sina.com.cn");
+        } else if (backupIndex == 2) {
+            url = QUrl(AppSettings::instance().backupPriceUrl1());
+        } else if (backupIndex == 3) {
+            url = QUrl(AppSettings::instance().backupPriceUrl2());
+        } else {
+            ++m_consecutiveFail;
+            emit fetchFailed(tr("刷新中..."));
+            if (m_timer && m_consecutiveFail >= 3) {
+                const int backoff = qMin(m_intervalMs * 2, 15000);
+                m_timer->setInterval(qMax(m_intervalMs, backoff));
+            }
+            return;
         }
-        return;
+    } else {
+        // 国内各家银行积存金 (zs, ms, cib, icbc, ccb, abc, boc, cgb, jd 等)
+        // 严格锁定设置中勾选的单一银行品种，绝不轮询或切换至其他品种，确保不滚动
+        if (backupIndex == 0) {
+            url = QUrl(AppSettings::instance().primaryPriceUrl().arg(type));
+        } else {
+            ++m_consecutiveFail;
+            emit fetchFailed(tr("刷新中..."));
+            if (m_timer && m_consecutiveFail >= 3) {
+                const int backoff = qMin(m_intervalMs * 2, 15000);
+                m_timer->setInterval(qMax(m_intervalMs, backoff));
+            }
+            return;
+        }
     }
 
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.3.10"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"));
+    if (!refererHeader.isEmpty()) {
+        request.setRawHeader("Referer", refererHeader.toUtf8());
+    }
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
-    request.setTransferTimeout(10000);
-    request.setRawHeader("Accept", "application/json");
+    request.setTransferTimeout(8000);
+    request.setRawHeader("Accept", "*/*");
 
+    Logger::info(QStringLiteral("PriceService: request URL %1 idx=%2 (target: %3)")
+                     .arg(url.toString()).arg(backupIndex).arg(type));
     QNetworkReply *reply = m_network->get(request);
     m_pendingReply = reply;
     m_requestStartMs = QDateTime::currentMSecsSinceEpoch();
@@ -383,7 +425,7 @@ bool PriceService::applyPrice(double price, double change, const QString &name, 
     if (price <= 0.0)
         return false;
 
-    // 与上次有效价相比跳变过大（>25%）则拒绝，防止串源污染缓存
+    // 与上次有效价相比跳变过大（>25%）则拒绝，防止异常脏数据
     if (m_hasValidPrice && m_lastPrice > 0.0) {
         const double ratio = price / m_lastPrice;
         if (ratio > 1.25 || ratio < 0.75) {
@@ -392,10 +434,13 @@ bool PriceService::applyPrice(double price, double change, const QString &name, 
         }
     }
 
+    const QString type = currentTypeCode();
     m_lastPrice = price;
     m_lastChange = change;
-    m_lastSourceName = name;
-    if (!currency.isEmpty() && currency != QStringLiteral("¥") && currency != QStringLiteral("￥")) {
+    // 关键：严格使用当前设置品种的标准中文名，绝不随返回数据中的不同字段产生变动或滚动
+    m_lastSourceName = canonicalSourceName(type);
+    if (!currency.isEmpty() && currency != QStringLiteral("¥") && currency != QStringLiteral("￥")
+        && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
         if (!m_lastSourceName.contains(currency))
             m_lastSourceName += QStringLiteral("(%1)").arg(currency);
     }
@@ -406,6 +451,9 @@ bool PriceService::applyPrice(double price, double change, const QString &name, 
     // 恢复用户设定刷新周期
     if (m_timer && m_intervalMs > 0 && m_timer->interval() != m_intervalMs)
         m_timer->setInterval(m_intervalMs);
+
+    Logger::info(QStringLiteral("PriceService: applyPrice %1 (change %2) [%3]")
+                     .arg(price, 0, 'f', 2).arg(change, 0, 'f', 2).arg(m_lastSourceName));
 
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
     ExtremeDatabase::instance().upsertDailyBar(QDate::currentDate(), currentTypeCode(), m_lastPrice);
@@ -425,20 +473,26 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
     m_requestStartMs = 0;
 
     const int tried = m_backupIndex;
-    auto tryNext = [this, tried]() {
-        // 国际金备用仅当主数据源为伦敦金(gj)时启用；
-        // 浙商/民生与 XAU/USD 量纲不同，绝不能回退，否则预警/预测全错
-        const QString type = currentTypeCode();
-        const bool domestic = !(type == QStringLiteral("gj") || type == QStringLiteral("xau")
-                                || type == QStringLiteral("jd"));
-        const int maxTry = domestic ? 5 : 2;
+    const QString type = currentTypeCode();
+
+    auto tryNext = [this, tried, type]() {
+        int maxTry = 0;
+        if (type == QStringLiteral("cmb")) {
+            maxTry = 1;
+        } else if (type == QStringLiteral("gj") || type == QStringLiteral("xau")) {
+            maxTry = 3;
+        } else {
+            maxTry = 0; // 国内银行仅请求当前单一选定品种，绝不轮询或滚动至其他品种
+        }
+
         if (tried < maxTry) {
-            requestPriceFromBackup(tried + 1);
+            QTimer::singleShot(200, this, [this, tried]() {
+                requestPriceFromBackup(tried + 1);
+            });
             return;
         }
         ++m_consecutiveFail;
-        // 不 recreate NAM（易崩溃）
-        emit fetchFailed(tr("数据源失败，将自动重试"));
+        emit fetchFailed(tr("刷新中..."));
         if (m_timer && m_consecutiveFail >= 3) {
             const int backoff = qMin(m_intervalMs * 2, 15000);
             m_timer->setInterval(qMax(m_intervalMs, backoff));
@@ -448,6 +502,17 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
     if (reply->error() != QNetworkReply::NoError) {
         if (reply->error() != QNetworkReply::OperationCanceledError) {
             Logger::warn(QStringLiteral("Price fetch error (src %1): %2").arg(tried).arg(reply->errorString()));
+            // 若发生网络错误且当前使用了代理，退为不使用代理直连并立即重试
+            if (m_network && m_network->proxy().type() != QNetworkProxy::NoProxy) {
+                Logger::warn(QStringLiteral("PriceService: proxy connection failed (%1), falling back to NoProxy direct")
+                                 .arg(reply->errorString()));
+                m_network->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+                QTimer::singleShot(200, this, [this]() {
+                    requestPrice();
+                });
+                reply->deleteLater();
+                return;
+            }
             tryNext();
         }
         reply->deleteLater();
@@ -456,93 +521,84 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
 
     const QByteArray data = reply->readAll();
     reply->deleteLater();
+    Logger::info(QStringLiteral("PriceService: onNetworkFinished idx=%1 err=%2 bytes=%3")
+                     .arg(tried).arg(reply->error()).arg(data.size()));
 
+    // 1. 新浪财经国际金返回格式 (纯文本: var hq_str_...="...";)
+    if (data.contains("var hq_str_") && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
+        const QString text = QString::fromLocal8Bit(data);
+        const int q1 = text.indexOf(QLatin1Char('"'));
+        const int q2 = text.lastIndexOf(QLatin1Char('"'));
+        if (q1 != -1 && q2 > q1) {
+            const QString payload = text.mid(q1 + 1, q2 - q1 - 1);
+            const QStringList parts = payload.split(QLatin1Char(','));
+            if (parts.size() >= 2 && text.contains(QStringLiteral("hf_XAU"))) {
+                // 伦敦金现货: parts[0]=最新价, parts[1]=昨收结算价
+                const double price = parts.at(0).toDouble();
+                const double prevClose = parts.at(1).toDouble();
+                const double change = (prevClose > 0.0) ? (price - prevClose) : 0.0;
+                if (applyPrice(price, change, canonicalSourceName(type), QStringLiteral("USD")))
+                    return;
+            }
+        }
+    }
+
+    // 2. JSON 格式解析
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-    if (parseError.error != QJsonParseError::NoError) {
-        tryNext();
-        return;
-    }
-
-    if (tried == 0) {
-        // jin 格式
-        if (!doc.isObject()) {
-            tryNext();
-            return;
-        }
+    if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
         const QJsonObject root = doc.object();
-        if (root.value(QStringLiteral("code")).toInt() != 200) {
-            tryNext();
-            return;
-        }
-        const QJsonObject d = root.value(QStringLiteral("data")).toObject();
-        double price = d.value(QStringLiteral("price")).toDouble();
-        double change = d.value(QStringLiteral("change")).toDouble();
-        QString name = d.value(QStringLiteral("name")).toString();
-        const QString currency = d.value(QStringLiteral("currency")).toString();
-        if (name.isEmpty())
-            name = tr("未知");
-        if (!(name.contains(QStringLiteral("伦敦")) || name.contains(QStringLiteral("国际")))) {
-            if (!name.contains(QStringLiteral("积存金")))
-                name += QStringLiteral("积存金");
-        }
-        if (!applyPrice(price, change, name, currency))
-            tryNext();
-        return;
-    }
 
-    if (tried == 1) {
-        // 招行官方 Au99.99 或 gold-api.com
-        if (!doc.isObject()) {
-            tryNext();
-            return;
+        // 2.1 主源 jin 格式: {"code":200, "data":{"price":..., "change":..., "name":...}}
+        if (root.contains(QStringLiteral("data")) && root.value(QStringLiteral("data")).isObject()) {
+            const QJsonObject d = root.value(QStringLiteral("data")).toObject();
+            if (d.contains(QStringLiteral("price"))) {
+                const double price = d.value(QStringLiteral("price")).toDouble();
+                const double change = d.value(QStringLiteral("change")).toDouble();
+                const QString currency = d.value(QStringLiteral("currency")).toString();
+                if (applyPrice(price, change, canonicalSourceName(type), currency))
+                    return;
+            }
         }
-        if (currentTypeCode() == QStringLiteral("cmb")) {
-            const QJsonObject root = doc.object();
+
+        // 2.2 招行官方接口: {"body":{"data":[{"variety":"Au99.99", "curPrice":...}]}}
+        if (root.contains(QStringLiteral("body")) && type == QStringLiteral("cmb")) {
             const QJsonArray items =
                 root.value(QStringLiteral("body")).toObject().value(QStringLiteral("data")).toArray();
-            double price = 0, change = 0;
             for (const QJsonValue &v : items) {
                 const QJsonObject it = v.toObject();
                 if (it.value(QStringLiteral("variety")).toString() == QStringLiteral("Au99.99")) {
-                    price = it.value(QStringLiteral("curPrice")).toString().toDouble();
-                    if (price <= 0)
+                    double price = it.value(QStringLiteral("curPrice")).toString().toDouble();
+                    if (price <= 0.0)
                         price = it.value(QStringLiteral("curPrice")).toDouble();
-                    change = it.value(QStringLiteral("upDown")).toString().toDouble();
+                    double change = it.value(QStringLiteral("upDown")).toString().toDouble();
                     if (qFuzzyIsNull(change))
                         change = it.value(QStringLiteral("upDown")).toDouble();
+                    if (applyPrice(price, change, canonicalSourceName(type), QStringLiteral("¥")))
+                        return;
                     break;
                 }
             }
-            if (!applyPrice(price, change, tr("招商银行·官方"), QStringLiteral("¥")))
-                tryNext();
-            return;
         }
-        // gold-api.com
-        const QJsonObject o = doc.object();
-        const double price = o.value(QStringLiteral("price")).toDouble();
-        if (!applyPrice(price, 0.0, tr("伦敦金·备用gold-api"), QStringLiteral("USD")))
-            tryNext();
-        return;
-    }
 
-    if (tried == 2) {
-        // goldprice.dev
-        if (!doc.isObject()) {
-            tryNext();
-            return;
+        // 2.3 gold-api.com 格式 (国际金): {"price": 4336.5, ...}
+        if (root.contains(QStringLiteral("price")) && !root.contains(QStringLiteral("data"))
+            && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
+            const double price = root.value(QStringLiteral("price")).toDouble();
+            if (applyPrice(price, 0.0, canonicalSourceName(type), QStringLiteral("USD")))
+                return;
         }
-        const QJsonObject root = doc.object();
-        const QJsonArray symbols = root.value(QStringLiteral("symbols")).toArray();
-        if (symbols.isEmpty()) {
-            tryNext();
-            return;
+
+        // 2.4 goldprice.dev 格式 (国际金): {"symbols":[{"price": ...}]}
+        if (root.contains(QStringLiteral("symbols"))
+            && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
+            const QJsonArray arr = root.value(QStringLiteral("symbols")).toArray();
+            if (!arr.isEmpty()) {
+                const double price = arr.at(0).toObject().value(QStringLiteral("price")).toString().toDouble();
+                if (applyPrice(price, 0.0, canonicalSourceName(type), QStringLiteral("USD")))
+                    return;
+            }
         }
-        const QJsonObject s0 = symbols.at(0).toObject();
-        const double price = s0.value(QStringLiteral("price")).toString().toDouble();
-        if (!applyPrice(price, 0.0, tr("伦敦金·备用goldprice.dev"), QStringLiteral("USD")))
-            tryNext();
-        return;
     }
 
     tryNext();

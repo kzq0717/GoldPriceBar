@@ -95,6 +95,7 @@ private:
     void onSmoothTick();
     void onPulseTick();
     void setCurrentMarker(qint64 xMs, double y, bool startPulse = true);
+    void updateCurrentMarker();
 
     QComboBox* m_periodCombo = nullptr;
     QDateEdit* m_dateFromEdit = nullptr;

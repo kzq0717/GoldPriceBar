@@ -25,7 +25,7 @@ set(CMAKE_AUTOUIC ON)
 add_subdirectory(sdk)
 
 find_package(Qt6 REQUIRED COMPONENTS
-    Core Gui Widgets Network Charts Sql
+    Core Gui Widgets Network Charts Sql Qml Quick QuickControls2 QuickWidgets
 )
 qt_standard_project_setup()
 
@@ -33,6 +33,7 @@ set(PROJECT_SOURCES
     src/main.cpp
     src/PriceBarWindow.h src/PriceBarWindow.cpp
     src/PriceService.h src/PriceService.cpp
+    src/QmlBridge.h src/QmlBridge.cpp
     src/SettingsDialog.h src/SettingsDialog.cpp
     src/ChartWindow.h src/ChartWindow.cpp
     src/HistoryCache.h src/HistoryCache.cpp
@@ -63,6 +64,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     goldsdk
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Charts Qt6::Sql
+    Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::QuickWidgets
 )
 
 if(WIN32)

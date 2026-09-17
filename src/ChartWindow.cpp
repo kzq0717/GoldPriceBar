@@ -167,12 +167,13 @@ void ChartWindow::setupChart() {
   dashLow.setWidth(2);
   m_forecastLowSeries->setPen(dashLow);
 
-  // 当前点：浅红色
+  // 当前点：红色呼吸光点（带高亮白色描边）
   m_currentSeries = new QScatterSeries(this);
   m_currentSeries->setName(tr("当前"));
-  m_currentSeries->setMarkerSize(7);
-  m_currentSeries->setColor(QColor(255, 160, 160));
-  m_currentSeries->setBorderColor(QColor(220, 80, 80));
+  m_currentSeries->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+  m_currentSeries->setMarkerSize(10);
+  m_currentSeries->setColor(QColor(255, 77, 79));
+  m_currentSeries->setBorderColor(QColor(255, 255, 255));
 
   m_highSeries = new QScatterSeries(this);
   m_highSeries->setMarkerSize(6);
@@ -192,9 +193,9 @@ void ChartWindow::setupChart() {
   m_chart->addSeries(m_yesterdaySeries);
   m_chart->addSeries(m_forecastSeries);
   m_chart->addSeries(m_forecastLowSeries);
-  m_chart->addSeries(m_currentSeries);
   m_chart->addSeries(m_highSeries);
   m_chart->addSeries(m_lowSeries);
+  m_chart->addSeries(m_currentSeries);
   m_chart->setTitle(tr("今日分时走势"));
   m_chart->legend()->setVisible(true);
   m_chart->legend()->setAlignment(Qt::AlignBottom);
@@ -686,6 +687,7 @@ void ChartWindow::setCurrentMarker(qint64 xMs, double y, bool startPulse)
     return;
   m_currentSeries->clear();
   m_currentSeries->append(xMs, y);
+  m_currentSeries->setVisible(true);
   if (startPulse && m_pulseTimer && !m_pulseTimer->isActive())
     m_pulseTimer->start();
 }
@@ -717,12 +719,15 @@ void ChartWindow::onPulseTick()
   if (!m_currentSeries || !m_hasMarker || !isVisible() || !isIntradayMode())
     return;
   m_pulseOn = !m_pulseOn;
-  // 等待下一价时末点呼吸闪烁
-  m_currentSeries->setMarkerSize(m_pulseOn ? 11.0 : 7.0);
-  if (m_pulseOn)
+  // 等待下一价时末点呼吸闪烁：由 9px ~ 13px 交替，边缘高亮白光
+  m_currentSeries->setMarkerSize(m_pulseOn ? 13.0 : 9.0);
+  if (m_pulseOn) {
+    m_currentSeries->setColor(QColor(255, 77, 79));
+    m_currentSeries->setBorderColor(QColor(255, 255, 255));
+  } else {
     m_currentSeries->setColor(QColor(255, 120, 120));
-  else
-    m_currentSeries->setColor(QColor(255, 180, 180));
+    m_currentSeries->setBorderColor(QColor(255, 220, 220));
+  }
 }
 
 void ChartWindow::showEvent(QShowEvent *event) {
@@ -1568,6 +1573,24 @@ void ChartWindow::updateHighLowMarkers() {
                         lp.second, m_forecastModeTag);
 }
 
+void ChartWindow::updateCurrentMarker() {
+  if (!m_currentSeries || m_plotPoints.isEmpty() || !m_chart || !isIntradayMode())
+    return;
+
+  const auto &cur = m_plotPoints.last();
+  const qint64 x = cur.first.toMSecsSinceEpoch();
+  const double y = cur.second;
+
+  m_markerXMs = x;
+  m_targetY = y;
+  m_smoothY = y;
+  m_hasMarker = true;
+  if (m_series)
+    m_seriesLastIndex = m_series->count() - 1;
+
+  setCurrentMarker(x, y, true);
+}
+
 void ChartWindow::fetchChartFromApi() {
   if (m_loading)
     return;
@@ -1818,12 +1841,14 @@ void ChartWindow::updateSeries() {
 
   updateMovingAverages();
   updateYesterdayOverlay();
+  updateCurrentMarker();
 
   QTimer::singleShot(50, this, [this]() {
     if (!isVisible())
       return;
     updateForecast();
     updateHighLowMarkers();
+    updateCurrentMarker();
     updateMovingAverages();
   });
 }
@@ -2242,8 +2267,9 @@ void ChartWindow::applyChartTheme()
         setDash(m_forecastLowSeries, QColor(0, 230, 118), 2);   // 预测低：鲜绿虚线
 
         if (m_currentSeries) {
-            m_currentSeries->setColor(QColor(255, 100, 100));
-            m_currentSeries->setBorderColor(QColor(255, 200, 200));
+            m_currentSeries->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+            m_currentSeries->setColor(QColor(255, 77, 79));
+            m_currentSeries->setBorderColor(QColor(255, 255, 255));
         }
         if (m_sideCurrentLabel)
             m_sideCurrentLabel->setStyleSheet("color:#ffe082;font-size:16px;font-weight:bold;");
@@ -2291,8 +2317,9 @@ void ChartWindow::applyChartTheme()
         setDash(m_forecastLowSeries, QColor(39, 174, 96), 2);   // 预测低：绿虚线
 
         if (m_currentSeries) {
-            m_currentSeries->setColor(QColor(255, 160, 160));
-            m_currentSeries->setBorderColor(QColor(220, 80, 80));
+            m_currentSeries->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+            m_currentSeries->setColor(QColor(255, 77, 79));
+            m_currentSeries->setBorderColor(QColor(255, 255, 255));
         }
         // 侧栏始终深色卡片风格，避免浅色主题把数字刷成深色导致看不清
         applySidePanelChrome();

@@ -9,5 +9,8 @@
             <file>arrow_down.png</file>
             <file>arrow_up_dark.png</file>
             <file>arrow_down_dark.png</file>
+            <file alias="qml/PriceBar.qml">../qml/PriceBar.qml</file>
+            <file alias="qml/SentimentWindow.qml">../qml/SentimentWindow.qml</file>
+            <file alias="qml/SettingsWindow.qml">../qml/SettingsWindow.qml</file>
     </qresource>
 </RCC>

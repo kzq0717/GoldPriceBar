@@ -22,6 +22,13 @@ class SettingsDialog : public QDialog
 public:
     explicit SettingsDialog(QWidget* parent = nullptr);
 
+signals:
+    void requestOpenSentiment();
+    void requestChangeOpacity(double op);
+
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private slots:
     void onAccept();
     void onIntervalChanged(int index);

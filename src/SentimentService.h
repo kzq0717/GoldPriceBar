@@ -48,6 +48,7 @@ private:
     explicit SentimentService(QObject* parent = nullptr);
     void fetchNext();
     void parseRss(const QByteArray& data, const QString& feedName);
+    void parseSinaJson(const QByteArray& data);
     void finishOk();
 
     QNetworkAccessManager* m_nam = nullptr;

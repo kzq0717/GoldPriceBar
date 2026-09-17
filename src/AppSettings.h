@@ -5,18 +5,17 @@
 #include <QString>
 #include <QTime>
 
-class AppSettings : public QObject
-{
+class AppSettings : public QObject {
     Q_OBJECT
 
-public:
-    static AppSettings& instance();
+  public:
+    static AppSettings &instance();
 
     int refreshIntervalMs() const;
     void setRefreshIntervalMs(int ms);
 
     QString dataSource() const;
-    void setDataSource(const QString& source);
+    void setDataSource(const QString &source);
 
     double opacity() const;
     void setOpacity(double value);
@@ -33,17 +32,17 @@ public:
     void setForecastIntervalSec(int sec);
 
     QString xaiApiKey() const;
-    void setXaiApiKey(const QString& key);
+    void setXaiApiKey(const QString &key);
 
     QString xaiModel() const;
-    void setXaiModel(const QString& model);
+    void setXaiModel(const QString &model);
 
     /** 大模型提供方：xai | gemini */
     QString llmProvider() const;
-    void setLlmProvider(const QString& provider);
+    void setLlmProvider(const QString &provider);
 
     QString databaseDir() const;
-    void setDatabaseDir(const QString& dir);
+    void setDatabaseDir(const QString &dir);
     QString resolvedDatabaseDir() const;
 
     double alertHigh() const;
@@ -87,11 +86,11 @@ public:
     bool quietHoursEnabled() const;
     void setQuietHoursEnabled(bool on);
     QTime quietStart() const;
-    void setQuietStart(const QTime& t);
+    void setQuietStart(const QTime &t);
     QTime quietEnd() const;
-    void setQuietEnd(const QTime& t);
+    void setQuietEnd(const QTime &t);
     /** 当前是否处于免打扰 */
-    bool isInQuietHours(const QTime& now = QTime::currentTime()) const;
+    bool isInQuietHours(const QTime &now = QTime::currentTime()) const;
 
     /**
      * 定投提醒：每月几号（1～28），0=关闭
@@ -100,16 +99,16 @@ public:
     int dcaDayOfMonth() const;
     void setDcaDayOfMonth(int day);
     QString dcaNote() const; // 如金额说明
-    void setDcaNote(const QString& note);
+    void setDcaNote(const QString &note);
     QString dcaLastNotifiedDate() const; // yyyy-MM-dd
-    void setDcaLastNotifiedDate(const QString& isoDate);
+    void setDcaLastNotifiedDate(const QString &isoDate);
     QString dcaLastExecutedDate() const;
-    void setDcaLastExecutedDate(const QString& isoDate);
+    void setDcaLastExecutedDate(const QString &isoDate);
 
     bool proxyEnabled() const;
     void setProxyEnabled(bool on);
     QString proxyHost() const;
-    void setProxyHost(const QString& host);
+    void setProxyHost(const QString &host);
     int proxyPort() const;
     void setProxyPort(int port);
     /** 应用 QNetworkProxy::setApplicationProxy */
@@ -117,23 +116,22 @@ public:
 
     /** 行情 URL（可在 ini 中改，%1=品种 zs/ms/gj） */
     QString primaryPriceUrl() const;
-    void setPrimaryPriceUrl(const QString& u);
+    void setPrimaryPriceUrl(const QString &u);
     QString chartUrl() const;
-    void setChartUrl(const QString& u);
+    void setChartUrl(const QString &u);
     QString backupPriceUrl1() const;
-    void setBackupPriceUrl1(const QString& u);
+    void setBackupPriceUrl1(const QString &u);
     QString backupPriceUrl2() const;
-    void setBackupPriceUrl2(const QString& u);
-
+    void setBackupPriceUrl2(const QString &u);
 
     /** 智能预警：相对 MA5日 / 近20日分位 */
     bool smartAlertMa() const;
     void setSmartAlertMa(bool on);
     bool smartAlertPercentile() const;
     void setSmartAlertPercentile(bool on);
-    int percentileLow() const;   // 0-50，默认 20
+    int percentileLow() const; // 0-50，默认 20
     void setPercentileLow(int v);
-    int percentileHigh() const;  // 50-100，默认 80
+    int percentileHigh() const; // 50-100，默认 80
     void setPercentileHigh(int v);
 
     /** 本地持仓：克数 + 成本价（元/克） */
@@ -152,24 +150,23 @@ public:
     bool dailyReportEnabled() const;
     void setDailyReportEnabled(bool on);
     QTime dailyReportTime() const;
-    void setDailyReportTime(const QTime& t);
+    void setDailyReportTime(const QTime &t);
     QString dailyReportLastDate() const;
-    void setDailyReportLastDate(const QString& iso);
+    void setDailyReportLastDate(const QString &iso);
 
     bool eventAlertEnabled() const;
     void setEventAlertEnabled(bool on);
     QString eventAlertLastKey() const;
-    void setEventAlertLastKey(const QString& k);
-
+    void setEventAlertLastKey(const QString &k);
 
     void load();
     void save();
 
-signals:
+  signals:
     void settingsChanged();
 
-private:
-    explicit AppSettings(QObject* parent = nullptr);
+  private:
+    explicit AppSettings(QObject *parent = nullptr);
     Q_DISABLE_COPY(AppSettings)
 
     int m_refreshIntervalMs = 5000;
@@ -225,8 +222,6 @@ private:
     QString m_dailyReportLastDate;
     bool m_eventAlertEnabled = true;
     QString m_eventAlertLastKey;
-
-
 };
 
 #endif // APPSETTINGS_H

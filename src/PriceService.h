@@ -20,6 +20,7 @@ public:
     void stop();
     void setInterval(int intervalMs);
     void forceRefresh();
+    static QString canonicalSourceName(const QString &type);
 
     double lastPrice() const { return m_lastPrice; }
     double lastChange() const { return m_lastChange; }

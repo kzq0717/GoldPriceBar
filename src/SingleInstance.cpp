@@ -20,6 +20,11 @@ bool SingleInstance::tryLock()
 {
     if (m_lock.tryLock(100))
         return true;
+    if (m_lock.error() == QLockFile::LockFailedError) {
+        m_lock.removeStaleLockFile();
+        if (m_lock.tryLock(100))
+            return true;
+    }
     m_error = QStringLiteral("Another instance is running (lock: %1)").arg(m_lock.fileName());
     return false;
 }

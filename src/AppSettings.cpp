@@ -7,44 +7,100 @@
 #include <QNetworkProxy>
 #include <QtGlobal>
 
-AppSettings& AppSettings::instance()
-{
+#include <QCoreApplication>
+
+#ifdef Q_OS_WIN
+static const QString kAutoStartRegPath = QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+static const QString kAutoStartKey = QStringLiteral("GoldPriceBarLite");
+#endif
+
+AppSettings &AppSettings::instance() {
     static AppSettings inst;
     return inst;
 }
 
-AppSettings::AppSettings(QObject* parent) : QObject(parent) {}
+AppSettings::AppSettings(QObject *parent) : QObject(parent) {}
 
-int AppSettings::refreshIntervalMs() const { return m_refreshIntervalMs; }
-void AppSettings::setRefreshIntervalMs(int ms)
-{ if (m_refreshIntervalMs != ms) { m_refreshIntervalMs = ms; emit settingsChanged(); } }
-
-QString AppSettings::dataSource() const { return m_dataSource; }
-void AppSettings::setDataSource(const QString& source)
-{ if (m_dataSource != source) { m_dataSource = source; emit settingsChanged(); } }
-
-double AppSettings::opacity() const { return m_opacity; }
-void AppSettings::setOpacity(double value)
-{
-    value = qBound(0.3, value, 1.0);
-    if (!qFuzzyCompare(m_opacity, value)) { m_opacity = value; emit settingsChanged(); }
+int AppSettings::refreshIntervalMs() const {
+    return m_refreshIntervalMs;
 }
 
-bool AppSettings::autoStart() const { return m_autoStart; }
-void AppSettings::setAutoStart(bool enable)
-{ if (m_autoStart != enable) { m_autoStart = enable; emit settingsChanged(); } }
+void AppSettings::setRefreshIntervalMs(int ms) {
+    if (m_refreshIntervalMs != ms) {
+        m_refreshIntervalMs = ms;
+        emit settingsChanged();
+    }
+}
 
-bool AppSettings::forecastOnline() const { return m_forecastOnline; }
-bool AppSettings::sentimentEnabled() const { return m_sentimentEnabled; }
-void AppSettings::setForecastOnline(bool online)
-{ if (m_forecastOnline != online) { m_forecastOnline = online; emit settingsChanged(); } }
+QString AppSettings::dataSource() const {
+    return m_dataSource;
+}
 
-void AppSettings::setSentimentEnabled(bool on)
-{ if (m_sentimentEnabled != on) { m_sentimentEnabled = on; emit settingsChanged(); } }
+void AppSettings::setDataSource(const QString &source) {
+    if (m_dataSource != source) {
+        m_dataSource = source;
+        emit settingsChanged();
+    }
+}
 
-int AppSettings::forecastIntervalSec() const { return m_forecastIntervalSec; }
-void AppSettings::setForecastIntervalSec(int sec)
-{
+double AppSettings::opacity() const {
+    return m_opacity;
+}
+
+void AppSettings::setOpacity(double value) {
+    if (!qFuzzyCompare(m_opacity, value)) {
+        m_opacity = value;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::autoStart() const {
+    return m_autoStart;
+}
+
+void AppSettings::setAutoStart(bool enable) {
+    if (m_autoStart != enable) {
+        m_autoStart = enable;
+#ifdef Q_OS_WIN
+        QSettings bootSettings(kAutoStartRegPath, QSettings::NativeFormat);
+        if (enable) {
+            const QString appPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+            bootSettings.setValue(kAutoStartKey, QStringLiteral("\"%1\"").arg(appPath));
+        } else {
+            bootSettings.remove(kAutoStartKey);
+        }
+#endif
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::forecastOnline() const {
+    return m_forecastOnline;
+}
+
+bool AppSettings::sentimentEnabled() const {
+    return m_sentimentEnabled;
+}
+
+void AppSettings::setForecastOnline(bool online) {
+    if (m_forecastOnline != online) {
+        m_forecastOnline = online;
+        emit settingsChanged();
+    }
+}
+
+void AppSettings::setSentimentEnabled(bool on) {
+    if (m_sentimentEnabled != on) {
+        m_sentimentEnabled = on;
+        emit settingsChanged();
+    }
+}
+
+int AppSettings::forecastIntervalSec() const {
+    return m_forecastIntervalSec;
+}
+
+void AppSettings::setForecastIntervalSec(int sec) {
     sec = qBound(15, sec, 3600);
     if (m_forecastIntervalSec != sec) {
         m_forecastIntervalSec = sec;
@@ -52,15 +108,26 @@ void AppSettings::setForecastIntervalSec(int sec)
     }
 }
 
-QString AppSettings::xaiApiKey() const { return m_xaiApiKey; }
-void AppSettings::setXaiApiKey(const QString& key)
-{ if (m_xaiApiKey != key) { m_xaiApiKey = key; emit settingsChanged(); } }
+QString AppSettings::xaiApiKey() const {
+    return m_xaiApiKey;
+}
 
-QString AppSettings::xaiModel() const { return m_xaiModel; }
+void AppSettings::setXaiApiKey(const QString &key) {
+    if (m_xaiApiKey != key) {
+        m_xaiApiKey = key;
+        emit settingsChanged();
+    }
+}
 
-QString AppSettings::llmProvider() const { return m_llmProvider; }
-void AppSettings::setLlmProvider(const QString& provider)
-{
+QString AppSettings::xaiModel() const {
+    return m_xaiModel;
+}
+
+QString AppSettings::llmProvider() const {
+    return m_llmProvider;
+}
+
+void AppSettings::setLlmProvider(const QString &provider) {
     QString p = provider.trimmed().toLower();
     if (p != QStringLiteral("gemini"))
         p = QStringLiteral("xai");
@@ -70,93 +137,195 @@ void AppSettings::setLlmProvider(const QString& provider)
     }
 }
 
-void AppSettings::setXaiModel(const QString& model)
-{
+void AppSettings::setXaiModel(const QString &model) {
     const QString m = model.isEmpty() ? QStringLiteral("grok-4.6") : model;
-    if (m_xaiModel != m) { m_xaiModel = m; emit settingsChanged(); }
+    if (m_xaiModel != m) {
+        m_xaiModel = m;
+        emit settingsChanged();
+    }
 }
 
-QString AppSettings::databaseDir() const { return m_databaseDir; }
-void AppSettings::setDatabaseDir(const QString& dir)
-{
+QString AppSettings::databaseDir() const {
+    return m_databaseDir;
+}
+void AppSettings::setDatabaseDir(const QString &dir) {
     const QString d = dir.trimmed();
-    if (m_databaseDir != d) { m_databaseDir = d; emit settingsChanged(); }
+    if (m_databaseDir != d) {
+        m_databaseDir = d;
+        emit settingsChanged();
+    }
 }
 
-QString AppSettings::resolvedDatabaseDir() const
-{
+QString AppSettings::resolvedDatabaseDir() const {
     if (!m_databaseDir.isEmpty())
         return QDir::cleanPath(m_databaseDir);
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
-double AppSettings::alertHigh() const { return m_alertHigh; }
-void AppSettings::setAlertHigh(double v)
-{ v = qMax(0.0, v); if (!qFuzzyCompare(m_alertHigh, v)) { m_alertHigh = v; emit settingsChanged(); } }
-
-bool AppSettings::planEnabled() const { return m_planEnabled; }
-void AppSettings::setPlanEnabled(bool on)
-{ if (m_planEnabled != on) { m_planEnabled = on; emit settingsChanged(); } }
-double AppSettings::planBuyPrice() const { return m_planBuyPrice; }
-void AppSettings::setPlanBuyPrice(double v)
-{ v = qMax(0.0, v); if (!qFuzzyCompare(m_planBuyPrice, v)) { m_planBuyPrice = v; emit settingsChanged(); } }
-double AppSettings::planSellPrice() const { return m_planSellPrice; }
-void AppSettings::setPlanSellPrice(double v)
-{ v = qMax(0.0, v); if (!qFuzzyCompare(m_planSellPrice, v)) { m_planSellPrice = v; emit settingsChanged(); } }
-double AppSettings::planInvalidPrice() const { return m_planInvalidPrice; }
-void AppSettings::setPlanInvalidPrice(double v)
-{ v = qMax(0.0, v); if (!qFuzzyCompare(m_planInvalidPrice, v)) { m_planInvalidPrice = v; emit settingsChanged(); } }
-
-double AppSettings::alertLow() const { return m_alertLow; }
-void AppSettings::setAlertLow(double v)
-{ v = qMax(0.0, v); if (!qFuzzyCompare(m_alertLow, v)) { m_alertLow = v; emit settingsChanged(); } }
-
-int AppSettings::alertCooldownSec() const { return m_alertCooldownSec; }
-void AppSettings::setAlertCooldownSec(int sec)
-{ sec = qBound(30, sec, 3600); if (m_alertCooldownSec != sec) { m_alertCooldownSec = sec; emit settingsChanged(); } }
-
-bool AppSettings::trayNotifyOnAlert() const { return m_trayNotifyOnAlert; }
-void AppSettings::setTrayNotifyOnAlert(bool on)
-{ if (m_trayNotifyOnAlert != on) { m_trayNotifyOnAlert = on; emit settingsChanged(); } }
-
-bool AppSettings::showSecondaryPrice() const { return m_showSecondaryPrice; }
-void AppSettings::setShowSecondaryPrice(bool on)
-{ if (m_showSecondaryPrice != on) { m_showSecondaryPrice = on; emit settingsChanged(); } }
-
-bool AppSettings::darkTheme() const { return m_darkTheme; }
-void AppSettings::setDarkTheme(bool on)
-{ if (m_darkTheme != on) { m_darkTheme = on; emit settingsChanged(); } }
-
-bool AppSettings::showMovingAverage() const { return m_showMovingAverage; }
-void AppSettings::setShowMovingAverage(bool on)
-{ if (m_showMovingAverage != on) { m_showMovingAverage = on; emit settingsChanged(); } }
-
-bool AppSettings::alertSound() const { return m_alertSound; }
-void AppSettings::setAlertSound(bool on)
-{ if (m_alertSound != on) { m_alertSound = on; emit settingsChanged(); } }
-
-bool AppSettings::hotkeyEnabled() const { return m_hotkeyEnabled; }
-void AppSettings::setHotkeyEnabled(bool on)
-{ if (m_hotkeyEnabled != on) { m_hotkeyEnabled = on; emit settingsChanged(); } }
-
-bool AppSettings::quietHoursEnabled() const { return m_quietHoursEnabled; }
-void AppSettings::setQuietHoursEnabled(bool on)
-{ if (m_quietHoursEnabled != on) { m_quietHoursEnabled = on; emit settingsChanged(); } }
-
-QTime AppSettings::quietStart() const { return m_quietStart; }
-void AppSettings::setQuietStart(const QTime& t)
-{
-    if (t.isValid() && m_quietStart != t) { m_quietStart = t; emit settingsChanged(); }
+double AppSettings::alertHigh() const {
+    return m_alertHigh;
+}
+void AppSettings::setAlertHigh(double v) {
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_alertHigh, v)) {
+        m_alertHigh = v;
+        emit settingsChanged();
+    }
 }
 
-QTime AppSettings::quietEnd() const { return m_quietEnd; }
-void AppSettings::setQuietEnd(const QTime& t)
-{
-    if (t.isValid() && m_quietEnd != t) { m_quietEnd = t; emit settingsChanged(); }
+bool AppSettings::planEnabled() const {
+    return m_planEnabled;
+}
+void AppSettings::setPlanEnabled(bool on) {
+    if (m_planEnabled != on) {
+        m_planEnabled = on;
+        emit settingsChanged();
+    }
+}
+double AppSettings::planBuyPrice() const {
+    return m_planBuyPrice;
+}
+void AppSettings::setPlanBuyPrice(double v) {
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_planBuyPrice, v)) {
+        m_planBuyPrice = v;
+        emit settingsChanged();
+    }
+}
+double AppSettings::planSellPrice() const {
+    return m_planSellPrice;
+}
+void AppSettings::setPlanSellPrice(double v) {
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_planSellPrice, v)) {
+        m_planSellPrice = v;
+        emit settingsChanged();
+    }
+}
+double AppSettings::planInvalidPrice() const {
+    return m_planInvalidPrice;
+}
+void AppSettings::setPlanInvalidPrice(double v) {
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_planInvalidPrice, v)) {
+        m_planInvalidPrice = v;
+        emit settingsChanged();
+    }
 }
 
-bool AppSettings::isInQuietHours(const QTime& now) const
-{
+double AppSettings::alertLow() const {
+    return m_alertLow;
+}
+void AppSettings::setAlertLow(double v) {
+    v = qMax(0.0, v);
+    if (!qFuzzyCompare(m_alertLow, v)) {
+        m_alertLow = v;
+        emit settingsChanged();
+    }
+}
+
+int AppSettings::alertCooldownSec() const {
+    return m_alertCooldownSec;
+}
+void AppSettings::setAlertCooldownSec(int sec) {
+    sec = qBound(30, sec, 3600);
+    if (m_alertCooldownSec != sec) {
+        m_alertCooldownSec = sec;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::trayNotifyOnAlert() const {
+    return m_trayNotifyOnAlert;
+}
+void AppSettings::setTrayNotifyOnAlert(bool on) {
+    if (m_trayNotifyOnAlert != on) {
+        m_trayNotifyOnAlert = on;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::showSecondaryPrice() const {
+    return m_showSecondaryPrice;
+}
+void AppSettings::setShowSecondaryPrice(bool on) {
+    if (m_showSecondaryPrice != on) {
+        m_showSecondaryPrice = on;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::darkTheme() const {
+    return m_darkTheme;
+}
+void AppSettings::setDarkTheme(bool on) {
+    if (m_darkTheme != on) {
+        m_darkTheme = on;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::showMovingAverage() const {
+    return m_showMovingAverage;
+}
+void AppSettings::setShowMovingAverage(bool on) {
+    if (m_showMovingAverage != on) {
+        m_showMovingAverage = on;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::alertSound() const {
+    return m_alertSound;
+}
+void AppSettings::setAlertSound(bool on) {
+    if (m_alertSound != on) {
+        m_alertSound = on;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::hotkeyEnabled() const {
+    return m_hotkeyEnabled;
+}
+void AppSettings::setHotkeyEnabled(bool on) {
+    if (m_hotkeyEnabled != on) {
+        m_hotkeyEnabled = on;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::quietHoursEnabled() const {
+    return m_quietHoursEnabled;
+}
+void AppSettings::setQuietHoursEnabled(bool on) {
+    if (m_quietHoursEnabled != on) {
+        m_quietHoursEnabled = on;
+        emit settingsChanged();
+    }
+}
+
+QTime AppSettings::quietStart() const {
+    return m_quietStart;
+}
+void AppSettings::setQuietStart(const QTime &t) {
+    if (t.isValid() && m_quietStart != t) {
+        m_quietStart = t;
+        emit settingsChanged();
+    }
+}
+
+QTime AppSettings::quietEnd() const {
+    return m_quietEnd;
+}
+void AppSettings::setQuietEnd(const QTime &t) {
+    if (t.isValid() && m_quietEnd != t) {
+        m_quietEnd = t;
+        emit settingsChanged();
+    }
+}
+
+bool AppSettings::isInQuietHours(const QTime &now) const {
     if (!m_quietHoursEnabled || !now.isValid())
         return false;
     // 同一天：start < end → [start, end)
@@ -168,35 +337,48 @@ bool AppSettings::isInQuietHours(const QTime& now) const
     return now >= m_quietStart || now < m_quietEnd;
 }
 
-int AppSettings::dcaDayOfMonth() const { return m_dcaDayOfMonth; }
-void AppSettings::setDcaDayOfMonth(int day)
-{
+int AppSettings::dcaDayOfMonth() const {
+    return m_dcaDayOfMonth;
+}
+void AppSettings::setDcaDayOfMonth(int day) {
     day = qBound(0, day, 28);
-    if (m_dcaDayOfMonth != day) { m_dcaDayOfMonth = day; emit settingsChanged(); }
+    if (m_dcaDayOfMonth != day) {
+        m_dcaDayOfMonth = day;
+        emit settingsChanged();
+    }
 }
 
-QString AppSettings::dcaNote() const { return m_dcaNote; }
-void AppSettings::setDcaNote(const QString& note)
-{
-    if (m_dcaNote != note) { m_dcaNote = note; emit settingsChanged(); }
+QString AppSettings::dcaNote() const {
+    return m_dcaNote;
+}
+void AppSettings::setDcaNote(const QString &note) {
+    if (m_dcaNote != note) {
+        m_dcaNote = note;
+        emit settingsChanged();
+    }
 }
 
-QString AppSettings::dcaLastNotifiedDate() const { return m_dcaLastNotifiedDate; }
-QString AppSettings::dcaLastExecutedDate() const { return m_dcaLastExecutedDate; }
-void AppSettings::setDcaLastExecutedDate(const QString& iso)
-{ m_dcaLastExecutedDate = iso; }
+QString AppSettings::dcaLastNotifiedDate() const {
+    return m_dcaLastNotifiedDate;
+}
+QString AppSettings::dcaLastExecutedDate() const {
+    return m_dcaLastExecutedDate;
+}
+void AppSettings::setDcaLastExecutedDate(const QString &iso) {
+    m_dcaLastExecutedDate = iso;
+}
 
-void AppSettings::setDcaLastNotifiedDate(const QString& isoDate)
-{
+void AppSettings::setDcaLastNotifiedDate(const QString &isoDate) {
     if (m_dcaLastNotifiedDate != isoDate) {
         m_dcaLastNotifiedDate = isoDate;
         // 不发 settingsChanged，避免循环；直接 save 由调用方负责
     }
 }
 
-bool AppSettings::proxyEnabled() const { return m_proxyEnabled; }
-void AppSettings::setProxyEnabled(bool on)
-{
+bool AppSettings::proxyEnabled() const {
+    return m_proxyEnabled;
+}
+void AppSettings::setProxyEnabled(bool on) {
     if (m_proxyEnabled != on) {
         m_proxyEnabled = on;
         applyNetworkProxy();
@@ -204,9 +386,10 @@ void AppSettings::setProxyEnabled(bool on)
     }
 }
 
-QString AppSettings::proxyHost() const { return m_proxyHost; }
-void AppSettings::setProxyHost(const QString& host)
-{
+QString AppSettings::proxyHost() const {
+    return m_proxyHost;
+}
+void AppSettings::setProxyHost(const QString &host) {
     const QString h = host.trimmed();
     if (m_proxyHost != h) {
         m_proxyHost = h;
@@ -215,9 +398,10 @@ void AppSettings::setProxyHost(const QString& host)
     }
 }
 
-int AppSettings::proxyPort() const { return m_proxyPort; }
-void AppSettings::setProxyPort(int port)
-{
+int AppSettings::proxyPort() const {
+    return m_proxyPort;
+}
+void AppSettings::setProxyPort(int port) {
     port = qBound(1, port, 65535);
     if (m_proxyPort != port) {
         m_proxyPort = port;
@@ -226,8 +410,7 @@ void AppSettings::setProxyPort(int port)
     }
 }
 
-void AppSettings::applyNetworkProxy() const
-{
+void AppSettings::applyNetworkProxy() const {
     if (m_proxyEnabled && !m_proxyHost.isEmpty() && m_proxyPort > 0) {
         // 本地常见：Clash HTTP 7890 / SOCKS5 7891；也可手动指定
         QNetworkProxy::ProxyType type = QNetworkProxy::HttpProxy;
@@ -242,138 +425,231 @@ void AppSettings::applyNetworkProxy() const
     }
 }
 
-
-bool AppSettings::smartAlertMa() const { return m_smartAlertMa; }
-QString AppSettings::primaryPriceUrl() const
-{
+bool AppSettings::smartAlertMa() const {
+    return m_smartAlertMa;
+}
+QString AppSettings::primaryPriceUrl() const {
     if (m_primaryPriceUrl.trimmed().isEmpty())
         return QStringLiteral("https://jin.20021002.xyz/api.php?type=%1");
     return m_primaryPriceUrl;
 }
-void AppSettings::setPrimaryPriceUrl(const QString& u)
-{
-    if (m_primaryPriceUrl != u) { m_primaryPriceUrl = u.trimmed(); emit settingsChanged(); }
+void AppSettings::setPrimaryPriceUrl(const QString &u) {
+    if (m_primaryPriceUrl != u) {
+        m_primaryPriceUrl = u.trimmed();
+        emit settingsChanged();
+    }
 }
-QString AppSettings::chartUrl() const
-{
+QString AppSettings::chartUrl() const {
     if (m_chartUrl.trimmed().isEmpty())
         return QStringLiteral("https://jin.20021002.xyz/api.php?action=chart&type=%1");
     return m_chartUrl;
 }
-void AppSettings::setChartUrl(const QString& u)
-{
-    if (m_chartUrl != u) { m_chartUrl = u.trimmed(); emit settingsChanged(); }
+void AppSettings::setChartUrl(const QString &u) {
+    if (m_chartUrl != u) {
+        m_chartUrl = u.trimmed();
+        emit settingsChanged();
+    }
 }
-QString AppSettings::backupPriceUrl1() const
-{
+QString AppSettings::backupPriceUrl1() const {
     if (m_backupPriceUrl1.trimmed().isEmpty())
         return QStringLiteral("https://api.gold-api.com/price/XAU");
     return m_backupPriceUrl1;
 }
-void AppSettings::setBackupPriceUrl1(const QString& u)
-{
-    if (m_backupPriceUrl1 != u) { m_backupPriceUrl1 = u.trimmed(); emit settingsChanged(); }
+void AppSettings::setBackupPriceUrl1(const QString &u) {
+    if (m_backupPriceUrl1 != u) {
+        m_backupPriceUrl1 = u.trimmed();
+        emit settingsChanged();
+    }
 }
-QString AppSettings::backupPriceUrl2() const
-{
+QString AppSettings::backupPriceUrl2() const {
     if (m_backupPriceUrl2.trimmed().isEmpty())
         return QStringLiteral("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT");
     return m_backupPriceUrl2;
 }
-void AppSettings::setBackupPriceUrl2(const QString& u)
-{
-    if (m_backupPriceUrl2 != u) { m_backupPriceUrl2 = u.trimmed(); emit settingsChanged(); }
+void AppSettings::setBackupPriceUrl2(const QString &u) {
+    if (m_backupPriceUrl2 != u) {
+        m_backupPriceUrl2 = u.trimmed();
+        emit settingsChanged();
+    }
 }
 
+void AppSettings::setSmartAlertMa(bool on) {
+    if (m_smartAlertMa != on) {
+        m_smartAlertMa = on;
+        emit settingsChanged();
+    }
+}
 
-void AppSettings::setSmartAlertMa(bool on)
-{ if (m_smartAlertMa != on) { m_smartAlertMa = on; emit settingsChanged(); } }
+bool AppSettings::smartAlertPercentile() const {
+    return m_smartAlertPercentile;
+}
+void AppSettings::setSmartAlertPercentile(bool on) {
+    if (m_smartAlertPercentile != on) {
+        m_smartAlertPercentile = on;
+        emit settingsChanged();
+    }
+}
 
-bool AppSettings::smartAlertPercentile() const { return m_smartAlertPercentile; }
-void AppSettings::setSmartAlertPercentile(bool on)
-{ if (m_smartAlertPercentile != on) { m_smartAlertPercentile = on; emit settingsChanged(); } }
+int AppSettings::percentileLow() const {
+    return m_percentileLow;
+}
+void AppSettings::setPercentileLow(int v) {
+    v = qBound(1, v, 49);
+    if (m_percentileLow != v) {
+        m_percentileLow = v;
+        emit settingsChanged();
+    }
+}
 
-int AppSettings::percentileLow() const { return m_percentileLow; }
-void AppSettings::setPercentileLow(int v)
-{ v = qBound(1, v, 49); if (m_percentileLow != v) { m_percentileLow = v; emit settingsChanged(); } }
+int AppSettings::percentileHigh() const {
+    return m_percentileHigh;
+}
+void AppSettings::setPercentileHigh(int v) {
+    v = qBound(51, v, 99);
+    if (m_percentileHigh != v) {
+        m_percentileHigh = v;
+        emit settingsChanged();
+    }
+}
 
-int AppSettings::percentileHigh() const { return m_percentileHigh; }
-void AppSettings::setPercentileHigh(int v)
-{ v = qBound(51, v, 99); if (m_percentileHigh != v) { m_percentileHigh = v; emit settingsChanged(); } }
+double AppSettings::positionGrams() const {
+    return m_positionGrams;
+}
+void AppSettings::setPositionGrams(double g) {
+    g = qMax(0.0, g);
+    if (!qFuzzyCompare(m_positionGrams, g)) {
+        m_positionGrams = g;
+        emit settingsChanged();
+    }
+}
 
-double AppSettings::positionGrams() const { return m_positionGrams; }
-void AppSettings::setPositionGrams(double g)
-{ g = qMax(0.0, g); if (!qFuzzyCompare(m_positionGrams, g)) { m_positionGrams = g; emit settingsChanged(); } }
+double AppSettings::positionCost() const {
+    return m_positionCost;
+}
+void AppSettings::setPositionCost(double c) {
+    c = qMax(0.0, c);
+    if (!qFuzzyCompare(m_positionCost, c)) {
+        m_positionCost = c;
+        emit settingsChanged();
+    }
+}
 
-double AppSettings::positionCost() const { return m_positionCost; }
-void AppSettings::setPositionCost(double c)
-{ c = qMax(0.0, c); if (!qFuzzyCompare(m_positionCost, c)) { m_positionCost = c; emit settingsChanged(); } }
+bool AppSettings::premiumAlertEnabled() const {
+    return m_premiumAlertEnabled;
+}
+void AppSettings::setPremiumAlertEnabled(bool on) {
+    if (m_premiumAlertEnabled != on) {
+        m_premiumAlertEnabled = on;
+        emit settingsChanged();
+    }
+}
 
-bool AppSettings::premiumAlertEnabled() const { return m_premiumAlertEnabled; }
-void AppSettings::setPremiumAlertEnabled(bool on)
-{ if (m_premiumAlertEnabled != on) { m_premiumAlertEnabled = on; emit settingsChanged(); } }
+double AppSettings::premiumThresholdPct() const {
+    return m_premiumThresholdPct;
+}
+void AppSettings::setPremiumThresholdPct(double pct) {
+    pct = qBound(0.1, pct, 50.0);
+    if (!qFuzzyCompare(m_premiumThresholdPct, pct)) {
+        m_premiumThresholdPct = pct;
+        emit settingsChanged();
+    }
+}
 
-double AppSettings::premiumThresholdPct() const { return m_premiumThresholdPct; }
-void AppSettings::setPremiumThresholdPct(double pct)
-{ pct = qBound(0.1, pct, 50.0); if (!qFuzzyCompare(m_premiumThresholdPct, pct)) { m_premiumThresholdPct = pct; emit settingsChanged(); } }
+bool AppSettings::dailyReportEnabled() const {
+    return m_dailyReportEnabled;
+}
+void AppSettings::setDailyReportEnabled(bool on) {
+    if (m_dailyReportEnabled != on) {
+        m_dailyReportEnabled = on;
+        emit settingsChanged();
+    }
+}
 
-bool AppSettings::dailyReportEnabled() const { return m_dailyReportEnabled; }
-void AppSettings::setDailyReportEnabled(bool on)
-{ if (m_dailyReportEnabled != on) { m_dailyReportEnabled = on; emit settingsChanged(); } }
+QTime AppSettings::dailyReportTime() const {
+    return m_dailyReportTime;
+}
+void AppSettings::setDailyReportTime(const QTime &tm) {
+    if (tm.isValid() && m_dailyReportTime != tm) {
+        m_dailyReportTime = tm;
+        emit settingsChanged();
+    }
+}
 
-QTime AppSettings::dailyReportTime() const { return m_dailyReportTime; }
-void AppSettings::setDailyReportTime(const QTime& tm)
-{ if (tm.isValid() && m_dailyReportTime != tm) { m_dailyReportTime = tm; emit settingsChanged(); } }
+QString AppSettings::dailyReportLastDate() const {
+    return m_dailyReportLastDate;
+}
+void AppSettings::setDailyReportLastDate(const QString &iso) {
+    m_dailyReportLastDate = iso;
+}
 
-QString AppSettings::dailyReportLastDate() const { return m_dailyReportLastDate; }
-void AppSettings::setDailyReportLastDate(const QString& iso)
-{ m_dailyReportLastDate = iso; }
+bool AppSettings::eventAlertEnabled() const {
+    return m_eventAlertEnabled;
+}
+void AppSettings::setEventAlertEnabled(bool on) {
+    if (m_eventAlertEnabled != on) {
+        m_eventAlertEnabled = on;
+        emit settingsChanged();
+    }
+}
+QString AppSettings::eventAlertLastKey() const {
+    return m_eventAlertLastKey;
+}
+void AppSettings::setEventAlertLastKey(const QString &k) {
+    m_eventAlertLastKey = k;
+}
 
-bool AppSettings::eventAlertEnabled() const { return m_eventAlertEnabled; }
-void AppSettings::setEventAlertEnabled(bool on)
-{ if (m_eventAlertEnabled != on) { m_eventAlertEnabled = on; emit settingsChanged(); } }
-QString AppSettings::eventAlertLastKey() const { return m_eventAlertLastKey; }
-void AppSettings::setEventAlertLastKey(const QString& k) { m_eventAlertLastKey = k; }
-
-
-
-void AppSettings::load()
-{
-    QSettings s(QSettings::IniFormat, QSettings::UserScope,
-                QApplication::organizationName(), QApplication::applicationName());
-    m_refreshIntervalMs  = s.value("refreshIntervalMs", 5000).toInt();
-    m_dataSource         = s.value("dataSource", "zs").toString();
-    m_opacity            = s.value("opacity", 0.95).toDouble();
-    m_autoStart          = s.value("autoStart", false).toBool();
-    m_forecastOnline     = s.value("forecastOnline", false).toBool();
-    m_sentimentEnabled   = s.value("sentimentEnabled", false).toBool();
+void AppSettings::load() {
+    QSettings s(
+        QSettings::IniFormat, QSettings::UserScope, QApplication::organizationName(), QApplication::applicationName());
+    m_refreshIntervalMs = s.value("refreshIntervalMs", 5000).toInt();
+    m_dataSource = s.value("dataSource", "zs").toString();
+    m_opacity = s.value("opacity", 0.95).toDouble();
+#ifdef Q_OS_WIN
+    QSettings bootSettings(kAutoStartRegPath, QSettings::NativeFormat);
+    m_autoStart = bootSettings.contains(kAutoStartKey);
+#else
+    m_autoStart = s.value("autoStart", false).toBool();
+#endif
+    m_forecastOnline = s.value("forecastOnline", false).toBool();
+    m_sentimentEnabled = s.value("sentimentEnabled", false).toBool();
     m_forecastIntervalSec = s.value("forecastIntervalSec", 60).toInt();
-    if (m_forecastIntervalSec < 15) m_forecastIntervalSec = 60;
-    if (m_forecastIntervalSec > 3600) m_forecastIntervalSec = 3600;
-    m_xaiApiKey          = s.value("xaiApiKey", "").toString();
-    m_xaiModel           = s.value("xaiModel", "grok-4.6").toString();
-    m_llmProvider        = s.value("llmProvider", "xai").toString();
+
+    if (m_forecastIntervalSec < 15)
+        m_forecastIntervalSec = 60;
+    if (m_forecastIntervalSec > 3600)
+        m_forecastIntervalSec = 3600;
+
+    m_xaiApiKey = s.value("xaiApiKey", "").toString();
+    m_xaiModel = s.value("xaiModel", "grok-4.6").toString();
+
+    m_llmProvider = s.value("llmProvider", "xai").toString();
     if (m_llmProvider != QStringLiteral("gemini"))
         m_llmProvider = QStringLiteral("xai");
-    m_databaseDir        = s.value("databaseDir", "").toString().trimmed();
-    m_planEnabled        = s.value("planEnabled", false).toBool();
-    m_planBuyPrice       = s.value("planBuyPrice", 0.0).toDouble();
-    m_planSellPrice      = s.value("planSellPrice", 0.0).toDouble();
-    m_planInvalidPrice   = s.value("planInvalidPrice", 0.0).toDouble();
-    m_alertHigh          = s.value("alertHigh", 0.0).toDouble();
-    m_alertLow           = s.value("alertLow", 0.0).toDouble();
-    m_alertCooldownSec     = s.value("alertCooldownSec", 120).toInt();
-    m_trayNotifyOnAlert  = s.value("trayNotifyOnAlert", true).toBool();
+
+    m_databaseDir = s.value("databaseDir", "").toString().trimmed();
+    m_planEnabled = s.value("planEnabled", false).toBool();
+    m_planBuyPrice = s.value("planBuyPrice", 0.0).toDouble();
+    m_planSellPrice = s.value("planSellPrice", 0.0).toDouble();
+    m_planInvalidPrice = s.value("planInvalidPrice", 0.0).toDouble();
+    m_alertHigh = s.value("alertHigh", 0.0).toDouble();
+    m_alertLow = s.value("alertLow", 0.0).toDouble();
+    m_alertCooldownSec = s.value("alertCooldownSec", 120).toInt();
+    m_trayNotifyOnAlert = s.value("trayNotifyOnAlert", true).toBool();
     m_showSecondaryPrice = s.value("showSecondaryPrice", false).toBool();
-    m_darkTheme          = s.value("darkTheme", true).toBool();
-    m_showMovingAverage  = s.value("showMovingAverage", true).toBool();
-    m_alertSound         = s.value("alertSound", false).toBool();
-    m_hotkeyEnabled      = s.value("hotkeyEnabled", false).toBool();
-    m_quietHoursEnabled  = s.value("quietHoursEnabled", false).toBool();
+    m_darkTheme = s.value("darkTheme", true).toBool();
+    m_showMovingAverage = s.value("showMovingAverage", true).toBool();
+    m_alertSound = s.value("alertSound", false).toBool();
+    m_hotkeyEnabled = s.value("hotkeyEnabled", false).toBool();
+    m_quietHoursEnabled = s.value("quietHoursEnabled", false).toBool();
+
     m_quietStart = QTime::fromString(s.value("quietStart", "22:00").toString(), "HH:mm");
-    if (!m_quietStart.isValid()) m_quietStart = QTime(22, 0);
+    if (!m_quietStart.isValid())
+        m_quietStart = QTime(22, 0);
+
     m_quietEnd = QTime::fromString(s.value("quietEnd", "08:00").toString(), "HH:mm");
-    if (!m_quietEnd.isValid()) m_quietEnd = QTime(8, 0);
+    if (!m_quietEnd.isValid())
+        m_quietEnd = QTime(8, 0);
+
     m_dcaDayOfMonth = s.value("dcaDayOfMonth", 0).toInt();
     m_dcaNote = s.value("dcaNote", "").toString();
     m_dcaLastNotifiedDate = s.value("dcaLastNotifiedDate", "").toString();
@@ -401,18 +677,19 @@ void AppSettings::load()
     m_premiumAlertEnabled = s.value("premiumAlertEnabled", true).toBool();
     m_premiumThresholdPct = s.value("premiumThresholdPct", 2.0).toDouble();
     m_dailyReportEnabled = s.value("dailyReportEnabled", true).toBool();
+
     m_dailyReportTime = QTime::fromString(s.value("dailyReportTime", "15:05").toString(), "HH:mm");
-    if (!m_dailyReportTime.isValid()) m_dailyReportTime = QTime(15, 5);
+    if (!m_dailyReportTime.isValid())
+        m_dailyReportTime = QTime(15, 5);
     m_dailyReportLastDate = s.value("dailyReportLastDate", "").toString();
     m_eventAlertEnabled = s.value("eventAlertEnabled", true).toBool();
     m_eventAlertLastKey = s.value("eventAlertLastKey", "").toString();
     applyNetworkProxy();
 }
 
-void AppSettings::save()
-{
-    QSettings s(QSettings::IniFormat, QSettings::UserScope,
-                QApplication::organizationName(), QApplication::applicationName());
+void AppSettings::save() {
+    QSettings s(
+        QSettings::IniFormat, QSettings::UserScope, QApplication::organizationName(), QApplication::applicationName());
     s.setValue("refreshIntervalMs", m_refreshIntervalMs);
     s.setValue("dataSource", m_dataSource);
     s.setValue("opacity", m_opacity);
