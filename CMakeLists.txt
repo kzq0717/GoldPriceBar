@@ -49,6 +49,7 @@ set(PROJECT_SOURCES
     src/TradingSession.h src/TradingSession.cpp
     src/SentimentService.h src/SentimentService.cpp
     src/SentimentDialog.h src/SentimentDialog.cpp
+    src/ForecastService.h src/ForecastService.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}

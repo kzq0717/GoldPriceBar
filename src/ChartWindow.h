@@ -75,11 +75,14 @@ private:
     void updateForecast();
     void applyLocalForecastLines(double predHigh, double predLow);
     void applyForecastPoints(const QVector<QPair<QDateTime, double>>& forecast, const QString& modeTag);
-    void requestOnlineForecast();
-    void onOnlineForecastFinished();
+    void onForecastServiceUpdated(const struct ForecastResult& res);
     void refreshIntradayTitle();
     void reloadForecastHistory();
-    void appendForecastHistoryItem(const QDateTime& when, const QString& mode, const QString& brief, double ph, double pl);
+    void appendForecastHistoryItem(const QDateTime& when, const QString& mode, const QString& brief,
+                                   double ph, double pl,
+                                   const QString& highTime = QString(),
+                                   const QString& lowTime = QString(),
+                                   const QString& catalyst = QString());
     void applySidePanelChrome();
     void updateSidePanelValues(double current, double predict, bool hasPredict,
                                double high, double low, const QString& modeTag);
@@ -131,10 +134,14 @@ private:
     QLabel* m_tipLabel = nullptr;
 
     QFrame* m_sidePanel = nullptr;
+    QFrame* m_sideForecastCard = nullptr;
     QLabel* m_sideCurrentLabel = nullptr;
     QLabel* m_sidePredictLabel = nullptr;
     QLabel* m_sidePredictHighLabel = nullptr;
     QLabel* m_sidePredictLowLabel = nullptr;
+    QLabel* m_sidePredictHighTimeLabel = nullptr;
+    QLabel* m_sidePredictLowTimeLabel = nullptr;
+    QLabel* m_sideCatalystLabel = nullptr;
     QLabel* m_sideHighLabel = nullptr;
     QLabel* m_sideLowLabel = nullptr;
     QLabel* m_sideModeLabel = nullptr;
@@ -148,7 +155,6 @@ private:
 
     QNetworkAccessManager* m_network = nullptr;
     QPointer<QNetworkReply> m_pendingChart;
-    QPointer<QNetworkReply> m_pendingForecast;
     bool m_loading = false;
     QString m_forecastModeTag;
 

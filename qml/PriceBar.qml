@@ -698,7 +698,7 @@ Window {
         id: decisionCardWindow
         flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
         transientParent: root
-        width: 350
+        width: 380
         height: Math.max(90, decisionCardContent.implicitHeight + 24)
         color: "transparent"
         visible: false
@@ -803,6 +803,44 @@ Window {
                             font.bold: true
                             Layout.fillWidth: true
                             elide: Text.ElideRight
+                        }
+                    }
+
+                    // 极值时间窗口
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        Text {
+                            text: "⏳ 极值时间窗口："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? bridge.decisionTimeWindowText : "--"
+                            color: "#7EB6FF"
+                            font.pixelSize: 10
+                            font.bold: true
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    // 核心推演催化
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: bridge && (bridge.predCatalyst !== "" || bridge.predDailyPath !== "")
+                        Text {
+                            text: "🔥 核心推演催化："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? (bridge.predCatalyst !== "" ? bridge.predCatalyst : bridge.predDailyPath) : "--"
+                            color: "#F5D565"
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
                         }
                     }
 

@@ -11,6 +11,7 @@
 #include "UpdateChecker.h"
 #include "Logger.h"
 #include "goldsdk/forecast.hpp"
+#include "ForecastService.h"
 
 #include <QDesktopServices>
 #include <QMessageBox>
@@ -63,6 +64,7 @@ QmlBridge::QmlBridge(PriceService *priceService, QObject *parent)
 
     connect(&SentimentService::instance(), &SentimentService::updated, this, &QmlBridge::onSentimentUpdated);
     connect(&SentimentService::instance(), &SentimentService::failed, this, &QmlBridge::onSentimentFailed);
+    connect(&ForecastService::instance(), &ForecastService::forecastUpdated, this, &QmlBridge::onForecastUpdated);
 
     setupTray();
 
@@ -81,13 +83,21 @@ QmlBridge::QmlBridge(PriceService *priceService, QObject *parent)
         checkDcaReminder();
         checkDailyReport();
         checkEventAlerts();
+        // 每 20 分钟定期在线刷新一次预测（若开启大模型）
+        static int checkCount = 0;
+        if (++checkCount % 20 == 0) {
+            if (AppSettings::instance().forecastOnline()) {
+                ForecastService::instance().requestForecast();
+            }
+        }
     });
     m_checkTimer->start();
 
-    // 延迟 2.5 秒预检一次定投与宏观大事件
+    // 延迟 2.5 秒预检定投、宏观日程并启动初始预测
     QTimer::singleShot(2500, this, [this]() {
         checkDcaReminder();
         checkEventAlerts();
+        ForecastService::instance().requestForecast();
     });
 }
 
@@ -1099,6 +1109,20 @@ void QmlBridge::evaluatePremium(double primaryPrice) {
     }
 }
 
+void QmlBridge::onForecastUpdated(const ForecastResult &res) {
+    if (!res.valid) return;
+    m_predHighTimeWindow = res.predHighTimeWindow;
+    m_predLowTimeWindow = res.predLowTimeWindow;
+    m_predCatalyst = res.keyCatalyst;
+    m_predDailyPath = res.scenario;
+    m_decisionTimeWindowText = tr("高点: %1 | 低点: %2").arg(
+        m_predHighTimeWindow.isEmpty() ? tr("—") : m_predHighTimeWindow,
+        m_predLowTimeWindow.isEmpty() ? tr("—") : m_predLowTimeWindow);
+    if (m_price > 0.0) {
+        evaluateDecision(m_price);
+    }
+}
+
 void QmlBridge::evaluateDecision(double price) {
     if (price <= 0.0) return;
 
@@ -1139,14 +1163,34 @@ void QmlBridge::evaluateDecision(double price) {
     }
 
     double predHigh = 0.0, predLow = 0.0;
-    const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac);
-    if (fr.valid && fr.predHigh > fr.predLow) {
-        predHigh = fr.predHigh;
-        predLow = fr.predLow;
+    if (ForecastService::instance().hasValidForecast()) {
+        const auto res = ForecastService::instance().lastForecast();
+        predHigh = res.predHigh;
+        predLow = res.predLow;
+        m_predHighTimeWindow = res.predHighTimeWindow;
+        m_predLowTimeWindow = res.predLowTimeWindow;
+        m_predCatalyst = res.keyCatalyst;
+        m_predDailyPath = res.scenario;
     } else {
-        predHigh = actHigh * 1.003;
-        predLow = actLow * 0.997;
+        const double atr = ExtremeDatabase::instance().computeAtr(10, src);
+        const double prevClose = ExtremeDatabase::instance().previousClose(src);
+        const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac, atr, prevClose);
+        if (fr.valid && fr.predHigh > fr.predLow) {
+            predHigh = fr.predHigh;
+            predLow = fr.predLow;
+            m_predHighTimeWindow = QString::fromStdString(fr.predHighTimeWindow);
+            m_predLowTimeWindow = QString::fromStdString(fr.predLowTimeWindow);
+            m_predCatalyst = QString::fromStdString(fr.keyCatalyst);
+            m_predDailyPath = QString::fromStdString(fr.scenario);
+        } else {
+            predHigh = actHigh * 1.003;
+            predLow = actLow * 0.997;
+        }
     }
+
+    m_decisionTimeWindowText = tr("高点: %1 | 低点: %2").arg(
+        m_predHighTimeWindow.isEmpty() ? tr("—") : m_predHighTimeWindow,
+        m_predLowTimeWindow.isEmpty() ? tr("—") : m_predLowTimeWindow);
 
     const double ma5 = computeMa5();
     const double pct20 = computePercentile(price);
@@ -1156,7 +1200,9 @@ void QmlBridge::evaluateDecision(double price) {
     QString tag = tr("🎯 震荡观望");
     QString color = QStringLiteral("#B0B0C0");
     QString bg = QStringLiteral("#22222E");
-    QString advice = tr("现价在日内预测区间内运行，多空势均力敌，建议维持现有持仓观望。");
+    QString advice = tr("现价在日内推演区间内运行。预计低点时段: %1，高点时段: %2。维持现有仓位观望。")
+                         .arg(m_predLowTimeWindow.isEmpty() ? tr("待定") : m_predLowTimeWindow)
+                         .arg(m_predHighTimeWindow.isEmpty() ? tr("待定") : m_predHighTimeWindow);
 
     // 检查计划优先
     if (s.planEnabled()) {
@@ -1188,13 +1234,17 @@ void QmlBridge::evaluateDecision(double price) {
             tag = tr("🎯 触及高点·分批卖出");
             color = QStringLiteral("#FF7875");
             bg = QStringLiteral("#3E1C1F");
-            advice = tr("现价已触及当日推演高点阻力区（%1），盈亏比偏低，建议逢高止盈锁定收益。").arg(predHigh, 0, 'f', 2);
+            advice = tr("现价已触及当日推演高点阻力区（%1），盈亏比偏低，建议逢高止盈锁定收益。预计高点窗口: %2。")
+                         .arg(predHigh, 0, 'f', 2)
+                         .arg(m_predHighTimeWindow.isEmpty() ? tr("时段末") : m_predHighTimeWindow);
         } else if (predLow > 0.0 && price <= predLow * 1.0015) {
             level = 3;
             tag = tr("🎯 触及低点·分批买入");
             color = QStringLiteral("#52C41A");
             bg = QStringLiteral("#163219");
-            advice = tr("现价已下探至当日推演低点支撑区（%1），风险收益比占优，适合分批买入或定投。").arg(predLow, 0, 'f', 2);
+            advice = tr("现价已下探至当日推演低点支撑区（%1），风险收益比占优，适合分批买入或定投。预计低点窗口: %2。")
+                         .arg(predLow, 0, 'f', 2)
+                         .arg(m_predLowTimeWindow.isEmpty() ? tr("时段末") : m_predLowTimeWindow);
         } else if (pct20 >= 80 && ma5 > 0.0 && price > ma5) {
             level = 4;
             tag = tr("📈 偏多·谨防追高");
@@ -1227,11 +1277,15 @@ void QmlBridge::evaluateDecision(double price) {
     m_decisionTooltip = tr("【💡 实时趋势与交易决策参考】\n"
                            "• 建议：%1\n"
                            "• 当日预测区间：%2\n"
-                           "• 均线与分位：%3\n"
-                           "• 时段状态：%4\n"
+                           "• 预期时间窗口：%3\n"
+                           "• 核心推演催化：%4\n"
+                           "• 均线与分位：%5\n"
+                           "• 时段状态：%6\n"
                            "（点击可直接打开分时走势图）")
                             .arg(m_decisionAdvice)
                             .arg(m_decisionRangeText)
+                            .arg(m_decisionTimeWindowText)
+                            .arg(m_predCatalyst.isEmpty() ? (m_predDailyPath.isEmpty() ? tr("待定") : m_predDailyPath) : m_predCatalyst)
                             .arg(m_decisionMetricsText)
                             .arg(m_decisionSessionText);
     emit decisionChanged();

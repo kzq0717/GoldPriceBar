@@ -8,6 +8,7 @@
 #include "HistoryCache.h"
 #include "TradingSession.h"
 #include "EventCalendar.h"
+#include "ForecastService.h"
 
 
 #include <QBrush>
@@ -63,8 +64,8 @@
 ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
   Logger::info(QStringLiteral("ChartWindow ctor begin"));
   setWindowTitle(tr("今日分时曲线"));
-  setMinimumSize(640, 360);
-  resize(800, 440);
+  setMinimumSize(760, 440);
+  resize(920, 520);
   setWindowFlags(Qt::Window);
 
   Logger::info(QStringLiteral("ChartWindow: create NAM"));
@@ -82,6 +83,8 @@ ChartWindow::ChartWindow(QWidget *parent) : QWidget(parent) {
                 updateForecast();
             }
           });
+  connect(&ForecastService::instance(), &ForecastService::forecastUpdated, this,
+          &ChartWindow::onForecastServiceUpdated);
   m_lastRedraw.invalidate();
 
   m_smoothTimer = new QTimer(this);
@@ -421,7 +424,7 @@ void ChartWindow::setupChart() {
   body->addWidget(m_chartView, 1);
 
   m_sidePanel = new QFrame(this);
-  m_sidePanel->setFixedWidth(200);
+  m_sidePanel->setFixedWidth(270);
   m_sidePanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   m_sidePanel->setMinimumHeight(0);
   m_sidePanel->setStyleSheet(
@@ -436,22 +439,59 @@ void ChartWindow::setupChart() {
   sideLay->setContentsMargins(10, 10, 10, 10);
   sideLay->setSpacing(6);
 
-  // 顶栏：时间 + 交易时段（右上角风格）
+  // 顶栏：时间 + 交易时段
   auto *head = new QHBoxLayout();
   head->setSpacing(6);
-  m_sideClockLabel = new QLabel(QDateTime::currentDateTime().toString("HH:mm:ss"), m_sidePanel);
+  head->setContentsMargins(0, 0, 0, 0);
+  m_sideClockLabel = new QLabel(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), m_sidePanel);
   m_sideClockLabel->setStyleSheet(
       "color:#5b8def;font-size:13px;font-weight:600;font-family:Consolas,monospace;");
   m_sideClockLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   m_sideSessionLabel = new QLabel(tr("—"), m_sidePanel);
   m_sideSessionLabel->setStyleSheet(
-      "color:#a8b3c7;font-size:11px;padding:2px 6px;"
+      "color:#a8b3c7;font-size:11px;padding:2px 8px;"
       "background:#1c2433;border-radius:8px;");
   m_sideSessionLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  m_sideSessionLabel->setWordWrap(false);
   head->addWidget(m_sideClockLabel, 1);
   head->addWidget(m_sideSessionLabel, 0);
   sideLay->addLayout(head);
+
+  // 趋势状态 + 命中率（类似 趋势: 状态 | 命中: 85%）
+  auto *statRow = new QHBoxLayout();
+  statRow->setSpacing(0);
+  statRow->setContentsMargins(0, 0, 0, 0);
+
+  auto *trendBox = new QHBoxLayout();
+  trendBox->setSpacing(4);
+  trendBox->setContentsMargins(0, 0, 0, 0);
+  trendBox->setAlignment(Qt::AlignCenter);
+  auto *tTitle = new QLabel(tr("趋势:"), m_sidePanel);
+  tTitle->setStyleSheet("color:#8592a6;font-size:11px;");
+  m_sideTrendLabel = new QLabel(tr("—"), m_sidePanel);
+  m_sideTrendLabel->setStyleSheet("color:#e8eaed;font-size:12px;font-weight:600;");
+  trendBox->addWidget(tTitle);
+  trendBox->addWidget(m_sideTrendLabel);
+
+  auto *statDivider = new QLabel(QStringLiteral("|"), m_sidePanel);
+  statDivider->setStyleSheet("color:#3a4659;font-size:12px;font-weight:normal;");
+  statDivider->setAlignment(Qt::AlignCenter);
+  statDivider->setFixedWidth(16);
+
+  auto *hitBox = new QHBoxLayout();
+  hitBox->setSpacing(4);
+  hitBox->setContentsMargins(0, 0, 0, 0);
+  hitBox->setAlignment(Qt::AlignCenter);
+  auto *hitTitle = new QLabel(tr("命中:"), m_sidePanel);
+  hitTitle->setStyleSheet("color:#8592a6;font-size:11px;");
+  m_sideHitRateLabel = new QLabel(tr("--"), m_sidePanel);
+  m_sideHitRateLabel->setStyleSheet("color:#7eb6ff;font-size:12px;font-weight:600;");
+  hitBox->addWidget(hitTitle);
+  hitBox->addWidget(m_sideHitRateLabel);
+
+  statRow->addLayout(trendBox, 1);
+  statRow->addWidget(statDivider, 0);
+  statRow->addLayout(hitBox, 1);
+  sideLay->addLayout(statRow);
 
   auto sep = [m_sidePanel = m_sidePanel]() {
     auto *line = new QFrame(m_sidePanel);
@@ -461,70 +501,176 @@ void ChartWindow::setupChart() {
   };
   sideLay->addWidget(sep());
 
-  auto mkRow = [m_sidePanel = m_sidePanel](const QString &name, const QString &valColor,
-                                          QLabel **valueOut) {
+  // 行情实况：现价大字居中，今高 | 今低 居中并列
+  auto *curRow = new QHBoxLayout();
+  curRow->setSpacing(6);
+  curRow->setContentsMargins(0, 2, 0, 2);
+  curRow->setAlignment(Qt::AlignCenter);
+  auto *curTitle = new QLabel(tr("现价:"), m_sidePanel);
+  curTitle->setStyleSheet("color:#8592a6;font-size:12px;font-weight:600;");
+  m_sideCurrentLabel = new QLabel(QStringLiteral("--.--"), m_sidePanel);
+  m_sideCurrentLabel->setStyleSheet("color:#ffffff;font-size:18px;font-weight:700;font-family:Consolas,monospace;");
+  m_sideCurrentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  curRow->addWidget(curTitle);
+  curRow->addWidget(m_sideCurrentLabel);
+  sideLay->addLayout(curRow);
+
+  auto *hlRow = new QHBoxLayout();
+  hlRow->setSpacing(0);
+  hlRow->setContentsMargins(0, 2, 0, 2);
+
+  auto *highBox = new QHBoxLayout();
+  highBox->setSpacing(4);
+  highBox->setContentsMargins(0, 0, 0, 0);
+  highBox->setAlignment(Qt::AlignCenter);
+  auto *hTitle = new QLabel(tr("今高:"), m_sidePanel);
+  hTitle->setStyleSheet("color:#8592a6;font-size:11px;font-weight:500;");
+  m_sideHighLabel = new QLabel(QStringLiteral("--.--"), m_sidePanel);
+  m_sideHighLabel->setStyleSheet("color:#f07178;font-size:13px;font-weight:600;font-family:Consolas,monospace;");
+  m_sideHighLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  highBox->addWidget(hTitle);
+  highBox->addWidget(m_sideHighLabel);
+
+  auto *hlDivider = new QLabel(QStringLiteral("|"), m_sidePanel);
+  hlDivider->setStyleSheet("color:#3a4659;font-size:12px;font-weight:normal;");
+  hlDivider->setAlignment(Qt::AlignCenter);
+  hlDivider->setFixedWidth(16);
+
+  auto *lowBox = new QHBoxLayout();
+  lowBox->setSpacing(4);
+  lowBox->setContentsMargins(0, 0, 0, 0);
+  lowBox->setAlignment(Qt::AlignCenter);
+  auto *lTitle = new QLabel(tr("今低:"), m_sidePanel);
+  lTitle->setStyleSheet("color:#8592a6;font-size:11px;font-weight:500;");
+  m_sideLowLabel = new QLabel(QStringLiteral("--.--"), m_sidePanel);
+  m_sideLowLabel->setStyleSheet("color:#7fd99a;font-size:13px;font-weight:600;font-family:Consolas,monospace;");
+  m_sideLowLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  lowBox->addWidget(lTitle);
+  lowBox->addWidget(m_sideLowLabel);
+
+  hlRow->addLayout(highBox, 1);
+  hlRow->addWidget(hlDivider, 0);
+  hlRow->addLayout(lowBox, 1);
+  sideLay->addLayout(hlRow);
+
+  sideLay->addWidget(sep());
+
+  // AI 极值预测专属深色卡片
+  m_sideForecastCard = new QFrame(m_sidePanel);
+  m_sideForecastCard->setObjectName(QStringLiteral("forecastCard"));
+  m_sideForecastCard->setStyleSheet(
+      "QFrame#forecastCard{"
+      "  background:#151a26;"
+      "  border:1px solid #28374d;"
+      "  border-radius:8px;"
+      "}");
+  auto *cardLay = new QVBoxLayout(m_sideForecastCard);
+  cardLay->setContentsMargins(8, 8, 8, 8);
+  cardLay->setSpacing(6);
+
+  // Card Header: 标签 + 算法模型标识
+  auto *cardHead = new QHBoxLayout();
+  cardHead->setSpacing(4);
+  cardHead->setContentsMargins(0, 0, 0, 0);
+  auto *aiTitle = new QLabel(tr("🤖 AI 极值推演"), m_sideForecastCard);
+  aiTitle->setStyleSheet("color:#7eb6ff;font-size:11px;font-weight:600;");
+  m_sideModeLabel = new QLabel(tr("本地推演"), m_sideForecastCard);
+  m_sideModeLabel->setStyleSheet(
+      "color:#8b9bb4;font-size:10px;padding:1px 6px;"
+      "background:#1e2638;border-radius:4px;border:1px solid #2f3d54;");
+  m_sideModeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  cardHead->addWidget(aiTitle, 1);
+  cardHead->addWidget(m_sideModeLabel, 0);
+  cardLay->addLayout(cardHead);
+
+  // 预高与预低并排居中：🔺预高: 价格 | 🔻预低: 价格
+  auto *predHlRow = new QHBoxLayout();
+  predHlRow->setSpacing(0);
+  predHlRow->setContentsMargins(0, 2, 0, 2);
+
+  auto *predHBox = new QHBoxLayout();
+  predHBox->setSpacing(4);
+  predHBox->setContentsMargins(0, 0, 0, 0);
+  predHBox->setAlignment(Qt::AlignCenter);
+  auto *phTitle = new QLabel(tr("🔺预高:"), m_sideForecastCard);
+  phTitle->setStyleSheet("color:#ffa08a;font-size:11px;font-weight:600;");
+  m_sidePredictHighLabel = new QLabel(QStringLiteral("--.--"), m_sideForecastCard);
+  m_sidePredictHighLabel->setStyleSheet("color:#ff8b7a;font-size:13px;font-weight:bold;font-family:Consolas,monospace;");
+  m_sidePredictHighLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  predHBox->addWidget(phTitle);
+  predHBox->addWidget(m_sidePredictHighLabel);
+
+  auto *predDivider = new QLabel(QStringLiteral("|"), m_sideForecastCard);
+  predDivider->setStyleSheet("color:#3a4659;font-size:12px;font-weight:normal;");
+  predDivider->setAlignment(Qt::AlignCenter);
+  predDivider->setFixedWidth(16);
+
+  auto *predLBox = new QHBoxLayout();
+  predLBox->setSpacing(4);
+  predLBox->setContentsMargins(0, 0, 0, 0);
+  predLBox->setAlignment(Qt::AlignCenter);
+  auto *plTitle = new QLabel(tr("🔻预低:"), m_sideForecastCard);
+  plTitle->setStyleSheet("color:#80e0a0;font-size:11px;font-weight:600;");
+  m_sidePredictLowLabel = new QLabel(QStringLiteral("--.--"), m_sideForecastCard);
+  m_sidePredictLowLabel->setStyleSheet("color:#6bcb8a;font-size:13px;font-weight:bold;font-family:Consolas,monospace;");
+  m_sidePredictLowLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  predLBox->addWidget(plTitle);
+  predLBox->addWidget(m_sidePredictLowLabel);
+
+  predHlRow->addLayout(predHBox, 1);
+  predHlRow->addWidget(predDivider, 0);
+  predHlRow->addLayout(predLBox, 1);
+  cardLay->addLayout(predHlRow);
+
+  m_sidePredictLabel = m_sidePredictHighLabel;
+
+  // 极值时段：两行清晰对齐，左紧贴标签，右自然排版
+  auto makeWindowRow = [this](const QString &titleText, const QString &colorHex, QLabel **valOut) {
     auto *row = new QHBoxLayout();
-    row->setSpacing(4);
-    auto *k = new QLabel(name, m_sidePanel);
-    k->setStyleSheet("color:#6b778c;font-size:11px;");
-    k->setFixedWidth(52);
-    auto *v = new QLabel(QStringLiteral("--.--"), m_sidePanel);
+    row->setSpacing(6);
+    row->setContentsMargins(0, 0, 0, 0);
+    auto *t = new QLabel(titleText + QStringLiteral(":"), m_sideForecastCard);
+    t->setStyleSheet("color:#8592a6;font-size:11px;font-weight:500;");
+    t->setFixedWidth(56);
+    auto *v = new QLabel(QStringLiteral("—"), m_sideForecastCard);
     v->setStyleSheet(QStringLiteral(
-                         "color:%1;font-size:14px;font-weight:600;"
-                         "font-family:Consolas,'Microsoft YaHei UI',monospace;")
-                         .arg(valColor));
-    v->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    v->setWordWrap(false);
+        "color:%1;font-size:11px;font-weight:600;"
+        "font-family:'Segoe UI','Microsoft YaHei UI',sans-serif;").arg(colorHex));
+    v->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    v->setWordWrap(true);
     v->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    row->addWidget(k, 0);
+    row->addWidget(t, 0);
     row->addWidget(v, 1);
-    *valueOut = v;
+    *valOut = v;
     return row;
   };
 
-  // 趋势状态 + 命中率
-  {
-    auto *row = new QHBoxLayout();
-    row->setSpacing(4);
-    auto *k = new QLabel(tr("趋势"), m_sidePanel);
-    k->setStyleSheet("color:#6b778c;font-size:11px;");
-    k->setFixedWidth(52);
-    m_sideTrendLabel = new QLabel(tr("—"), m_sidePanel);
-    m_sideTrendLabel->setStyleSheet(
-        "color:#e8eaed;font-size:13px;font-weight:600;");
-    m_sideTrendLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_sideTrendLabel->setWordWrap(false);
-    row->addWidget(k, 0);
-    row->addWidget(m_sideTrendLabel, 1);
-    sideLay->addLayout(row);
-  }
-  {
-    auto *row = new QHBoxLayout();
-    row->setSpacing(4);
-    auto *k = new QLabel(tr("命中"), m_sidePanel);
-    k->setStyleSheet("color:#6b778c;font-size:11px;");
-    k->setFixedWidth(52);
-    m_sideHitRateLabel = new QLabel(tr("--"), m_sidePanel);
-    m_sideHitRateLabel->setStyleSheet(
-        "color:#9aa8bc;font-size:12px;font-weight:600;");
-    m_sideHitRateLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_sideHitRateLabel->setWordWrap(false);
-    row->addWidget(k, 0);
-    row->addWidget(m_sideHitRateLabel, 1);
-    sideLay->addLayout(row);
-  }
+  cardLay->addLayout(makeWindowRow(tr("高点时段"), "#ffa08a", &m_sidePredictHighTimeLabel));
+  cardLay->addLayout(makeWindowRow(tr("低点时段"), "#80e0a0", &m_sidePredictLowTimeLabel));
 
-  sideLay->addLayout(mkRow(tr("现价"), "#e8eaed", &m_sideCurrentLabel));
-  sideLay->addLayout(mkRow(tr("今高"), "#f07178", &m_sideHighLabel));
-  sideLay->addLayout(mkRow(tr("今低"), "#7fd99a", &m_sideLowLabel));
-  sideLay->addWidget(sep());
-  sideLay->addLayout(mkRow(tr("预高"), "#ff8b7a", &m_sidePredictHighLabel));
-  sideLay->addLayout(mkRow(tr("预低"), "#6bcB8a", &m_sidePredictLowLabel));
-  // 兼容旧字段：合并预测仍写 m_sidePredictLabel（可指向预高）
-  m_sidePredictLabel = m_sidePredictHighLabel;
+  // 关键催化：圆角背景框，支持自动折行与 ToolTip
+  auto *catHeader = new QLabel(tr("💡 关键催化"), m_sideForecastCard);
+  catHeader->setStyleSheet("color:#faad14;font-size:11px;font-weight:600;margin-top:2px;");
+  cardLay->addWidget(catHeader);
 
-  auto *histTitle = new QLabel(tr("今日预测记录"), m_sidePanel);
-  histTitle->setStyleSheet("color:#6b778c;font-size:11px;");
+  m_sideCatalystLabel = new QLabel(QStringLiteral("—"), m_sideForecastCard);
+  m_sideCatalystLabel->setObjectName(QStringLiteral("catalystLabel"));
+  m_sideCatalystLabel->setStyleSheet(
+      "QLabel#catalystLabel{"
+      "  color:#ffe58f;font-size:11px;line-height:1.3;"
+      "  background:#1a2233;border:1px solid #2f3d54;border-radius:4px;"
+      "  padding:4px 6px;"
+      "}");
+  m_sideCatalystLabel->setWordWrap(true);
+  m_sideCatalystLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  m_sideCatalystLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  cardLay->addWidget(m_sideCatalystLabel);
+
+  sideLay->addWidget(m_sideForecastCard);
+
+  // 今日推演记录列表
+  auto *histTitle = new QLabel(tr("今日推演记录"), m_sidePanel);
+  histTitle->setStyleSheet("color:#6b778c;font-size:11px;font-weight:600;margin-top:2px;");
   sideLay->addWidget(histTitle);
 
   m_sideForecastList = new QListWidget(m_sidePanel);
@@ -535,28 +681,24 @@ void ChartWindow::setupChart() {
       "  color:#c5cddb;font-size:11px;outline:none;"
       "}"
       "QListWidget#forecastList::item{"
-      "  padding:6px 8px;border-bottom:1px solid #1c2433;"
+      "  padding:5px 6px;border-bottom:1px solid #1a2233;"
+      "}"
+      "QListWidget#forecastList::item:hover{"
+      "  background:#141c2b;"
       "}"
       "QListWidget#forecastList::item:selected{"
       "  background:#1c2a40;color:#e8eaed;"
       "}");
-  // 长文案横向展开；垂直+水平滚动条均可拖动
-  m_sideForecastList->setWordWrap(false);
-  m_sideForecastList->setTextElideMode(Qt::ElideNone);
-  m_sideForecastList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-  m_sideForecastList->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
-  m_sideForecastList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  m_sideForecastList->setWordWrap(true);
+  m_sideForecastList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   m_sideForecastList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  m_sideForecastList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
   m_sideForecastList->setSpacing(2);
-  m_sideForecastList->setUniformItemSizes(false);
-  m_sideForecastList->setMinimumHeight(140);
+  m_sideForecastList->setMinimumHeight(110);
   m_sideForecastList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   m_sideForecastList->setToolTip(
-      tr("垂直/水平滚动查看今日预测；滚轮与拖动滚动条均可；最新在底部"));
+      tr("滚动查看今日极值推演与催化记录；最新在底部"));
   sideLay->addWidget(m_sideForecastList, 1);
-
-  // 不再单独占一行状态框；状态写入列表首行提示或仅日志
-  m_sideModeLabel = nullptr;
 
   m_sideAdviceLabel = nullptr;
   body->addWidget(m_sidePanel, 0);
@@ -661,9 +803,6 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
     if (EventCalendar::isHighImpactDay())
         intervalMs = qMax(intervalMs * 2, 120000LL);
     if (m_lastForecastMs == 0 || (nowMs - m_lastForecastMs) >= intervalMs) {
-      if (AppSettings::instance().forecastOnline())
-        requestOnlineForecast();
-      else
         updateForecast();
     }
   }
@@ -876,92 +1015,7 @@ void ChartWindow::updateForecast() {
     m_hasPredict = false;
     return;
   }
-
-  // 大模型模式：走在线请求（带 Key）；本地模式才清线重算
-  if (AppSettings::instance().forecastOnline()
-      && !AppSettings::instance().xaiApiKey().trimmed().isEmpty()) {
-    requestOnlineForecast();
-    return;
-  }
-
-  m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
-  if (m_forecastSeries)
-    m_forecastSeries->clear();
-  if (m_forecastLowSeries)
-    m_forecastLowSeries->clear();
-
-  double predHigh = 0.0, predLow = 0.0;
-  if (!computeDayRangeForecast(predHigh, predLow)) {
-    m_hasPredict = false;
-    return;
-  }
-
-  m_lastPredictHigh = predHigh;
-  m_lastPredictLow = predLow;
-  m_lastPredictPrice = predHigh;
-  m_hasPredict = true;
-  {
-      double actH = 0, actL = 0;
-      HistoryCache::instance().todayHigh(actH);
-      HistoryCache::instance().todayLow(actL);
-      m_forecastModeTag = tr("本地 · 今幅%1 预幅%2")
-                              .arg(qMax(0.0, actH - actL), 0, 'f', 2)
-                              .arg(qMax(0.0, predHigh - predLow), 0, 'f', 2);
-      if (!AppSettings::instance().xaiApiKey().trimmed().isEmpty()
-          && !AppSettings::instance().forecastOnline())
-        m_forecastModeTag = tr("本地（请开启「大模型」开关）");
-  }
-
-
-  // 水平虚线：从当日 0 点到 23:59
-  const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-  const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-  const qint64 x0 = t0.toMSecsSinceEpoch();
-  const qint64 x1 = t1.toMSecsSinceEpoch();
-  if (m_forecastSeries) {
-    m_forecastSeries->append(x0, predHigh);
-    m_forecastSeries->append(x1, predHigh);
-  }
-  if (m_forecastLowSeries) {
-    m_forecastLowSeries->append(x0, predLow);
-    m_forecastLowSeries->append(x1, predLow);
-  }
-
-  // 命中统计：登记「预测高」与「预测低」的均值，到期用今高/今低检验
-  ForecastTracker::instance().recordDayRange(
-      QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
-  ExtremeDatabase::instance().insertForecastLog(
-      QDateTime::currentDateTime(), currentTypeCode(), m_forecastModeTag,
-      predHigh, predLow, m_plotPoints.last().second);
-
-  if (m_axisY && !m_plotPoints.isEmpty()) {
-    // 仅在预测贴近现价时微调 Y 轴，避免 605~1238 这类跨度
-    double lo = m_plotPoints.first().second, hi = lo;
-    for (const auto& pt : m_plotPoints) {
-      if (pt.second <= 0) continue;
-      lo = qMin(lo, pt.second);
-      hi = qMax(hi, pt.second);
-    }
-    const double mid = 0.5 * (lo + hi);
-    const double band = qMax((hi - lo) * 0.6, mid * 0.015);
-    auto clampP = [&](double v) {
-      return v >= mid - band * 3 && v <= mid + band * 3;
-    };
-    qreal yMin = static_cast<qreal>(lo);
-    qreal yMax = static_cast<qreal>(hi);
-    if (clampP(predLow))
-      yMin = qMin(yMin, static_cast<qreal>(predLow));
-    if (clampP(predHigh))
-      yMax = qMax(yMax, static_cast<qreal>(predHigh));
-    const qreal mgn = qMax(0.3, (yMax - yMin) * 0.12);
-    m_axisY->setRange(yMin - mgn, yMax + mgn);
-  }
-
-  double high = 0.0, low = 0.0;
-  HistoryCache::instance().todayHigh(high);
-  HistoryCache::instance().todayLow(low);
-  const double cur = m_plotPoints.last().second;
-  updateSidePanelValues(cur, predHigh, true, high, low, m_forecastModeTag);
+  ForecastService::instance().requestForecast(currentTypeCode());
 }
 
 void ChartWindow::applyForecastPoints(
@@ -972,26 +1026,50 @@ void ChartWindow::applyForecastPoints(
 
 
 void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString& mode,
-                                            const QString& brief, double ph, double pl)
+                                            const QString& brief, double ph, double pl,
+                                            const QString& highTime, const QString& lowTime,
+                                            const QString& catalyst)
 {
     if (!m_sideForecastList)
         return;
-    const QString timeStr = when.isValid() ? when.toString(QStringLiteral("HH:mm:ss"))
-                                           : QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
-    QString body = brief.trimmed();
-    if (body.isEmpty())
-        body = mode;
-    // 去掉重复的 Gemini· 前缀展示
-    QString head = mode;
-    if (head.size() > 36)
-        head = head.left(36) + QStringLiteral("…");
-    const QString text = QStringLiteral("%1  高%2  低%3  %4")
-                             .arg(timeStr)
-                             .arg(ph, 0, 'f', 2)
-                             .arg(pl, 0, 'f', 2)
-                             .arg(body);
+
+    const QString timeStr = when.isValid() ? when.toString(QStringLiteral("HH:mm"))
+                                           : QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"));
+    const QString normHTime = ForecastService::normalizeTo24HourTime(highTime);
+    const QString normLTime = ForecastService::normalizeTo24HourTime(lowTime);
+
+    QString text = QStringLiteral("🕒 %1 [%2] 预高: %3 | 预低: %4\n极值时段: 高 %5 | 低 %6")
+                       .arg(timeStr)
+                       .arg(mode)
+                       .arg(ph, 0, 'f', 2)
+                       .arg(pl, 0, 'f', 2)
+                       .arg(normHTime.isEmpty() ? QStringLiteral("—") : normHTime)
+                       .arg(normLTime.isEmpty() ? QStringLiteral("—") : normLTime);
+
+    if (!catalyst.trimmed().isEmpty()) {
+        text += QStringLiteral("\n催化: %1").arg(catalyst.trimmed());
+    } else if (!brief.trimmed().isEmpty() && brief != mode) {
+        text += QStringLiteral("\n简评: %1").arg(brief.trimmed());
+    }
+
+    const QString tip = QStringLiteral(
+        "【推演时间】%1\n"
+        "【模型通道】%2\n"
+        "【预期最高】%3 (高点时段: %4)\n"
+        "【预期最低】%5 (低点时段: %6)\n"
+        "【核心催化】%7\n"
+        "【情景简述】%8")
+        .arg(when.isValid() ? when.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : timeStr)
+        .arg(mode)
+        .arg(ph, 0, 'f', 2)
+        .arg(normHTime.isEmpty() ? QStringLiteral("未指定") : normHTime)
+        .arg(pl, 0, 'f', 2)
+        .arg(normLTime.isEmpty() ? QStringLiteral("未指定") : normLTime)
+        .arg(catalyst.isEmpty() ? QStringLiteral("无") : catalyst)
+        .arg(brief.isEmpty() ? QStringLiteral("无") : brief);
+
     auto* item = new QListWidgetItem(text);
-    item->setToolTip(text);
+    item->setToolTip(tip);
     m_sideForecastList->addItem(item);
     m_sideForecastList->scrollToItem(item, QAbstractItemView::PositionAtBottom);
     m_sideForecastList->setCurrentItem(item);
@@ -1008,7 +1086,8 @@ void ChartWindow::reloadForecastHistory()
         QString brief = e.brief;
         if (brief.isEmpty())
             brief = e.mode;
-        appendForecastHistoryItem(e.madeAt, e.mode, brief, e.predHigh, e.predLow);
+        appendForecastHistoryItem(e.madeAt, e.mode, brief, e.predHigh, e.predLow,
+                                  e.predHighTime, e.predLowTime, e.catalyst);
     }
     if (m_sideForecastList->count() > 0) {
         auto* last = m_sideForecastList->item(m_sideForecastList->count() - 1);
@@ -1066,189 +1145,16 @@ void ChartWindow::refreshIntradayTitle()
   const int n = m_plotPoints.size();
   QString predText;
   if (m_hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
-    predText = tr("  |  预测高 %1  预测低 %2")
+    predText = tr("  |  预高: %1 | 预低: %2")
                    .arg(m_lastPredictHigh, 0, 'f', 2)
                    .arg(m_lastPredictLow, 0, 'f', 2);
   }
-  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高 %3  今低 %4%5")
+  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高: %3 | 今低: %4%5")
                         .arg(typeName)
                         .arg(n)
                         .arg(high, 0, 'f', 2)
                         .arg(low, 0, 'f', 2)
                         .arg(predText));
-}
-
-void ChartWindow::requestOnlineForecast()
-{
-  if (!AppSettings::instance().forecastOnline())
-    return;
-  if (m_pendingForecast)
-    return;
-  if (m_plotPoints.isEmpty() || !isIntradayMode())
-    return;
-  if (!isVisible())
-    return;
-
-  if (!m_network)
-    m_network = new QNetworkAccessManager(this);
-
-  const QString apiKey = AppSettings::instance().xaiApiKey().trimmed();
-  if (apiKey.isEmpty()) {
-    Logger::warn(QStringLiteral("Online forecast: empty API key, local only"));
-    double ph = 0, pl = 0;
-    if (computeDayRangeForecast(ph, pl)) {
-      m_lastPredictHigh = ph;
-      m_lastPredictLow = pl;
-      m_lastPredictPrice = ph;
-      m_hasPredict = true;
-      m_forecastModeTag = tr("无Key·本地");
-      m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
-      double high = 0, low = 0;
-      HistoryCache::instance().todayHigh(high);
-      HistoryCache::instance().todayLow(low);
-      updateSidePanelValues(m_plotPoints.last().second, ph, true, high, low,
-                            m_forecastModeTag);
-      applyLocalForecastLines(ph, pl);
-    }
-    return;
-  }
-
-  if (m_sidePredictHighLabel)
-    m_sidePredictHighLabel->setText(tr("…"));
-  if (m_sidePredictLowLabel)
-    m_sidePredictLowLabel->setText(tr("…"));
-
-  Logger::info(QStringLiteral("Online forecast request provider=%1 model=%2")
-                   .arg(AppSettings::instance().llmProvider(),
-                        AppSettings::instance().xaiModel()));
-
-  const int n = m_plotPoints.size();
-  const int take = qMin(30, n);
-  QString seriesText;
-  for (int i = n - take; i < n; ++i) {
-    const auto& pt = m_plotPoints.at(i);
-    seriesText += QStringLiteral("%1 %2\n")
-                      .arg(pt.first.toString(QStringLiteral("HH:mm")))
-                      .arg(pt.second, 0, 'f', 2);
-  }
-  double actH = 0, actL = 0;
-  HistoryCache::instance().todayHigh(actH);
-  HistoryCache::instance().todayLow(actL);
-  const double lastPrice = m_plotPoints.last().second;
-  const QString src = currentTypeCode();
-  const QString provider = AppSettings::instance().llmProvider();
-  QString model = AppSettings::instance().xaiModel().trimmed();
-  if (model.isEmpty())
-    model = (provider == QStringLiteral("gemini"))
-                ? QStringLiteral("gemini-3.6-flash")
-                : QStringLiteral("grok-2-latest");
-
-  const QString nowStr =
-      QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
-  const QString systemPrompt = QStringLiteral(
-      "你是资深黄金/贵金属短线分析师。综合：①用户给出的今日分时与已实现高低；"
-      "②你所掌握的宏观与消息面知识（美元、利率、地缘、央行购金、ETF 等）；"
-      "估计「今日剩余交易时段」可能触及的最高价与最低价。"
-      "只输出一个 JSON 对象（单行即可），不要 Markdown、不要思考过程、不要列表。字段："
-      "{\"pred_high\":number,\"pred_low\":number,\"bias\":\"偏多|偏空|震荡\","
-      "\"brief\":\"不超过40字\",\"confidence\":0.0到1.0}。"
-      "硬性约束：pred_high >= 已出现今高；pred_low <= 已出现今低；"
-      "振幅建议约现价 0.2%~1.5%。这不是投资建议。");
-
-  const QString userPrompt =
-      QStringLiteral(
-          "时间(本地):%1\n品种代码:%2（zs/ms=积存金元/克，gj=伦敦金）\n"
-          "现价:%3\n已出现今高:%4 今低:%5\n最近分时:\n%6\n请输出 JSON。")
-          .arg(nowStr, src)
-          .arg(lastPrice, 0, 'f', 2)
-          .arg(actH > 0 ? actH : lastPrice, 0, 'f', 2)
-          .arg(actL > 0 ? actL : lastPrice, 0, 'f', 2)
-          .arg(seriesText);
-
-  QNetworkRequest request;
-  request.setHeader(QNetworkRequest::UserAgentHeader,
-                    QStringLiteral("GoldPriceBarLite/1.0"));
-  request.setTransferTimeout(60000);
-  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                       QNetworkRequest::NoLessSafeRedirectPolicy);
-
-  QNetworkReply* reply = nullptr;
-  if (provider == QStringLiteral("gemini")) {
-    if (model.startsWith(QStringLiteral("models/")))
-      model = model.mid(7);
-    const QUrl url(QStringLiteral(
-        "https://generativelanguage.googleapis.com/v1beta/models/%1:generateContent?key=%2")
-                       .arg(model, QString::fromUtf8(QUrl::toPercentEncoding(apiKey))));
-    request.setUrl(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader,
-                      QStringLiteral("application/json"));
-    QJsonObject body;
-    QJsonArray contents;
-    QJsonObject userMsg;
-    userMsg.insert(QStringLiteral("role"), QStringLiteral("user"));
-    QJsonArray parts;
-    parts.append(QJsonObject{
-        {QStringLiteral("text"), systemPrompt + QStringLiteral("\n\n") + userPrompt}});
-    userMsg.insert(QStringLiteral("parts"), parts);
-    contents.append(userMsg);
-    body.insert(QStringLiteral("contents"), contents);
-    QJsonObject genCfg;
-    // Gemini 3.x：思考 token 计入 maxOutputTokens；过小会 MAX_TOKENS 截断、无 JSON
-    genCfg.insert(QStringLiteral("maxOutputTokens"), 4096);
-    genCfg.insert(QStringLiteral("responseMimeType"), QStringLiteral("application/json"));
-    {
-      QJsonObject schema;
-      schema.insert(QStringLiteral("type"), QStringLiteral("object"));
-      QJsonObject props;
-      props.insert(QStringLiteral("pred_high"),
-                   QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
-      props.insert(QStringLiteral("pred_low"),
-                   QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
-      props.insert(QStringLiteral("bias"),
-                   QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}});
-      props.insert(QStringLiteral("brief"),
-                   QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}});
-      props.insert(QStringLiteral("confidence"),
-                   QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
-      schema.insert(QStringLiteral("properties"), props);
-      QJsonArray req;
-      req.append(QStringLiteral("pred_high"));
-      req.append(QStringLiteral("pred_low"));
-      schema.insert(QStringLiteral("required"), req);
-      genCfg.insert(QStringLiteral("responseSchema"), schema);
-    }
-    // 尽量少思考，把额度留给最终 JSON
-    QJsonObject thinking;
-    thinking.insert(QStringLiteral("thinkingLevel"), QStringLiteral("MINIMAL"));
-    genCfg.insert(QStringLiteral("thinkingConfig"), thinking);
-    body.insert(QStringLiteral("generationConfig"), genCfg);
-    reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-  } else {
-    request.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/chat/completions")));
-    request.setHeader(QNetworkRequest::ContentTypeHeader,
-                      QStringLiteral("application/json"));
-    request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
-    QJsonObject body;
-    body.insert(QStringLiteral("model"), model);
-    body.insert(QStringLiteral("temperature"), 0.35);
-    body.insert(QStringLiteral("max_tokens"), 512);
-    QJsonArray messages;
-    messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
-                                {QStringLiteral("content"), systemPrompt}});
-    messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
-                                {QStringLiteral("content"), userPrompt}});
-    body.insert(QStringLiteral("messages"), messages);
-    reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-  }
-
-  if (!reply) {
-    Logger::warn(QStringLiteral("Online forecast: post returned null"));
-    return;
-  }
-
-  m_pendingForecast = reply;
-  // 用 sender()，避免 lambda 悬空 reply 指针
-  connect(reply, &QNetworkReply::finished, this, &ChartWindow::onOnlineForecastFinished);
 }
 
 void ChartWindow::applyLocalForecastLines(double predHigh, double predLow)
@@ -1269,274 +1175,50 @@ void ChartWindow::applyLocalForecastLines(double predHigh, double predLow)
   }
 }
 
-void ChartWindow::onOnlineForecastFinished()
+void ChartWindow::onForecastServiceUpdated(const ForecastResult& res)
 {
-  QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-  if (!reply)
-    return;
+    if (!res.valid)
+        return;
 
-  // 先摘掉 pending，避免 closeEvent 再次 abort 同一对象
-  if (m_pendingForecast.data() == reply)
-    m_pendingForecast.clear();
-
-  const auto err = reply->error();
-  QByteArray raw;
-  if (reply->isOpen())
-    raw = reply->readAll();
-  else if (err == QNetworkReply::NoError)
-    Logger::warn(QStringLiteral("Online forecast: reply not open"));
-
-  reply->disconnect(this);
-  reply->deleteLater();
-
-  // 主动取消（关窗等）：不要再改 UI，避免崩溃
-  if (err == QNetworkReply::OperationCanceledError) {
-    Logger::info(QStringLiteral("Online forecast canceled (ignored)"));
-    return;
-  }
-
-  auto fallback = [this](const QString& tag) {
-    Logger::warn(QStringLiteral("Online forecast fallback: %1").arg(tag));
-    if (!isVisible() || !isIntradayMode() || m_plotPoints.isEmpty()) {
-      if (m_sideModeLabel)
-        m_sideModeLabel->setText(tag);
-      return;
-    }
-    double ph = 0, pl = 0;
-    if (!computeDayRangeForecast(ph, pl)) {
-      m_hasPredict = false;
-      if (m_sidePredictLabel)
-        m_sidePredictLabel->setText(tr("--.--"));
-      if (m_sideModeLabel)
-        m_sideModeLabel->setText(tag);
-      return;
-    }
-    m_lastPredictHigh = ph;
-    m_lastPredictLow = pl;
-    m_lastPredictPrice = ph;
+    m_lastPredictHigh = res.predHigh;
+    m_lastPredictLow = res.predLow;
+    m_lastPredictPrice = res.predHigh;
     m_hasPredict = true;
-    m_forecastModeTag = tag;
-    m_lastForecastMs = QDateTime::currentMSecsSinceEpoch();
-    applyLocalForecastLines(ph, pl);
-    double high = 0, low = 0;
+    m_forecastModeTag = res.modeTag;
+    m_lastForecastMs = res.timestamp.toMSecsSinceEpoch();
+
+    applyLocalForecastLines(res.predHigh, res.predLow);
+
+    if (m_sidePredictHighLabel)
+        m_sidePredictHighLabel->setText(QString::number(res.predHigh, 'f', 2));
+    if (m_sidePredictLowLabel)
+        m_sidePredictLowLabel->setText(QString::number(res.predLow, 'f', 2));
+    if (m_sideModeLabel)
+        m_sideModeLabel->setText(res.modeTag.isEmpty() ? tr("AI推演") : res.modeTag);
+    if (m_sidePredictHighTimeLabel) {
+        const QString ht = ForecastService::normalizeTo24HourTime(res.predHighTimeWindow);
+        m_sidePredictHighTimeLabel->setText(ht);
+        m_sidePredictHighTimeLabel->setToolTip(ht);
+    }
+    if (m_sidePredictLowTimeLabel) {
+        const QString lt = ForecastService::normalizeTo24HourTime(res.predLowTimeWindow);
+        m_sidePredictLowTimeLabel->setText(lt);
+        m_sidePredictLowTimeLabel->setToolTip(lt);
+    }
+    if (m_sideCatalystLabel) {
+        const QString cat = res.keyCatalyst.isEmpty() ? res.scenario : res.keyCatalyst;
+        m_sideCatalystLabel->setText(cat);
+        m_sideCatalystLabel->setToolTip(res.scenario.isEmpty() ? cat : (cat + QStringLiteral("\n演变: ") + res.scenario));
+    }
+
+    appendForecastHistoryItem(res.timestamp, res.modeTag, res.brief, res.predHigh, res.predLow,
+                              res.predHighTimeWindow, res.predLowTimeWindow, res.keyCatalyst);
+
+    double high = 0.0, low = 0.0;
     HistoryCache::instance().todayHigh(high);
     HistoryCache::instance().todayLow(low);
-    updateSidePanelValues(m_plotPoints.last().second, ph, true, high, low, tag);
-  };
-
-  if (err != QNetworkReply::NoError) {
-    Logger::warn(QStringLiteral("Online forecast HTTP error: %1 body=%2")
-                     .arg(reply->errorString(), QString::fromUtf8(raw.left(600))));
-    // 404 等也会带 JSON error.message（如模型下线）
-    QJsonParseError peE{};
-    const QJsonDocument de = QJsonDocument::fromJson(raw, &peE);
-    if (peE.error == QJsonParseError::NoError && de.isObject()) {
-      const QString msg = de.object()
-                              .value(QStringLiteral("error"))
-                              .toObject()
-                              .value(QStringLiteral("message"))
-                              .toString();
-      if (!msg.isEmpty()) {
-        Logger::warn(QStringLiteral("Online forecast API message: %1").arg(msg));
-        if (msg.contains(QStringLiteral("no longer available"), Qt::CaseInsensitive)
-            || msg.contains(QStringLiteral("NOT_FOUND")))
-          fallback(tr("模型不可用·本地"));
-        else
-          fallback(tr("API错误·本地"));
-        return;
-      }
-    }
-    fallback(tr("在线失败·本地"));
-    return;
-  }
-
-  QJsonParseError pe{};
-  const QJsonDocument doc = QJsonDocument::fromJson(raw, &pe);
-  if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
-    fallback(tr("解析失败·本地"));
-    return;
-  }
-
-  const QJsonObject root = doc.object();
-  if (root.contains(QStringLiteral("error"))) {
-    const QString msg =
-        root.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString();
-    Logger::warn(QStringLiteral("Online forecast API error: %1").arg(msg));
-    fallback(tr("API错误·本地"));
-    return;
-  }
-
-  // ----- 从 Gemini / xAI 响应中取出模型文本 -----
-  QString content;
-  QString finishReason;
-  if (root.contains(QStringLiteral("candidates"))) {
-    const QJsonArray cands = root.value(QStringLiteral("candidates")).toArray();
-    if (!cands.isEmpty()) {
-      const QJsonObject c0 = cands.at(0).toObject();
-      finishReason = c0.value(QStringLiteral("finishReason")).toString();
-      const QJsonObject contentObj = c0.value(QStringLiteral("content")).toObject();
-      const QJsonArray parts = contentObj.value(QStringLiteral("parts")).toArray();
-      for (const QJsonValue& pv : parts) {
-        const QString tx = pv.toObject().value(QStringLiteral("text")).toString();
-        if (!tx.isEmpty()) {
-          if (!content.isEmpty())
-            content += QLatin1Char('\n');
-          content += tx;
-        }
-      }
-    }
-    const QJsonObject feedback = root.value(QStringLiteral("promptFeedback")).toObject();
-    if (content.isEmpty() && !feedback.isEmpty()) {
-      Logger::warn(QStringLiteral("Gemini blocked/empty, promptFeedback=%1")
-                       .arg(QString::fromUtf8(QJsonDocument(feedback).toJson(QJsonDocument::Compact))));
-      fallback(tr("模型拒答·本地"));
-      return;
-    }
-  } else if (root.contains(QStringLiteral("choices"))) {
-    content = root.value(QStringLiteral("choices"))
-                  .toArray()
-                  .at(0)
-                  .toObject()
-                  .value(QStringLiteral("message"))
-                  .toObject()
-                  .value(QStringLiteral("content"))
-                  .toString();
-  }
-
-  content = content.trimmed();
-  // 去掉 ```json ... ```
-  if (content.startsWith(QStringLiteral("```"))) {
-    const int nl = content.indexOf(QLatin1Char('\n'));
-    if (nl > 0)
-      content = content.mid(nl + 1);
-    if (content.endsWith(QStringLiteral("```")))
-      content.chop(3);
-    content = content.trimmed();
-  }
-  // 有的模型会在 JSON 前后夹杂说明文字
-  {
-    const int a = content.indexOf(QLatin1Char('{'));
-    const int b = content.lastIndexOf(QLatin1Char('}'));
-    if (a >= 0 && b > a)
-      content = content.mid(a, b - a + 1).trimmed();
-  }
-
-  auto readPred = [](const QJsonObject& jo, double& outH, double& outL, QString& brief,
-                     QString& bias) -> bool {
-    auto num = [&](std::initializer_list<const char*> keys) -> double {
-      for (const char* k : keys) {
-        if (!jo.contains(QLatin1String(k)))
-          continue;
-        const QJsonValue v = jo.value(QLatin1String(k));
-        if (v.isDouble() || v.isString()) {
-          bool ok = false;
-          const double d = v.toVariant().toDouble(&ok);
-          if (ok && d > 0.0)
-            return d;
-        }
-      }
-      return 0.0;
-    };
-    outH = num({"pred_high", "predHigh", "high", "max", "day_high", "预测高"});
-    outL = num({"pred_low", "predLow", "low", "min", "day_low", "预测低"});
-    brief = jo.value(QStringLiteral("brief")).toString();
-    if (brief.isEmpty())
-      brief = jo.value(QStringLiteral("reason")).toString();
-    bias = jo.value(QStringLiteral("bias")).toString();
-    return outH > 0.0 && outL > 0.0 && outH >= outL;
-  };
-
-  double predHigh = 0.0, predLow = 0.0;
-  QString brief, bias;
-  QJsonParseError pe2{};
-  QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
-  bool ok = false;
-  if (pe2.error == QJsonParseError::NoError && jdoc.isObject())
-    ok = readPred(jdoc.object(), predHigh, predLow, brief, bias);
-
-  // 正则兜底：pred_high": 940.5
-  if (!ok) {
-    QRegularExpression reH(
-        QStringLiteral("pred[_\\s-]*high[\"'\\s:=]+([0-9]+(?:\\.[0-9]+)?)"),
-        QRegularExpression::CaseInsensitiveOption);
-    QRegularExpression reL(
-        QStringLiteral("pred[_\\s-]*low[\"'\\s:=]+([0-9]+(?:\\.[0-9]+)?)"),
-        QRegularExpression::CaseInsensitiveOption);
-    const auto mh = reH.match(content);
-    const auto ml = reL.match(content);
-    if (mh.hasMatch() && ml.hasMatch()) {
-      predHigh = mh.captured(1).toDouble();
-      predLow = ml.captured(1).toDouble();
-      ok = predHigh > 0 && predLow > 0 && predHigh >= predLow;
-    }
-  }
-
-  if (!ok) {
-    Logger::warn(
-        QStringLiteral("Online forecast JSON invalid finishReason=%1 content=%2 raw=%3")
-            .arg(finishReason,
-                 content.left(500),
-                 QString::fromUtf8(raw.left(400))));
-    fallback(tr("JSON无效·本地"));
-    return;
-  }
-
-  double actH = 0, actL = 0;
-  HistoryCache::instance().todayHigh(actH);
-  HistoryCache::instance().todayLow(actL);
-  if (actH > 0)
-    predHigh = qMax(predHigh, actH);
-  if (actL > 0)
-    predLow = qMin(predLow, actL);
-  if (!m_plotPoints.isEmpty()) {
-    const double px = m_plotPoints.last().second;
-    const double hard = px * 0.018;
-    predHigh = qMin(predHigh, qMax(actH > 0 ? actH : px, px) + hard);
-    predLow = qMax(predLow, qMin(actL > 0 ? actL : px, px) - hard);
-    const double minGap = qMax(px * 0.0005, 0.08);
-    if (actH > 0)
-      predHigh = qMax(predHigh, actH + minGap * 0.25);
-    if (actL > 0)
-      predLow = qMin(predLow, actL - minGap * 0.25);
-    if (predHigh < predLow) {
-      predHigh = qMax(actH > 0 ? actH : px, px) + minGap;
-      predLow = qMin(actL > 0 ? actL : px, px) - minGap;
-    }
-  }
-
-  m_lastPredictHigh = predHigh;
-  m_lastPredictLow = predLow;
-  m_lastPredictPrice = predHigh;
-  m_hasPredict = true;
-  const QString prov = AppSettings::instance().llmProvider();
-  QString tag = (prov == QStringLiteral("gemini") ? tr("Gemini") : tr("Grok"));
-  if (!bias.isEmpty())
-    tag += QStringLiteral("·") + bias.left(8);
-  if (!brief.isEmpty())
-    tag += QStringLiteral("·") + brief.left(28);
-  m_forecastModeTag = tag;
-
-  applyLocalForecastLines(predHigh, predLow);
-
-  ForecastTracker::instance().recordDayRange(
-      QDateTime::currentDateTime(), 3600, predHigh, predLow, m_forecastModeTag);
-  const QDateTime madeAt = QDateTime::currentDateTime();
-  ExtremeDatabase::instance().insertForecastLog(
-      madeAt, currentTypeCode(), m_forecastModeTag, predHigh, predLow,
-      m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second, brief);
-  appendForecastHistoryItem(madeAt, m_forecastModeTag, brief, predHigh, predLow);
-
-  m_lastForecastMs = madeAt.toMSecsSinceEpoch();
-  double high = 0, low = 0;
-  HistoryCache::instance().todayHigh(high);
-  HistoryCache::instance().todayLow(low);
-  const double cur = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
-  updateSidePanelValues(cur, predHigh, true, high, low, m_forecastModeTag);
-  ForecastTracker::instance().loadFromDatabase(currentTypeCode());
-  Logger::info(QStringLiteral("Online forecast OK high=%1 low=%2 tag=%3")
-                   .arg(predHigh, 0, 'f', 2)
-                   .arg(predLow, 0, 'f', 2)
-                   .arg(tag));
+    const double cur = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
+    updateSidePanelValues(cur, res.predHigh, true, high, low, res.modeTag);
 }
 
 void ChartWindow::updateHighLowMarkers() {
@@ -1871,13 +1553,6 @@ void ChartWindow::closeEvent(QCloseEvent *event) {
     m_pendingChart->abort();
     m_pendingChart->deleteLater();
     m_pendingChart.clear();
-  }
-  if (m_pendingForecast) {
-    // 断开 finished，避免 abort 后回调里再读/改 UI 导致崩溃
-    m_pendingForecast->disconnect(this);
-    m_pendingForecast->abort();
-    m_pendingForecast->deleteLater();
-    m_pendingForecast.clear();
   }
   m_loading = false;
   QWidget::closeEvent(event);
@@ -2271,22 +1946,6 @@ void ChartWindow::applyChartTheme()
             m_currentSeries->setColor(QColor(255, 77, 79));
             m_currentSeries->setBorderColor(QColor(255, 255, 255));
         }
-        if (m_sideCurrentLabel)
-            m_sideCurrentLabel->setStyleSheet("color:#ffe082;font-size:16px;font-weight:bold;");
-        if (m_sidePredictLabel)
-            m_sidePredictLabel->setStyleSheet("color:#ff8a80;font-size:16px;font-weight:bold;");
-        if (m_sideHighLabel)
-            m_sideHighLabel->setStyleSheet("color:#ff8a80;font-size:16px;font-weight:bold;");
-        if (m_sideLowLabel)
-            m_sideLowLabel->setStyleSheet("color:#69f0ae;font-size:16px;font-weight:bold;");
-        if (m_sideModeLabel)
-            m_sideModeLabel->setStyleSheet("color:#9aa0a6;font-size:10px;");
-        if (m_sideClockLabel)
-            m_sideClockLabel->setStyleSheet("color:#6ea8fe;font-size:18px;font-weight:700;");
-        if (m_sideAdviceLabel)
-            m_sideAdviceLabel->setStyleSheet("color:#8b93a7;font-size:11px;line-height:1.3;");
-        if (m_sideHitRateLabel)
-            m_sideHitRateLabel->setStyleSheet("color:#82b1ff;font-size:14px;font-weight:bold;");
     } else {
         m_chart->setBackgroundBrush(QBrush(QColor(255, 255, 255)));
         m_chart->setPlotAreaBackgroundBrush(QBrush(QColor(248, 249, 250)));
@@ -2301,11 +1960,6 @@ void ChartWindow::applyChartTheme()
             m_axisY->setGridLineColor(QColor(230, 230, 230));
             m_axisY->setTitleBrush(QBrush(QColor(80, 80, 80)));
         }
-        if (m_sidePanel)
-            m_sidePanel->setStyleSheet(
-                "QFrame{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                "stop:0 #ffffff, stop:1 #f0f3f7);border:1px solid #d8dee6;border-radius:8px;}"
-                "QLabel{color:#5c6b77;}");
         setStyleSheet("background:#f5f6f8;");
 
         setSolid(m_series, QColor(0, 82, 217), 2);
@@ -2335,32 +1989,46 @@ void ChartWindow::applyChartTheme()
 
 void ChartWindow::applySidePanelChrome()
 {
-    auto valStyle = [](const QString& color) {
+    auto valStyle = [](const QString& color, int size = 13) {
         return QStringLiteral(
-                   "color:%1;font-size:14px;font-weight:600;"
+                   "color:%1;font-size:%2px;font-weight:600;"
                    "font-family:Consolas,'Microsoft YaHei UI',monospace;")
-            .arg(color);
+            .arg(color).arg(size);
     };
     if (m_sideClockLabel)
         m_sideClockLabel->setStyleSheet(
             "color:#5b8def;font-size:13px;font-weight:600;font-family:Consolas,monospace;");
     if (m_sideSessionLabel)
         m_sideSessionLabel->setStyleSheet(
-            "color:#a8b3c7;font-size:11px;padding:2px 6px;background:#1c2433;border-radius:8px;");
+            "color:#a8b3c7;font-size:11px;padding:2px 8px;background:#1c2433;border-radius:8px;");
     if (m_sideCurrentLabel)
-        m_sideCurrentLabel->setStyleSheet(valStyle("#e8eaed"));
+        m_sideCurrentLabel->setStyleSheet(
+            "color:#ffffff;font-size:16px;font-weight:700;font-family:Consolas,monospace;");
     if (m_sideHighLabel)
-        m_sideHighLabel->setStyleSheet(valStyle("#f07178"));
+        m_sideHighLabel->setStyleSheet(valStyle("#f07178", 13));
     if (m_sideLowLabel)
-        m_sideLowLabel->setStyleSheet(valStyle("#7fd99a"));
+        m_sideLowLabel->setStyleSheet(valStyle("#7fd99a", 13));
+    if (m_sideForecastCard)
+        m_sideForecastCard->setStyleSheet(
+            "QFrame#forecastCard{background:#151a26;border:1px solid #28374d;border-radius:8px;}");
     if (m_sidePredictHighLabel)
-        m_sidePredictHighLabel->setStyleSheet(valStyle("#ff8b7a"));
+        m_sidePredictHighLabel->setStyleSheet(valStyle("#ff8b7a", 13));
     if (m_sidePredictLowLabel)
-        m_sidePredictLowLabel->setStyleSheet(valStyle("#6bcb8a"));
+        m_sidePredictLowLabel->setStyleSheet(valStyle("#6bcb8a", 13));
     if (m_sideModeLabel)
         m_sideModeLabel->setStyleSheet(
-            "color:#8b9bb4;font-size:11px;padding:6px 8px;"
-            "background:#1a2030;border-radius:8px;border:1px solid #2a3347;");
+            "color:#8b9bb4;font-size:10px;padding:1px 6px;"
+            "background:#1e2638;border-radius:4px;border:1px solid #2f3d54;");
+    if (m_sidePredictHighTimeLabel)
+        m_sidePredictHighTimeLabel->setStyleSheet(
+            "color:#ffa08a;font-size:11px;font-weight:600;font-family:'Segoe UI','Microsoft YaHei UI',sans-serif;");
+    if (m_sidePredictLowTimeLabel)
+        m_sidePredictLowTimeLabel->setStyleSheet(
+            "color:#80e0a0;font-size:11px;font-weight:600;font-family:'Segoe UI','Microsoft YaHei UI',sans-serif;");
+    if (m_sideCatalystLabel)
+        m_sideCatalystLabel->setStyleSheet(
+            "QLabel#catalystLabel{color:#ffe58f;font-size:11px;line-height:1.3;"
+            "background:#1a2233;border:1px solid #2f3d54;border-radius:4px;padding:4px 6px;}");
     if (m_sidePanel)
         m_sidePanel->setStyleSheet(
             "QFrame#sidePanel{background:#12161f;border:1px solid #2a3347;border-radius:12px;}"
@@ -2370,7 +2038,8 @@ void ChartWindow::applySidePanelChrome()
             "QListWidget#forecastList{"
             "  background:#0e1219;border:1px solid #2a3347;border-radius:8px;"
             "  color:#c5cddb;font-size:11px;outline:none;}"
-            "QListWidget#forecastList::item{padding:6px 8px;border-bottom:1px solid #1c2433;}"
+            "QListWidget#forecastList::item{padding:5px 6px;border-bottom:1px solid #1a2233;}"
+            "QListWidget#forecastList::item:hover{background:#141c2b;}"
             "QListWidget#forecastList::item:selected{background:#1c2a40;color:#e8eaed;}");
 }
 

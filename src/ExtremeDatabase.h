@@ -31,6 +31,9 @@ struct ForecastLogEntry {
     double basePrice = 0;
     double actualHigh = 0;
     double actualLow = 0;
+    QString predHighTime;
+    QString predLowTime;
+    QString catalyst;
 };
 
 class ExtremeDatabase : public QObject
@@ -84,6 +87,12 @@ public:
     /** USD/oz → 约元/克：cny_per_g = usd_oz * usdCny / 31.1034768 */
     static double usdOzToCnyG(double usdPerOz, double usdCny);
 
+    /** 计算近 N 日真实波幅均值（ATR），不含当日 */
+    double computeAtr(int days = 10, const QString& source = QString()) const;
+
+    /** 查询前一交易日收盘价 */
+    double previousClose(const QString& source = QString()) const;
+
     /** 建模：主源报价降采样（默认 ≥30s 一条） */
     bool insertQuoteSample(const QDateTime& ts, const QString& source,
                            double price, double change = 0.0);
@@ -96,7 +105,10 @@ public:
     /** 建模：登记预测；返回 row id（失败 0） */
     qint64 insertForecastLog(const QDateTime& madeAt, const QString& source,
                              const QString& mode, double predHigh, double predLow,
-                             double basePrice, const QString& brief = QString());
+                             double basePrice, const QString& brief = QString(),
+                             const QString& predHighTime = QString(),
+                             const QString& predLowTime = QString(),
+                             const QString& catalyst = QString());
 
     /** 当日预测记录（按时间升序，最新在末尾） */
     QVector<ForecastLogEntry> loadForecastLogsForDay(const QDate& day,

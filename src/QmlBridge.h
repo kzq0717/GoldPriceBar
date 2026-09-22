@@ -71,6 +71,11 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString decisionRangeText READ decisionRangeText NOTIFY decisionChanged)
     Q_PROPERTY(QString decisionMetricsText READ decisionMetricsText NOTIFY decisionChanged)
     Q_PROPERTY(QString decisionSessionText READ decisionSessionText NOTIFY decisionChanged)
+    Q_PROPERTY(QString predHighTimeWindow READ predHighTimeWindow NOTIFY decisionChanged)
+    Q_PROPERTY(QString predLowTimeWindow READ predLowTimeWindow NOTIFY decisionChanged)
+    Q_PROPERTY(QString predCatalyst READ predCatalyst NOTIFY decisionChanged)
+    Q_PROPERTY(QString predDailyPath READ predDailyPath NOTIFY decisionChanged)
+    Q_PROPERTY(QString decisionTimeWindowText READ decisionTimeWindowText NOTIFY decisionChanged)
 
 public:
     explicit QmlBridge(PriceService *priceService, QObject *parent = nullptr);
@@ -113,6 +118,11 @@ public:
     QString decisionRangeText() const { return m_decisionRangeText; }
     QString decisionMetricsText() const { return m_decisionMetricsText; }
     QString decisionSessionText() const { return m_decisionSessionText; }
+    QString predHighTimeWindow() const { return m_predHighTimeWindow; }
+    QString predLowTimeWindow() const { return m_predLowTimeWindow; }
+    QString predCatalyst() const { return m_predCatalyst; }
+    QString predDailyPath() const { return m_predDailyPath; }
+    QString decisionTimeWindowText() const { return m_decisionTimeWindowText; }
 
     QVariantList sentimentItems() const { return m_sentimentItems; }
     bool sentimentLoading() const { return m_sentimentLoading; }
@@ -191,6 +201,7 @@ private slots:
     void onSettingsDialogAccepted();
     void onSecondaryTimer();
     void onSecondaryFinished(QNetworkReply *reply, const QString &sec = QString());
+    void onForecastUpdated(const struct ForecastResult &res);
 
 private:
     void updateExtremes();
@@ -276,6 +287,11 @@ private:
     QString m_decisionRangeText;
     QString m_decisionMetricsText;
     QString m_decisionSessionText;
+    QString m_predHighTimeWindow;
+    QString m_predLowTimeWindow;
+    QString m_predCatalyst;
+    QString m_predDailyPath;
+    QString m_decisionTimeWindowText;
 };
 
 #endif // QMLBRIDGE_H

@@ -161,10 +161,13 @@ bool ExtremeDatabase::ensureSchema()
         ")"));
     q.exec(QStringLiteral(
         "CREATE INDEX IF NOT EXISTS idx_forecast_unsettled ON forecast_logs(settled, mature_at)"));
-    // 兼容旧库：补充 brief 字段（Gemini 分析原文）
+    // 兼容旧库：补充 brief、极值时间窗口与催化事件字段
     {
         QSqlQuery qa(db);
         qa.exec(QStringLiteral("ALTER TABLE forecast_logs ADD COLUMN brief TEXT"));
+        qa.exec(QStringLiteral("ALTER TABLE forecast_logs ADD COLUMN pred_high_time TEXT"));
+        qa.exec(QStringLiteral("ALTER TABLE forecast_logs ADD COLUMN pred_low_time TEXT"));
+        qa.exec(QStringLiteral("ALTER TABLE forecast_logs ADD COLUMN catalyst TEXT"));
     }
 
     q.exec(QStringLiteral(
@@ -510,6 +513,64 @@ QVector<QPair<QDateTime, double>> ExtremeDatabase::loadDailyClosesRange(
     return out;
 }
 
+double ExtremeDatabase::computeAtr(int days, const QString& source) const
+{
+    if (!m_open || days <= 0)
+        return 0.0;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    // 取历史 N+2 天 high, low, close，不包含今日
+    q.prepare(QStringLiteral(
+        "SELECT trade_date, high_price, low_price, close_price FROM daily_bars "
+        "WHERE source=? AND trade_date < ? AND high_price > 0 AND low_price > 0 AND close_price > 0 "
+        "ORDER BY trade_date DESC LIMIT ?"));
+    q.addBindValue(src);
+    q.addBindValue(QDate::currentDate().toString(Qt::ISODate));
+    q.addBindValue(days + 2);
+    if (!q.exec())
+        return 0.0;
+
+    struct Bar { double h; double l; double c; };
+    QVector<Bar> bars;
+    while (q.next()) {
+        bars.append({q.value(1).toDouble(), q.value(2).toDouble(), q.value(3).toDouble()});
+    }
+    if (bars.size() < 2)
+        return 0.0;
+
+    double trSum = 0.0;
+    int count = 0;
+    for (int i = 0; i < bars.size() - 1 && count < days; ++i) {
+        const double h = bars[i].h;
+        const double l = bars[i].l;
+        const double prevC = bars[i + 1].c;
+        const double tr = qMax(h - l, qMax(qAbs(h - prevC), qAbs(l - prevC)));
+        trSum += tr;
+        ++count;
+    }
+    return count > 0 ? (trSum / count) : 0.0;
+}
+
+double ExtremeDatabase::previousClose(const QString& source) const
+{
+    if (!m_open)
+        return 0.0;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT close_price FROM daily_bars "
+        "WHERE source=? AND trade_date < ? AND close_price > 0 "
+        "ORDER BY trade_date DESC LIMIT 1"));
+    q.addBindValue(src);
+    q.addBindValue(QDate::currentDate().toString(Qt::ISODate));
+    if (q.exec() && q.next()) {
+        return q.value(0).toDouble();
+    }
+    return 0.0;
+}
+
 QVector<QPair<QDate, double>> ExtremeDatabase::loadRecentDailyCloses(
     int maxDays, const QString& source) const
 {
@@ -650,7 +711,9 @@ bool ExtremeDatabase::insertSecondaryQuote(const QDateTime& ts, const QString& p
 
 qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString& source,
                                           const QString& mode, double predHigh, double predLow,
-                                          double basePrice, const QString& brief)
+                                          double basePrice, const QString& brief,
+                                          const QString& predHighTime, const QString& predLowTime,
+                                          const QString& catalyst)
 {
     if (!m_open || predHigh <= 0.0 || predLow <= 0.0)
         return 0;
@@ -658,8 +721,9 @@ qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString
     QSqlQuery q(db);
     q.prepare(QStringLiteral(
         "INSERT INTO forecast_logs "
-        "(made_at, mature_at, source, mode, pred_high, pred_low, base_price, brief, settled) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"));
+        "(made_at, mature_at, source, mode, pred_high, pred_low, base_price, brief, "
+        " pred_high_time, pred_low_time, catalyst, settled) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"));
     q.addBindValue(madeAt.toString(Qt::ISODate));
     q.addBindValue(madeAt.addSecs(3600).toString(Qt::ISODate));
     q.addBindValue(source);
@@ -668,6 +732,9 @@ qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString
     q.addBindValue(predLow);
     q.addBindValue(basePrice);
     q.addBindValue(brief);
+    q.addBindValue(predHighTime);
+    q.addBindValue(predLowTime);
+    q.addBindValue(catalyst);
     if (!q.exec()) {
         qWarning() << "insertForecastLog:" << q.lastError().text();
         return 0;
@@ -687,13 +754,15 @@ QVector<ForecastLogEntry> ExtremeDatabase::loadForecastLogsForDay(const QDate& d
     const QString day1 = day.addDays(1).toString(Qt::ISODate) + QStringLiteral("T00:00:00");
     if (source.isEmpty()) {
         q.prepare(QStringLiteral(
-            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price "
+            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price, "
+            "pred_high_time, pred_low_time, catalyst "
             "FROM forecast_logs WHERE made_at>=? AND made_at<? ORDER BY made_at ASC, id ASC"));
         q.addBindValue(day0);
         q.addBindValue(day1);
     } else {
         q.prepare(QStringLiteral(
-            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price "
+            "SELECT id, made_at, source, mode, brief, pred_high, pred_low, base_price, "
+            "pred_high_time, pred_low_time, catalyst "
             "FROM forecast_logs WHERE made_at>=? AND made_at<? AND source=? "
             "ORDER BY made_at ASC, id ASC"));
         q.addBindValue(day0);
@@ -716,6 +785,9 @@ QVector<ForecastLogEntry> ExtremeDatabase::loadForecastLogsForDay(const QDate& d
         e.predHigh = q.value(5).toDouble();
         e.predLow = q.value(6).toDouble();
         e.basePrice = q.value(7).toDouble();
+        e.predHighTime = q.value(8).toString();
+        e.predLowTime = q.value(9).toString();
+        e.catalyst = q.value(10).toString();
         out.append(e);
     }
     return out;
