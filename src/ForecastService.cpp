@@ -8,6 +8,7 @@
 #include "ForecastTracker.h"
 #include "Logger.h"
 #include "goldsdk/forecast.hpp"
+#include <vector>
 
 #include <QUrl>
 #include <QUrlQuery>
@@ -119,6 +120,9 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
 
     const QString systemPrompt = QStringLiteral(
         "你是资深黄金/贵金属量化与宏观分析师。\n"
+        "核心原则：用户会提供「本地引擎已算好的结构化事实」（预测高低、高点时段概率、多日趋势）。\n"
+        "本地趋势为默认立场；仅当宏观/舆情证据充分时方可提出不同偏向，并降低 confidence。\n"
+        "禁止编造未给出的价格。多日偏空/强空时 action 不得鼓励追高。\n"
         "请综合分析以下多维度行情与基本面数据：\n"
         "1. 日内分时走势及已实现的今日最高价、最低价及其精准发生时间；\n"
         "2. 近10日真实波幅(ATR)及前日收盘价（全日波幅预算基准，严禁无根据极端漂移）；\n"
@@ -145,6 +149,63 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         "3. 小时数必须为两位数（如 09:00 严禁写为 9:00）。\n"
         "约束：预期全日总振幅（pred_high - pred_low）建议紧密锚定 10日ATR（约0.7~1.5倍 ATR）。非投资建议。");
 
+    // 本地引擎事实（硬约束，注入 LLM）
+    QString localEngineBlock = QStringLiteral("（本地引擎暂无有效结果）");
+    {
+        std::vector<goldsdk::IntradayPoint> pts;
+        pts.reserve(static_cast<size_t>(ptsSamples.size()));
+        for (const auto& pt : ptsSamples) {
+            goldsdk::IntradayPoint ip;
+            ip.epochMs = pt.first.toMSecsSinceEpoch();
+            ip.price = pt.second;
+            pts.push_back(ip);
+        }
+        const QTime nowT = QTime::currentTime();
+        double dayFrac = 0.5;
+        if (src == QStringLiteral("gj") || src == QStringLiteral("xau"))
+            dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+        else {
+            const int startM = 9 * 60, endM = 23 * 60 + 30;
+            const int nowM = nowT.hour() * 60 + nowT.minute();
+            if (nowM <= startM) dayFrac = 0.05;
+            else if (nowM >= endM) dayFrac = 0.95;
+            else dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
+        }
+        const auto fr = goldsdk::ForecastEngine::dayRange(pts, actH, actL, dayFrac, atr10, prevClose);
+        QString multi = QStringLiteral("样本不足");
+        {
+            std::vector<double> closes;
+            const QDate to = QDate::currentDate();
+            const auto rows = ExtremeDatabase::instance().loadDailyClosesRange(to.addDays(-90), to, src);
+            for (const auto& r : rows)
+                if (r.second > 0.0) closes.push_back(r.second);
+            const auto trn = goldsdk::ForecastEngine::multiDayTrend(closes);
+            if (trn.valid)
+                multi = QStringLiteral("%1(score=%2,RSI=%3)")
+                            .arg(QString::fromUtf8(trn.label()))
+                            .arg(trn.score, 0, 'f', 2)
+                            .arg(trn.rsi14, 0, 'f', 1);
+        }
+        if (fr.valid) {
+            localEngineBlock = QStringLiteral(
+                "本地预测高=%1 本地预测低=%2\n"
+                "高点时段=%3 (概率约%4%)\n"
+                "低点时段=%5\n"
+                "高点已现概率约%6% 剩余上行约%7\n"
+                "情景=%8\n"
+                "多日趋势=%9\n"
+                "请在本地预测基础上微调，勿大幅偏离。")
+                .arg(fr.predHigh, 0, 'f', 2)
+                .arg(fr.predLow, 0, 'f', 2)
+                .arg(QString::fromStdString(fr.predHighTimeWindow))
+                .arg(fr.peakWindowProb * 100.0, 0, 'f', 0)
+                .arg(QString::fromStdString(fr.predLowTimeWindow))
+                .arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0)
+                .arg(fr.remainingUpside, 0, 'f', 2)
+                .arg(QString::fromStdString(fr.scenario), multi);
+        }
+    }
+
     const QString userPrompt = QStringLiteral(
         "时间(本地): %1\n"
         "品种代码: %2（zs/ms=积存金元/克，gj=伦敦金美元/盎司）\n"
@@ -156,7 +217,8 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         "当前交易时段: %10\n"
         "今日宏观事件: %11%12\n"
         "最新要闻舆情:\n%13\n"
-        "最近分时采样:\n%14\n"
+        "【本地引擎结构化事实】\n%14\n"
+        "最近分时采样:\n%15\n"
         "请按要求输出 JSON。")
         .arg(nowStr, src)
         .arg(lastPrice, 0, 'f', 2)
@@ -169,6 +231,7 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         .arg(sessionDesc)
         .arg(macroEvents, pendingAlert.isEmpty() ? QString() : (QStringLiteral(" [预警: ") + pendingAlert + QStringLiteral("]")))
         .arg(sentimentSummary)
+        .arg(localEngineBlock)
         .arg(seriesText);
 
     QNetworkRequest request;
@@ -544,9 +607,39 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     m_lastResult.predLowTimeWindow = normalizeTo24HourTime(QString::fromStdString(fr.predLowTimeWindow));
     m_lastResult.scenario = QString::fromStdString(fr.scenario);
     m_lastResult.keyCatalyst = QString::fromStdString(fr.keyCatalyst);
-    m_lastResult.bias = (fr.predHigh - actH > actL - fr.predLow) ? tr("偏多") : tr("偏空");
-    m_lastResult.brief = QString::fromStdString(fr.scenario);
-    m_lastResult.confidence = 0.65;
+
+    // 多日趋势过滤（利于正收益：非多头时不强调冲高）
+    QString multiBias = tr("震荡");
+    bool allowLong = true;
+    {
+        std::vector<double> closes;
+        const QDate to = QDate::currentDate();
+        const auto rows = ExtremeDatabase::instance().loadDailyClosesRange(
+            to.addDays(-90), to, src);
+        closes.reserve(static_cast<size_t>(rows.size()));
+        for (const auto& r : rows) {
+            if (r.second > 0.0)
+                closes.push_back(r.second);
+        }
+        const auto trend = goldsdk::ForecastEngine::multiDayTrend(closes);
+        if (trend.valid) {
+            multiBias = QString::fromUtf8(trend.label());
+            allowLong = trend.allowLongBias();
+            if (!allowLong) {
+                m_lastResult.scenario = tr("多日%1·不追高，以观望或保护利润为主；%2")
+                                            .arg(multiBias, m_lastResult.scenario);
+            } else {
+                m_lastResult.scenario = tr("多日%1·可顺势关注高点窗口；%2")
+                                            .arg(multiBias, m_lastResult.scenario);
+            }
+        }
+    }
+
+    m_lastResult.bias = allowLong
+                            ? ((fr.predHigh - actH > actL - fr.predLow) ? tr("偏多") : tr("震荡"))
+                            : tr("偏空");
+    m_lastResult.brief = m_lastResult.scenario;
+    m_lastResult.confidence = fr.confidence > 0.0 ? fr.confidence : 0.65;
     m_lastResult.modeTag = tag;
     m_lastResult.timestamp = QDateTime::currentDateTime();
 
