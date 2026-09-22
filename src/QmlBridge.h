@@ -75,6 +75,11 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString predLowTimeWindow READ predLowTimeWindow NOTIFY decisionChanged)
     Q_PROPERTY(QString predCatalyst READ predCatalyst NOTIFY decisionChanged)
     Q_PROPERTY(QString predDailyPath READ predDailyPath NOTIFY decisionChanged)
+    Q_PROPERTY(QString peakProbText READ peakProbText NOTIFY decisionChanged)
+    Q_PROPERTY(QString highInProbText READ highInProbText NOTIFY decisionChanged)
+    Q_PROPERTY(QString remainingUpsideText READ remainingUpsideText NOTIFY decisionChanged)
+    Q_PROPERTY(QString multiDayBiasText READ multiDayBiasText NOTIFY decisionChanged)
+    Q_PROPERTY(QString forecastConfidenceText READ forecastConfidenceText NOTIFY decisionChanged)
     Q_PROPERTY(QString decisionTimeWindowText READ decisionTimeWindowText NOTIFY decisionChanged)
 
 public:
@@ -122,6 +127,11 @@ public:
     QString predLowTimeWindow() const { return m_predLowTimeWindow; }
     QString predCatalyst() const { return m_predCatalyst; }
     QString predDailyPath() const { return m_predDailyPath; }
+    QString peakProbText() const { return m_peakProbText; }
+    QString highInProbText() const { return m_highInProbText; }
+    QString remainingUpsideText() const { return m_remainingUpsideText; }
+    QString multiDayBiasText() const { return m_multiDayBiasText; }
+    QString forecastConfidenceText() const { return m_forecastConfidenceText; }
     QString decisionTimeWindowText() const { return m_decisionTimeWindowText; }
 
     QVariantList sentimentItems() const { return m_sentimentItems; }
@@ -291,6 +301,11 @@ private:
     QString m_predLowTimeWindow;
     QString m_predCatalyst;
     QString m_predDailyPath;
+    QString m_peakProbText;
+    QString m_highInProbText;
+    QString m_remainingUpsideText;
+    QString m_multiDayBiasText;
+    QString m_forecastConfidenceText;
     QString m_decisionTimeWindowText;
 };
 

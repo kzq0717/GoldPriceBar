@@ -825,6 +825,75 @@ Window {
                         }
                     }
 
+
+                    // 高点时段概率 / 已现概率 / 剩余上行 / 多日趋势
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Text {
+                            text: "📊 高点概率："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? bridge.peakProbText : "—"
+                            color: "#FFB74D"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                        Text {
+                            text: "已现："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? bridge.highInProbText : "—"
+                            color: "#CE93D8"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                        Text {
+                            text: "剩余上行："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? bridge.remainingUpsideText : "—"
+                            color: "#81C784"
+                            font.pixelSize: 10
+                            font.bold: true
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Text {
+                            text: "📈 多日趋势："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? bridge.multiDayBiasText : "—"
+                            color: "#64B5F6"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                        Text {
+                            text: "置信："
+                            color: "#9A9AB0"
+                            font.pixelSize: 10
+                        }
+                        Text {
+                            text: bridge ? bridge.forecastConfidenceText : "—"
+                            color: "#FFD54F"
+                            font.pixelSize: 10
+                            font.bold: true
+                            Layout.fillWidth: true
+                        }
+                    }
+
                     // 核心推演催化
                     RowLayout {
                         Layout.fillWidth: true

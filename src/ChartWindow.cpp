@@ -1210,6 +1210,25 @@ void ChartWindow::onForecastServiceUpdated(const ForecastResult& res)
         m_sideCatalystLabel->setText(cat);
         m_sideCatalystLabel->setToolTip(res.scenario.isEmpty() ? cat : (cat + QStringLiteral("\n演变: ") + res.scenario));
     }
+    if (m_sideTrendLabel) {
+        QString trend = res.multiDayBias.isEmpty() ? res.bias : res.multiDayBias;
+        if (res.peakWindowProb > 0.0) {
+            trend += QStringLiteral(" · 高点%1%")
+                         .arg(res.peakWindowProb * 100.0, 0, 'f', 0);
+        }
+        if (res.highAlreadyInProb > 0.0) {
+            trend += QStringLiteral(" · 已现%1%")
+                         .arg(res.highAlreadyInProb * 100.0, 0, 'f', 0);
+        }
+        m_sideTrendLabel->setText(trend);
+        m_sideTrendLabel->setToolTip(
+            tr("多日:%1\n高点窗:%2\n已现概率:%3% 剩余上行:%4 置信:%5%")
+                .arg(res.multiDayBias.isEmpty() ? res.bias : res.multiDayBias)
+                .arg(res.predHighTimeWindow)
+                .arg(res.highAlreadyInProb * 100.0, 0, 'f', 0)
+                .arg(res.remainingUpside, 0, 'f', 2)
+                .arg(res.confidence * 100.0, 0, 'f', 0));
+    }
 
     appendForecastHistoryItem(res.timestamp, res.modeTag, res.brief, res.predHigh, res.predLow,
                               res.predHighTimeWindow, res.predLowTimeWindow, res.keyCatalyst);

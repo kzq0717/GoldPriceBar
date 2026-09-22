@@ -1115,6 +1115,19 @@ void QmlBridge::onForecastUpdated(const ForecastResult &res) {
     m_predLowTimeWindow = res.predLowTimeWindow;
     m_predCatalyst = res.keyCatalyst;
     m_predDailyPath = res.scenario;
+    m_peakProbText = res.peakWindowProb > 0
+        ? tr("%1%").arg(res.peakWindowProb * 100.0, 0, 'f', 0)
+        : tr("—");
+    m_highInProbText = res.highAlreadyInProb > 0
+        ? tr("%1%").arg(res.highAlreadyInProb * 100.0, 0, 'f', 0)
+        : tr("—");
+    m_remainingUpsideText = res.remainingUpside > 0
+        ? QString::number(res.remainingUpside, 'f', 2)
+        : tr("—");
+    m_multiDayBiasText = res.multiDayBias.isEmpty() ? tr("—") : res.multiDayBias;
+    m_forecastConfidenceText = res.confidence > 0
+        ? tr("%1%").arg(res.confidence * 100.0, 0, 'f', 0)
+        : tr("—");
     m_decisionTimeWindowText = tr("高点: %1 | 低点: %2").arg(
         m_predHighTimeWindow.isEmpty() ? tr("—") : m_predHighTimeWindow,
         m_predLowTimeWindow.isEmpty() ? tr("—") : m_predLowTimeWindow);
@@ -1171,6 +1184,19 @@ void QmlBridge::evaluateDecision(double price) {
         m_predLowTimeWindow = res.predLowTimeWindow;
         m_predCatalyst = res.keyCatalyst;
         m_predDailyPath = res.scenario;
+    m_peakProbText = res.peakWindowProb > 0
+        ? tr("%1%").arg(res.peakWindowProb * 100.0, 0, 'f', 0)
+        : tr("—");
+    m_highInProbText = res.highAlreadyInProb > 0
+        ? tr("%1%").arg(res.highAlreadyInProb * 100.0, 0, 'f', 0)
+        : tr("—");
+    m_remainingUpsideText = res.remainingUpside > 0
+        ? QString::number(res.remainingUpside, 'f', 2)
+        : tr("—");
+    m_multiDayBiasText = res.multiDayBias.isEmpty() ? tr("—") : res.multiDayBias;
+    m_forecastConfidenceText = res.confidence > 0
+        ? tr("%1%").arg(res.confidence * 100.0, 0, 'f', 0)
+        : tr("—");
     } else {
         const double atr = ExtremeDatabase::instance().computeAtr(10, src);
         const double prevClose = ExtremeDatabase::instance().previousClose(src);
@@ -1182,6 +1208,14 @@ void QmlBridge::evaluateDecision(double price) {
             m_predLowTimeWindow = QString::fromStdString(fr.predLowTimeWindow);
             m_predCatalyst = QString::fromStdString(fr.keyCatalyst);
             m_predDailyPath = QString::fromStdString(fr.scenario);
+            m_peakProbText = fr.peakWindowProb > 0
+                ? tr("%1%").arg(fr.peakWindowProb * 100.0, 0, 'f', 0) : tr("—");
+            m_highInProbText = fr.highAlreadyInProb > 0
+                ? tr("%1%").arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0) : tr("—");
+            m_remainingUpsideText = fr.remainingUpside > 0
+                ? QString::number(fr.remainingUpside, 'f', 2) : tr("—");
+            m_forecastConfidenceText = fr.confidence > 0
+                ? tr("%1%").arg(fr.confidence * 100.0, 0, 'f', 0) : tr("—");
         } else {
             predHigh = actHigh * 1.003;
             predLow = actLow * 0.997;

@@ -530,6 +530,43 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
     m_lastResult.bias = bias.isEmpty() ? tr("震荡") : bias;
     m_lastResult.brief = brief.isEmpty() ? scenario : brief;
     m_lastResult.confidence = conf;
+    // LLM 路径补充本地概率/多日（若可算）
+    {
+        std::vector<double> closes;
+        const QDate to = QDate::currentDate();
+        const auto rows = ExtremeDatabase::instance().loadDailyClosesRange(
+            to.addDays(-90), to, m_currentSource);
+        for (const auto& r : rows)
+            if (r.second > 0.0) closes.push_back(r.second);
+        const auto trend = goldsdk::ForecastEngine::multiDayTrend(closes);
+        if (trend.valid)
+            m_lastResult.multiDayBias = QString::fromUtf8(trend.label());
+        else
+            m_lastResult.multiDayBias.clear();
+        // 概率类仍以本地引擎为准（若有上次本地结果则保留；否则保持 0）
+        if (m_lastResult.peakWindowProb <= 0.0) {
+            // 轻量再算一次本地概率供卡片展示
+            const auto ptsSamples = ExtremeDatabase::instance().loadIntradaySamples(
+                QDate::currentDate(), m_currentSource);
+            std::vector<goldsdk::IntradayPoint> pts;
+            for (const auto& pt : ptsSamples) {
+                goldsdk::IntradayPoint ip;
+                ip.epochMs = pt.first.toMSecsSinceEpoch();
+                ip.price = pt.second;
+                pts.push_back(ip);
+            }
+            const QTime nowT = QTime::currentTime();
+            double dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+            const double atr = ExtremeDatabase::instance().computeAtr(10, m_currentSource);
+            const double prev = ExtremeDatabase::instance().previousClose(m_currentSource);
+            const auto fr = goldsdk::ForecastEngine::dayRange(pts, actH, actL, dayFrac, atr, prev);
+            if (fr.valid) {
+                m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
+                m_lastResult.remainingUpside = fr.remainingUpside;
+                m_lastResult.peakWindowProb = fr.peakWindowProb;
+            }
+        }
+    }
     m_lastResult.modeTag = (m_provider == QStringLiteral("gemini") ? tr("Gemini大模型") : tr("Grok大模型"));
     m_lastResult.timestamp = QDateTime::currentDateTime();
 
@@ -640,6 +677,10 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
                             : tr("偏空");
     m_lastResult.brief = m_lastResult.scenario;
     m_lastResult.confidence = fr.confidence > 0.0 ? fr.confidence : 0.65;
+    m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
+    m_lastResult.remainingUpside = fr.remainingUpside;
+    m_lastResult.peakWindowProb = fr.peakWindowProb;
+    m_lastResult.multiDayBias = multiBias;
     m_lastResult.modeTag = tag;
     m_lastResult.timestamp = QDateTime::currentDateTime();
 
