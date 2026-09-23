@@ -25,6 +25,7 @@ struct DayRangeForecast {
 
     // 增强：高点时间概率与剩余空间
     double highAlreadyInProb = 0.0;
+    double lowAlreadyInProb = 0.0;
     double remainingUpside = 0.0;
     double peakWindowProb = 0.0;
     double confidence = 0.0;

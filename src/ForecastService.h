@@ -23,6 +23,7 @@ struct ForecastResult {
     QDateTime timestamp;
     // 1.4 决策卡片增强
     double highAlreadyInProb = 0.0;  // 0~1
+    double lowAlreadyInProb = 0.0;   // 0~1
     double remainingUpside = 0.0;
     double peakWindowProb = 0.0;     // 0~1
     QString multiDayBias;            // 强多/偏多/震荡/...

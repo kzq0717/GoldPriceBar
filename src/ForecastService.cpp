@@ -119,35 +119,29 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
     const QString nowStr = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
 
     const QString systemPrompt = QStringLiteral(
-        "你是资深黄金/贵金属量化与宏观分析师。\n"
-        "核心原则：用户会提供「本地引擎已算好的结构化事实」（预测高低、高点时段概率、多日趋势）。\n"
-        "本地趋势为默认立场；仅当宏观/舆情证据充分时方可提出不同偏向，并降低 confidence。\n"
-        "禁止编造未给出的价格。多日偏空/强空时 action 不得鼓励追高。\n"
-        "请综合分析以下多维度行情与基本面数据：\n"
-        "1. 日内分时走势及已实现的今日最高价、最低价及其精准发生时间；\n"
-        "2. 近10日真实波幅(ATR)及前日收盘价（全日波幅预算基准，严禁无根据极端漂移）；\n"
-        "3. 宏观财经日历事件与预期发布时间（如初请失业金、非农、CPI、美联储决议、央行购金）；\n"
-        "4. 当前全球交易时段（亚盘/欧盘/美盘）及最新市场资讯舆情偏向。\n\n"
-        "任务目标：\n"
-        "推测「今日剩余交易时段」全日的最高价与最低价，并精准预估最高点与最低点最可能出现的【时间窗口/时间节点】，以及核心催化事件与全日演变路径。\n\n"
+        "你是资深黄金/贵金属量化交易与宏观分析师。\n"
+        "【核心交易与实战盈利原则（最高优先级）】：\n"
+        "1. 资金防守与防追高：若日内早盘已冲高回落、长时间未能破高且已形成阻力，必须果断评估高点是否已确立，严禁盲目向外推高预测价误导用户追高！\n"
+        "2. 尊重国内积存金(zs/ms)特征：国内早盘 09:00-10:30 集中释放隔夜外盘情绪，极易形成全日脉冲最高点或最低点；国际美盘(20:30-22:30)为外盘主要博弈时段。不可忽视国内早盘极值！\n"
+        "3. 严禁无脑平摊 ATR：震荡或收敛行情下全日总振幅可能显著低于 ATR，禁止机械式为了凑够 ATR 振幅而两头虚报不切实际的极端价格。\n"
+        "4. 本地引擎事实为基准硬约束：本地引擎已基于微观形态、衰减速度及概率桶计算好基准，LLM 仅在宏观/突发事件明确时适度校准，禁止盲目偏离。\n\n"
+        "任务目标：推测全日实际最高价与最低价、极值最可能出现的【精准时间节点/窗口】、核心驱动催化剂及操作演变路径。\n\n"
         "输出规范：\n"
         "必须且仅输出单行合法 JSON 对象，严禁 Markdown 代码块、严禁包含思考过程与列表。字段定义：\n"
         "{\n"
-        "  \"pred_high\": number, // 预期全日最高价。必须 >= 已出现今高；若判断高点在前期已成立，则等于今高\n"
-        "  \"pred_low\": number,  // 预期全日最低价。必须 <= 已出现今低；若判断低点在前期已成立，则等于今低\n"
-        "  \"pred_high_time_window\": string, // 预期高点时间窗口，例如 \"20:30-22:30(美盘数据期)\" 或 \"已于02:00确立\"\n"
-        "  \"pred_low_time_window\": string,  // 预期低点时间窗口，例如 \"15:00-16:30(欧盘探底)\" 或 \"已于03:11确立\"\n"
-        "  \"daily_path_scenario\": string,   // 20-35字全日路径预演，例如 \"亚盘窄幅盘整 -> 欧盘探底回升 -> 美盘借助初请数据冲高\"\n"
-        "  \"key_catalyst\": string,          // 核心驱动催化剂，例如 \"美初请失业金数据与美债收益率走势\"\n"
+        "  \"pred_high\": number, // 预期全日最高价。必须 >= 已出现今高；若判断高点已确立，则略高于或等于今高\n"
+        "  \"pred_low\": number,  // 预期全日最低价。必须 <= 已出现今低；若判断低点已确立，则略低于或等于今低\n"
+        "  \"pred_high_time_window\": string, // 预期高点时段(格式\"HH:mm-HH:mm\"或\"已于HH:mm确立\")\n"
+        "  \"pred_low_time_window\": string,  // 预期低点时段(格式\"HH:mm-HH:mm\"或\"已于HH:mm确立\")\n"
+        "  \"daily_path_scenario\": string,   // 25-40字全日实战演变与盈利防守指引\n"
+        "  \"key_catalyst\": string,          // 核心驱动催化剂\n"
         "  \"bias\": string,                  // \"偏多\" | \"偏空\" | \"震荡\"\n"
-        "  \"brief\": string,                 // 35字内核心简评\n"
+        "  \"brief\": string,                 // 35字内实战要点(强调盈利与防守)\n"
         "  \"confidence\": number             // 0.0 到 1.0 置信度\n"
         "}\n"
         "【时间规范 - 极高优先级】：\n"
-        "1. 所有时间点与时间窗口必须且只能采用严格的 24 小时制（HH:mm 格式，例如 \"20:30-22:30(美盘数据期)\"、\"15:00-16:30(欧盘探底)\"、\"已于02:15确立\"）；\n"
-        "2. 严禁使用 12 小时制、严禁出现 AM / PM、严禁出现「下午 2:00」「晚上 8:30」等非 24 小时制字眼；\n"
-        "3. 小时数必须为两位数（如 09:00 严禁写为 9:00）。\n"
-        "约束：预期全日总振幅（pred_high - pred_low）建议紧密锚定 10日ATR（约0.7~1.5倍 ATR）。非投资建议。");
+        "1. 所有时间必须采用严格的 24 小时制两位数格式（HH:mm 格式，如 \"09:00-10:00\"、\"20:30-22:30\" 或 \"已于09:08确立\"）；\n"
+        "2. 严禁使用 12 小时制、严禁出现 AM / PM、严禁出现「下午」「晚上」等非 24 小时制字眼；小时数必须为两位数。");
 
     // 本地引擎事实（硬约束，注入 LLM）
     QString localEngineBlock = QStringLiteral("（本地引擎暂无有效结果）");
@@ -187,22 +181,34 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
                             .arg(trn.rsi14, 0, 'f', 1);
         }
         if (fr.valid) {
+            QString alertNote;
+            if (fr.highAlreadyInProb >= 0.70) {
+                alertNote = QStringLiteral("\n【重点警示】：本地引擎检测到高点大概率已在盘中确立（已现概率约 %1%，时段: %2），剩余上行空间极小，切勿大幅虚高预测误导追高！")
+                                .arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0)
+                                .arg(QString::fromStdString(fr.predHighTimeWindow));
+            } else if (fr.lowAlreadyInProb >= 0.70) {
+                alertNote = QStringLiteral("\n【重点警示】：本地引擎检测到低点大概率已探明企稳（已现概率约 %1%，时段: %2），支撑有效。")
+                                .arg(fr.lowAlreadyInProb * 100.0, 0, 'f', 0)
+                                .arg(QString::fromStdString(fr.predLowTimeWindow));
+            }
+
             localEngineBlock = QStringLiteral(
                 "本地预测高=%1 本地预测低=%2\n"
                 "高点时段=%3 (概率约%4%)\n"
                 "低点时段=%5\n"
-                "高点已现概率约%6% 剩余上行约%7\n"
-                "情景=%8\n"
-                "多日趋势=%9\n"
-                "请在本地预测基础上微调，勿大幅偏离。")
+                "高点已现概率约%6% 低点已现概率约%7% 剩余上行约%8\n"
+                "情景=%9\n"
+                "多日趋势=%10%11\n"
+                "请在本地预测基准上微调，切勿大幅脱离事实。")
                 .arg(fr.predHigh, 0, 'f', 2)
                 .arg(fr.predLow, 0, 'f', 2)
                 .arg(QString::fromStdString(fr.predHighTimeWindow))
                 .arg(fr.peakWindowProb * 100.0, 0, 'f', 0)
                 .arg(QString::fromStdString(fr.predLowTimeWindow))
                 .arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0)
+                .arg(fr.lowAlreadyInProb * 100.0, 0, 'f', 0)
                 .arg(fr.remainingUpside, 0, 'f', 2)
-                .arg(QString::fromStdString(fr.scenario), multi);
+                .arg(QString::fromStdString(fr.scenario), multi, alertNote);
         }
     }
 
@@ -556,14 +562,38 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
                 pts.push_back(ip);
             }
             const QTime nowT = QTime::currentTime();
-            double dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+            double dayFrac = 0.5;
+            if (m_currentSource == QStringLiteral("gj") || m_currentSource == QStringLiteral("xau"))
+                dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+            else {
+                const int startM = 9 * 60, endM = 23 * 60 + 30;
+                const int nowM = nowT.hour() * 60 + nowT.minute();
+                if (nowM <= startM) dayFrac = 0.05;
+                else if (nowM >= endM) dayFrac = 0.95;
+                else dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
+            }
             const double atr = ExtremeDatabase::instance().computeAtr(10, m_currentSource);
             const double prev = ExtremeDatabase::instance().previousClose(m_currentSource);
             const auto fr = goldsdk::ForecastEngine::dayRange(pts, actH, actL, dayFrac, atr, prev);
             if (fr.valid) {
                 m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
+                m_lastResult.lowAlreadyInProb = fr.lowAlreadyInProb;
                 m_lastResult.remainingUpside = fr.remainingUpside;
                 m_lastResult.peakWindowProb = fr.peakWindowProb;
+
+                // 实战硬约束：若本地检测到高点大概率已在盘明确立，而 LLM 仍严重虚高，平滑校准至本地硬约束
+                if (fr.highAlreadyInProb >= 0.70 && predHigh > fr.predHigh + 0.5) {
+                    Logger::info(QStringLiteral("ForecastService: highAlreadyInProb=%1, clamping LLM predHigh %2 to %3")
+                                     .arg(fr.highAlreadyInProb, 0, 'f', 2)
+                                     .arg(predHigh, 0, 'f', 2)
+                                     .arg(fr.predHigh, 0, 'f', 2));
+                    predHigh = fr.predHigh;
+                    m_lastResult.predHigh = predHigh;
+                    if (m_lastResult.predHighTimeWindow.contains(QStringLiteral("20:30")) ||
+                        m_lastResult.predHighTimeWindow.contains(QStringLiteral("22:30"))) {
+                        m_lastResult.predHighTimeWindow = QString::fromStdString(fr.predHighTimeWindow);
+                    }
+                }
             }
         }
     }
@@ -678,6 +708,7 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     m_lastResult.brief = m_lastResult.scenario;
     m_lastResult.confidence = fr.confidence > 0.0 ? fr.confidence : 0.65;
     m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
+    m_lastResult.lowAlreadyInProb = fr.lowAlreadyInProb;
     m_lastResult.remainingUpside = fr.remainingUpside;
     m_lastResult.peakWindowProb = fr.peakWindowProb;
     m_lastResult.multiDayBias = multiBias;

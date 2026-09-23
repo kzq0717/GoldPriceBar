@@ -1279,6 +1279,13 @@ void QmlBridge::evaluateDecision(double price) {
             advice = tr("现价已下探至当日推演低点支撑区（%1），风险收益比占优，适合分批买入或定投。预计低点窗口: %2。")
                          .arg(predLow, 0, 'f', 2)
                          .arg(m_predLowTimeWindow.isEmpty() ? tr("时段末") : m_predLowTimeWindow);
+        } else if (m_predHighTimeWindow.contains(QStringLiteral("高点大概率已现")) || m_predHighTimeWindow.contains(QStringLiteral("已确立"))) {
+            level = 4;
+            tag = tr("⚠️ 高点已现·防守保护");
+            color = QStringLiteral("#FAAD14");
+            bg = QStringLiteral("#352814");
+            advice = tr("当日高点阻力大概率已于前期确立（%1），动能衰竭，建议防守保护多头利润，切勿盲目追高！")
+                         .arg(m_predHighTimeWindow);
         } else if (pct20 >= 80 && ma5 > 0.0 && price > ma5) {
             level = 4;
             tag = tr("📈 偏多·谨防追高");

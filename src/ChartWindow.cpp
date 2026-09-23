@@ -1002,7 +1002,9 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
                 dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
         }
     }
-    const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac);
+    const double atr = ExtremeDatabase::instance().computeAtr(10, currentTypeCode());
+    const double prevClose = ExtremeDatabase::instance().previousClose(currentTypeCode());
+    const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac, atr, prevClose);
     if (!fr.valid)
         return false;
     outPredHigh = fr.predHigh;
@@ -1212,13 +1214,12 @@ void ChartWindow::onForecastServiceUpdated(const ForecastResult& res)
     }
     if (m_sideTrendLabel) {
         QString trend = res.multiDayBias.isEmpty() ? res.bias : res.multiDayBias;
-        if (res.peakWindowProb > 0.0) {
-            trend += QStringLiteral(" · 高点%1%")
-                         .arg(res.peakWindowProb * 100.0, 0, 'f', 0);
-        }
-        if (res.highAlreadyInProb > 0.0) {
-            trend += QStringLiteral(" · 已现%1%")
-                         .arg(res.highAlreadyInProb * 100.0, 0, 'f', 0);
+        if (res.highAlreadyInProb >= 0.70) {
+            trend += QStringLiteral(" · 高点已现%1%").arg(res.highAlreadyInProb * 100.0, 0, 'f', 0);
+        } else if (res.lowAlreadyInProb >= 0.70) {
+            trend += QStringLiteral(" · 低点企稳%1%").arg(res.lowAlreadyInProb * 100.0, 0, 'f', 0);
+        } else if (res.peakWindowProb > 0.0) {
+            trend += QStringLiteral(" · 冲高%1%").arg(res.peakWindowProb * 100.0, 0, 'f', 0);
         }
         m_sideTrendLabel->setText(trend);
         m_sideTrendLabel->setToolTip(

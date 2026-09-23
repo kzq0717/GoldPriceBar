@@ -25,8 +25,10 @@ namespace {
 
 int minuteOfDayFromEpochMs(std::int64_t epochMs)
 {
+    // epochMs 是 UTC 毫秒时间戳。中国标准时间 (CST) 为 UTC+8。
+    const std::int64_t cstOffsetMs = 8LL * 3600 * 1000;
     const std::int64_t dayMs = 24LL * 3600 * 1000;
-    std::int64_t mod = epochMs % dayMs;
+    std::int64_t mod = (epochMs + cstOffsetMs) % dayMs;
     if (mod < 0)
         mod += dayMs;
     return static_cast<int>(mod / 60000);
@@ -34,8 +36,8 @@ int minuteOfDayFromEpochMs(std::int64_t epochMs)
 
 std::string formatWindow(int startMin, int endMin, const char* tag)
 {
-    const int sh = startMin / 60, sm = startMin % 60;
-    const int eh = endMin / 60, em = endMin % 60;
+    const int sh = (startMin / 60) % 24, sm = startMin % 60;
+    const int eh = (endMin / 60) % 24, em = endMin % 60;
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%02d:%02d - %02d:%02d (%s)", sh, sm, eh, em, tag);
     return std::string(buf);
@@ -44,10 +46,26 @@ std::string formatWindow(int startMin, int endMin, const char* tag)
 std::vector<double> priorPeakWeights()
 {
     std::vector<double> w(48, 0.5);
-    for (int i = 18; i < 30; ++i) w[static_cast<size_t>(i)] = 0.6;  // 09-15 低
-    for (int i = 30; i < 40; ++i) w[static_cast<size_t>(i)] = 1.2;  // 15-20 中
-    for (int i = 40; i < 48; ++i) w[static_cast<size_t>(i)] = 2.0;  // 20-24 高
-    for (int i = 0; i < 18; ++i)  w[static_cast<size_t>(i)] = 0.8;  // 00-09
+    // 48个半小时桶（按北京时间 CST 分布）：
+    // 00:00 - 02:30 (桶 0..4): 美盘后半程
+    for (int i = 0; i < 5; ++i) w[static_cast<size_t>(i)] = 1.0;
+    // 02:30 - 09:00 (桶 5..17): 隔夜清淡与休市
+    for (int i = 5; i < 18; ++i) w[static_cast<size_t>(i)] = 0.35;
+    // 09:00 - 10:30 (桶 18..20): 国内盘开盘定价期（脉冲极值高发期）
+    for (int i = 18; i < 21; ++i) w[static_cast<size_t>(i)] = 1.8;
+    // 10:30 - 14:00 (桶 21..27): 亚盘午间收敛
+    for (int i = 21; i < 28; ++i) w[static_cast<size_t>(i)] = 0.55;
+    // 14:00 - 15:30 (桶 28..30): 亚盘尾盘与欧盘初动
+    for (int i = 28; i < 31; ++i) w[static_cast<size_t>(i)] = 0.9;
+    // 15:30 - 19:30 (桶 31..38): 欧盘主交易段（国内积存金日间休市）
+    for (int i = 31; i < 39; ++i) w[static_cast<size_t>(i)] = 1.2;
+    // 19:30 - 20:30 (桶 39..40): 国内夜盘开盘前夕与初开
+    for (int i = 39; i < 41; ++i) w[static_cast<size_t>(i)] = 1.4;
+    // 20:30 - 23:00 (桶 41..45): 美盘核心博弈与重磅数据发布（全球最大波动）
+    for (int i = 41; i < 46; ++i) w[static_cast<size_t>(i)] = 2.2;
+    // 23:00 - 24:00 (桶 46..47): 美盘主浪延续
+    for (int i = 46; i < 48; ++i) w[static_cast<size_t>(i)] = 1.3;
+
     double s = std::accumulate(w.begin(), w.end(), 0.0);
     if (s > 0) {
         for (double& v : w) v /= s;
@@ -209,26 +227,78 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
         }
     }
 
-    double predHigh = std::max(actHigh, lastPrice) + up;
-    double predLow = std::min(actLow, lastPrice) - down;
-    const double minGap = std::max(lastPrice * 0.0008, 0.12);
-    predHigh = std::max(predHigh, actHigh + minGap * 0.25);
-    predLow = std::min(predLow, actLow - minGap * 0.25);
-
-    // 峰值时间概率
+    // 峰值与谷值特征分析（按 CST 时间桶）
     int peakMin = minuteOfDayFromEpochMs(points.front().epochMs);
     double peakPx = points.front().price;
-    for (const auto& p : points) {
-        if (p.price >= peakPx) {
-            peakPx = p.price;
-            peakMin = minuteOfDayFromEpochMs(p.epochMs);
+    int peakIndex = 0;
+
+    int troughMin = minuteOfDayFromEpochMs(points.front().epochMs);
+    double troughPx = points.front().price;
+    int troughIndex = 0;
+
+    for (size_t i = 0; i < points.size(); ++i) {
+        if (points[i].price >= peakPx) {
+            peakPx = points[i].price;
+            peakMin = minuteOfDayFromEpochMs(points[i].epochMs);
+            peakIndex = static_cast<int>(i);
+        }
+        if (points[i].price <= troughPx) {
+            troughPx = points[i].price;
+            troughMin = minuteOfDayFromEpochMs(points[i].epochMs);
+            troughIndex = static_cast<int>(i);
         }
     }
+
     const int curMin = minuteOfDayFromEpochMs(points.back().epochMs);
     const int curBucket = std::clamp(curMin / 30, 0, 47);
     const int peakBucket = std::clamp(peakMin / 30, 0, 47);
+    const int troughBucket = std::clamp(troughMin / 30, 0, 47);
     const bool highInPast = peakBucket < curBucket;
+    const bool lowInPast = troughBucket < curBucket;
 
+    // 峰值衰减特征（多长时间未破高？从今高回落了多少？）
+    const int64_t timeSincePeakMs = points.back().epochMs - points[static_cast<size_t>(peakIndex)].epochMs;
+    const double timeSincePeakMins = std::max(0.0, static_cast<double>(timeSincePeakMs) / 60000.0);
+    const double pullback = std::max(0.0, peakPx - lastPrice);
+    const double pullbackAtrRatio = (atr > 0.0) ? (pullback / atr) : (pullback / std::max(0.1, peakPx * 0.005));
+
+    // 谷值反弹特征（多长时间未破低？从今低反弹了多少？）
+    const int64_t timeSinceTroughMs = points.back().epochMs - points[static_cast<size_t>(troughIndex)].epochMs;
+    const double timeSinceTroughMins = std::max(0.0, static_cast<double>(timeSinceTroughMs) / 60000.0);
+    const double rebound = std::max(0.0, lastPrice - troughPx);
+    const double reboundAtrRatio = (atr > 0.0) ? (rebound / atr) : (rebound / std::max(0.1, troughPx * 0.005));
+
+    // 动态评估高点是否已确立（以实战盈利防追高为主）：
+    // 若早盘冲高后较长时间无法突破，且价格从高位回撤显著，高点确立概率急剧上升
+    double hip = 0.15 + dayFraction * 0.35;
+    if (highInPast) {
+        hip += 0.15;
+        if (timeSincePeakMins >= 30.0) hip += 0.10;
+        if (timeSincePeakMins >= 60.0) hip += 0.12;
+        if (timeSincePeakMins >= 120.0) hip += 0.10;
+
+        if (pullbackAtrRatio >= 0.15) hip += 0.12;
+        if (pullbackAtrRatio >= 0.28) hip += 0.15;
+    } else {
+        // 当前正贴近或处于日内最高点，正在冲高
+        hip = std::min(hip, 0.30);
+    }
+    out.highAlreadyInProb = std::clamp(hip, 0.05, 0.95);
+
+    // 动态评估低点是否已确立（顺势防守与支撑验证）：
+    double lip = 0.15 + dayFraction * 0.35;
+    if (lowInPast) {
+        lip += 0.15;
+        if (timeSinceTroughMins >= 30.0) lip += 0.10;
+        if (timeSinceTroughMins >= 60.0) lip += 0.12;
+        if (reboundAtrRatio >= 0.15) lip += 0.12;
+        if (reboundAtrRatio >= 0.28) lip += 0.15;
+    } else {
+        lip = std::min(lip, 0.30);
+    }
+    out.lowAlreadyInProb = std::clamp(lip, 0.05, 0.95);
+
+    // 贝叶斯混合时间概率与归一化
     auto probs = blendPeakProbs(historicalPeakBucketCounts);
     redistributePastBuckets(probs, curBucket, highInPast);
 
@@ -247,46 +317,80 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     out.peakBuckets.assign(buckets.begin(), buckets.begin() + std::min<size_t>(6, buckets.size()));
     if (!out.peakBuckets.empty()) {
         out.peakWindowProb = out.peakBuckets.front().probability;
+    }
+
+    // 高低点时间窗口输出（严格 24 小时制）
+    if (out.highAlreadyInProb >= 0.70) {
+        out.predHighTimeWindow = formatWindow((peakMin / 30) * 30,
+                                              ((peakMin / 30) + 1) * 30,
+                                              "高点大概率已现");
+    } else if (!out.peakBuckets.empty()) {
         out.predHighTimeWindow = formatWindow(out.peakBuckets.front().startMinute,
                                               out.peakBuckets.front().endMinute,
                                               "高点高概率");
-    }
-
-    // 低点窗口：用对称启发式（先验中偏低活跃时段）
-    if (dayFraction < 0.45) {
-        out.predLowTimeWindow = "10:30 - 14:00 (亚盘/午间)";
-    } else if (dayFraction < 0.70) {
-        out.predLowTimeWindow = "16:00 - 17:30 (欧盘二次下探)";
     } else {
-        out.predLowTimeWindow = "20:30 - 21:30 (数据发布下影)";
+        out.predHighTimeWindow = "20:30 - 22:30 (美盘主浪)";
     }
 
-    double hip = dayFraction * 0.50;
-    if (highInPast)
-        hip += 0.25;
-    if (peakBucket < curBucket - 1)
-        hip += 0.10;
-    out.highAlreadyInProb = std::clamp(hip, 0.05, 0.95);
-    out.remainingUpside = std::max(0.0, predHigh - std::max(actHigh, lastPrice));
+    if (out.lowAlreadyInProb >= 0.70) {
+        out.predLowTimeWindow = formatWindow((troughMin / 30) * 30,
+                                             ((troughMin / 30) + 1) * 30,
+                                             "已探底确立");
+    } else {
+        if (curBucket < 28) {
+            out.predLowTimeWindow = "15:00 - 16:30 (欧盘初探底)";
+        } else if (curBucket < 40) {
+            out.predLowTimeWindow = "20:30 - 21:30 (美盘洗盘探底)";
+        } else {
+            out.predLowTimeWindow = "22:30 - 24:00 (美盘后程支撑)";
+        }
+    }
 
+    // 计算预测价格（实战盈利导向：严禁虚高诱导追高）
+    const double minGap = std::max(lastPrice * 0.0008, 0.12);
+    double predHigh = 0.0;
+    double predLow = 0.0;
+
+    if (out.highAlreadyInProb >= 0.70) {
+        // 高点大概率已现：预测高锁定在已出现今高微幅扰动处
+        predHigh = std::max(actHigh, lastPrice) + minGap * 0.20;
+    } else {
+        // 仍有可能冲高：根据已现概率削减盲目上行预算
+        const double upFactor = std::clamp(1.0 - (out.highAlreadyInProb - 0.15) / 0.55, 0.20, 1.0);
+        predHigh = std::max(actHigh, lastPrice) + up * upFactor;
+        predHigh = std::max(predHigh, actHigh + minGap * 0.25);
+    }
+    out.remainingUpside = std::max(0.0, predHigh - lastPrice);
+
+    if (out.lowAlreadyInProb >= 0.70) {
+        predLow = std::min(actLow, lastPrice) - minGap * 0.20;
+    } else {
+        const double downFactor = std::clamp(1.0 - (out.lowAlreadyInProb - 0.15) / 0.55, 0.20, 1.0);
+        predLow = std::min(actLow, lastPrice) - down * downFactor;
+        predLow = std::min(predLow, actLow - minGap * 0.25);
+    }
+
+    // 情景与催化剂演变（以盈利与防守指引为主）
     if (out.highAlreadyInProb >= 0.75) {
-        out.scenario = "高点或已在盘中出现，剩余时段以防守与锁定利润为主";
-        out.keyCatalyst = "已实现高点 + 时间衰减";
+        out.scenario = "日内高点大概率已在前期确立，反弹动能衰退，严禁追高，建议逢高止盈或防守保护多头利润";
+        out.keyCatalyst = "脉冲见顶 + 动量衰竭";
         out.confidence = out.highAlreadyInProb;
-        // 高点已现：预测高贴近今高
-        predHigh = std::max(actHigh, lastPrice) + minGap * 0.15;
+    } else if (out.lowAlreadyInProb >= 0.75 && dayFraction < 0.80) {
+        out.scenario = "日内探底企稳，关键支撑有效，可顺多头趋势逢低关注低吸";
+        out.keyCatalyst = "探底回升 + 支撑确认";
+        out.confidence = out.lowAlreadyInProb;
     } else if (out.peakWindowProb >= 0.10 && dayFraction < 0.85) {
-        out.scenario = "仍处冲高窗口，关注高概率时段放量突破";
+        out.scenario = "仍处潜在冲高窗口，若放量突破今高可顺势关注高概率时段";
         out.keyCatalyst = "欧美盘交叠资金 + 宏观数据";
         out.confidence = std::min(0.85, 0.35 + out.peakWindowProb + remain * 0.25);
     } else if (dayFraction >= 0.85) {
-        out.scenario = "尾盘收敛，波动收窄，避免追高";
+        out.scenario = "尾盘收敛，全日振幅大体确立，避免盲目追单";
         out.keyCatalyst = "隔夜头寸了结";
-        out.confidence = 0.45 + out.highAlreadyInProb * 0.25;
+        out.confidence = 0.50 + out.highAlreadyInProb * 0.25;
     } else {
-        out.scenario = "区间震荡蓄势，欧/美盘或给出方向";
+        out.scenario = "区间震荡蓄势，等待欧/美盘关键时段指引";
         out.keyCatalyst = "关键支撑阻力与时段切换";
-        out.confidence = 0.42;
+        out.confidence = 0.45;
     }
 
     out.predHigh = predHigh;
