@@ -273,12 +273,12 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     double hip = 0.15 + dayFraction * 0.35;
     if (highInPast) {
         hip += 0.15;
-        if (timeSincePeakMins >= 30.0) hip += 0.10;
-        if (timeSincePeakMins >= 60.0) hip += 0.12;
-        if (timeSincePeakMins >= 120.0) hip += 0.10;
+        if (timeSincePeakMins >= 30.0) hip += 0.08;
+        if (timeSincePeakMins >= 60.0) hip += 0.10;
+        if (timeSincePeakMins >= 120.0) hip += 0.12;
 
-        if (pullbackAtrRatio >= 0.15) hip += 0.12;
-        if (pullbackAtrRatio >= 0.28) hip += 0.15;
+        if ((pullback / rangeSoFar >= 0.20) || (pullbackAtrRatio >= 0.08)) hip += 0.10;
+        if ((pullback / rangeSoFar >= 0.35) || (pullbackAtrRatio >= 0.15)) hip += 0.12;
     } else {
         // 当前正贴近或处于日内最高点，正在冲高
         hip = std::min(hip, 0.30);
@@ -289,10 +289,11 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     double lip = 0.15 + dayFraction * 0.35;
     if (lowInPast) {
         lip += 0.15;
-        if (timeSinceTroughMins >= 30.0) lip += 0.10;
-        if (timeSinceTroughMins >= 60.0) lip += 0.12;
-        if (reboundAtrRatio >= 0.15) lip += 0.12;
-        if (reboundAtrRatio >= 0.28) lip += 0.15;
+        if (timeSinceTroughMins >= 30.0) lip += 0.08;
+        if (timeSinceTroughMins >= 60.0) lip += 0.10;
+        if (timeSinceTroughMins >= 120.0) lip += 0.12;
+        if ((rebound / rangeSoFar >= 0.20) || (reboundAtrRatio >= 0.08)) lip += 0.10;
+        if ((rebound / rangeSoFar >= 0.35) || (reboundAtrRatio >= 0.15)) lip += 0.12;
     } else {
         lip = std::min(lip, 0.30);
     }
@@ -320,7 +321,7 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     }
 
     // 高低点时间窗口输出（严格 24 小时制）
-    if (out.highAlreadyInProb >= 0.70) {
+    if (out.highAlreadyInProb >= 0.65) {
         out.predHighTimeWindow = formatWindow((peakMin / 30) * 30,
                                               ((peakMin / 30) + 1) * 30,
                                               "高点大概率已现");
@@ -332,7 +333,7 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
         out.predHighTimeWindow = "20:30 - 22:30 (美盘主浪)";
     }
 
-    if (out.lowAlreadyInProb >= 0.70) {
+    if (out.lowAlreadyInProb >= 0.65) {
         out.predLowTimeWindow = formatWindow((troughMin / 30) * 30,
                                              ((troughMin / 30) + 1) * 30,
                                              "已探底确立");
@@ -351,27 +352,27 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     double predHigh = 0.0;
     double predLow = 0.0;
 
-    if (out.highAlreadyInProb >= 0.70) {
+    if (out.highAlreadyInProb >= 0.65) {
         // 高点大概率已现：预测高锁定在已出现今高微幅扰动处
         predHigh = std::max(actHigh, lastPrice) + minGap * 0.20;
     } else {
         // 仍有可能冲高：根据已现概率削减盲目上行预算
-        const double upFactor = std::clamp(1.0 - (out.highAlreadyInProb - 0.15) / 0.55, 0.20, 1.0);
+        const double upFactor = std::clamp(1.0 - (out.highAlreadyInProb - 0.15) / 0.50, 0.10, 1.0);
         predHigh = std::max(actHigh, lastPrice) + up * upFactor;
         predHigh = std::max(predHigh, actHigh + minGap * 0.25);
     }
     out.remainingUpside = std::max(0.0, predHigh - lastPrice);
 
-    if (out.lowAlreadyInProb >= 0.70) {
+    if (out.lowAlreadyInProb >= 0.65) {
         predLow = std::min(actLow, lastPrice) - minGap * 0.20;
     } else {
-        const double downFactor = std::clamp(1.0 - (out.lowAlreadyInProb - 0.15) / 0.55, 0.20, 1.0);
+        const double downFactor = std::clamp(1.0 - (out.lowAlreadyInProb - 0.15) / 0.50, 0.10, 1.0);
         predLow = std::min(actLow, lastPrice) - down * downFactor;
         predLow = std::min(predLow, actLow - minGap * 0.25);
     }
 
     // 情景与催化剂演变（以盈利与防守指引为主）
-    if (out.highAlreadyInProb >= 0.75) {
+    if (out.highAlreadyInProb >= 0.65) {
         out.scenario = "日内高点大概率已在前期确立，反弹动能衰退，严禁追高，建议逢高止盈或防守保护多头利润";
         out.keyCatalyst = "脉冲见顶 + 动量衰竭";
         out.confidence = out.highAlreadyInProb;

@@ -182,11 +182,11 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         }
         if (fr.valid) {
             QString alertNote;
-            if (fr.highAlreadyInProb >= 0.70) {
+            if (fr.highAlreadyInProb >= 0.65) {
                 alertNote = QStringLiteral("\n【重点警示】：本地引擎检测到高点大概率已在盘中确立（已现概率约 %1%，时段: %2），剩余上行空间极小，切勿大幅虚高预测误导追高！")
                                 .arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0)
                                 .arg(QString::fromStdString(fr.predHighTimeWindow));
-            } else if (fr.lowAlreadyInProb >= 0.70) {
+            } else if (fr.lowAlreadyInProb >= 0.65) {
                 alertNote = QStringLiteral("\n【重点警示】：本地引擎检测到低点大概率已探明企稳（已现概率约 %1%，时段: %2），支撑有效。")
                                 .arg(fr.lowAlreadyInProb * 100.0, 0, 'f', 0)
                                 .arg(QString::fromStdString(fr.predLowTimeWindow));
@@ -582,7 +582,7 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
                 m_lastResult.peakWindowProb = fr.peakWindowProb;
 
                 // 实战硬约束：若本地检测到高点大概率已在盘明确立，而 LLM 仍严重虚高，平滑校准至本地硬约束
-                if (fr.highAlreadyInProb >= 0.70 && predHigh > fr.predHigh + 0.5) {
+                if (fr.highAlreadyInProb >= 0.65 && predHigh > fr.predHigh + 0.5) {
                     Logger::info(QStringLiteral("ForecastService: highAlreadyInProb=%1, clamping LLM predHigh %2 to %3")
                                      .arg(fr.highAlreadyInProb, 0, 'f', 2)
                                      .arg(predHigh, 0, 'f', 2)
@@ -633,6 +633,8 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     pts.reserve(ptsSamples.size());
     for (const auto& p : ptsSamples) {
         pts.push_back({p.first.toMSecsSinceEpoch(), p.second});
+        if (actH <= 0.0 || p.second > actH) actH = p.second;
+        if (actL <= 0.0 || p.second < actL) actL = p.second;
     }
 
     double curPrice = 0.0;

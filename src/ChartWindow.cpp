@@ -1214,9 +1214,9 @@ void ChartWindow::onForecastServiceUpdated(const ForecastResult& res)
     }
     if (m_sideTrendLabel) {
         QString trend = res.multiDayBias.isEmpty() ? res.bias : res.multiDayBias;
-        if (res.highAlreadyInProb >= 0.70) {
+        if (res.highAlreadyInProb >= 0.65) {
             trend += QStringLiteral(" · 高点已现%1%").arg(res.highAlreadyInProb * 100.0, 0, 'f', 0);
-        } else if (res.lowAlreadyInProb >= 0.70) {
+        } else if (res.lowAlreadyInProb >= 0.65) {
             trend += QStringLiteral(" · 低点企稳%1%").arg(res.lowAlreadyInProb * 100.0, 0, 'f', 0);
         } else if (res.peakWindowProb > 0.0) {
             trend += QStringLiteral(" · 冲高%1%").arg(res.peakWindowProb * 100.0, 0, 'f', 0);
