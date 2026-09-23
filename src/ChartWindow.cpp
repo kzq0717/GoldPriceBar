@@ -405,6 +405,33 @@ void ChartWindow::setupChart() {
   tb->addWidget(vdiv1);
   tb->addWidget(maHint);
   tb->addLayout(maGroup);
+
+  auto *vdiv2 = new QFrame(m_toolbar);
+  vdiv2->setFrameShape(QFrame::VLine);
+  vdiv2->setStyleSheet("color:#2a3347;max-width:1px;background:#2a3347;");
+  tb->addWidget(vdiv2);
+
+  m_tbFeeLabel = new QLabel(m_toolbar);
+  m_tbFeeLabel->setObjectName(QStringLiteral("tbFeeLabel"));
+  m_tbFeeLabel->setStyleSheet(
+      "QLabel#tbFeeLabel{"
+      "  background:#201a11;"
+      "  color:#ffd591;"
+      "  border:1px solid #874d00;"
+      "  border-radius:8px;"
+      "  padding:4px 10px;"
+      "  font-size:12px;"
+      "  font-weight:600;"
+      "}"
+      "QLabel#tbFeeLabel:hover{"
+      "  background:#2b2114;"
+      "  border-color:#d48806;"
+      "  color:#ffe58f;"
+      "}");
+  m_tbFeeLabel->setCursor(Qt::PointingHandCursor);
+  m_tbFeeLabel->setText(tr("💰 浙商卖出手续费: -- 元/g (0.4%)"));
+  tb->addWidget(m_tbFeeLabel);
+
   tb->addStretch(1);
   tb->addWidget(m_exportCsvBtn);
 
@@ -514,6 +541,19 @@ void ChartWindow::setupChart() {
   curRow->addWidget(curTitle);
   curRow->addWidget(m_sideCurrentLabel);
   sideLay->addLayout(curRow);
+
+  m_sideFeeLabel = new QLabel(m_sidePanel);
+  m_sideFeeLabel->setObjectName(QStringLiteral("sideFeeLabel"));
+  m_sideFeeLabel->setStyleSheet(
+      "QLabel#sideFeeLabel{"
+      "  color:#faad14;font-size:11px;font-weight:500;"
+      "  background:#1a1712;border:1px solid #433010;border-radius:6px;"
+      "  padding:2px 6px;margin:1px 0px 3px 0px;"
+      "}");
+  m_sideFeeLabel->setAlignment(Qt::AlignCenter);
+  m_sideFeeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  m_sideFeeLabel->setText(tr("卖出手续费: --/g (0.4%)"));
+  sideLay->addWidget(m_sideFeeLabel);
 
   auto *hlRow = new QHBoxLayout();
   hlRow->setSpacing(0);
@@ -707,6 +747,7 @@ void ChartWindow::setupChart() {
   body->setStretch(1, 0);
   root->addLayout(body, 1);
   applyChartTheme();
+  updateFeeDisplay(0.0);
 }
 
 
@@ -872,6 +913,7 @@ void ChartWindow::onPulseTick()
 void ChartWindow::showEvent(QShowEvent *event) {
   reloadForecastHistory();
   ForecastTracker::instance().loadFromDatabase(currentTypeCode());
+  updateFeeDisplay(m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second);
 
   QWidget::showEvent(event);
   fetchChartFromApi();
@@ -1131,6 +1173,69 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
   // 预测变化时同步刷新图表标题（今高/今低 + 预测高/低）
   if (isIntradayMode())
     refreshIntradayTitle();
+
+  updateFeeDisplay(current);
+}
+
+void ChartWindow::updateFeeDisplay(double currentPrice)
+{
+  const QString code = currentTypeCode();
+  const bool isZs = (code == QStringLiteral("zs"));
+  const double feeRate = AppSettings::instance().feeRate();
+  const double feePct = feeRate * 100.0;
+
+  if (!isZs) {
+    if (m_tbFeeLabel) m_tbFeeLabel->setVisible(false);
+    if (m_sideFeeLabel) m_sideFeeLabel->setVisible(false);
+    return;
+  }
+
+  if (currentPrice <= 0.0 && !m_plotPoints.isEmpty()) {
+    currentPrice = m_plotPoints.last().second;
+  }
+
+  if (currentPrice <= 0.0) {
+    if (m_tbFeeLabel) {
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(tr("💰 浙商卖出手续费: -- 元/g (%1%)").arg(feePct, 0, 'f', 1));
+    }
+    if (m_sideFeeLabel) {
+      m_sideFeeLabel->setVisible(true);
+      m_sideFeeLabel->setText(tr("卖出手续费: --/g (%1%)").arg(feePct, 0, 'f', 1));
+    }
+    return;
+  }
+
+  const double fee = currentPrice * feeRate;
+  const double net = currentPrice - fee;
+
+  const QString tip = tr("【浙商银行·积存金交易费率参考】\n"
+                         "当前现价: %1 元/g\n"
+                         "卖出手续费率: %2%\n"
+                         "当前卖出手续费: %3 元/g\n"
+                         "预计到手净价: %4 元/g")
+                          .arg(currentPrice, 0, 'f', 2)
+                          .arg(feePct, 0, 'f', 1)
+                          .arg(fee, 0, 'f', 2)
+                          .arg(net, 0, 'f', 2);
+
+  if (m_tbFeeLabel) {
+    m_tbFeeLabel->setVisible(true);
+    m_tbFeeLabel->setText(tr("💰 浙商卖出手续费: %1元/g (%2%) | 净到手: %3元/g")
+                              .arg(fee, 0, 'f', 2)
+                              .arg(feePct, 0, 'f', 1)
+                              .arg(net, 0, 'f', 2));
+    m_tbFeeLabel->setToolTip(tip);
+  }
+
+  if (m_sideFeeLabel) {
+    m_sideFeeLabel->setVisible(true);
+    m_sideFeeLabel->setText(tr("卖出手续费: %1/g (%2%) · 净得: %3")
+                                .arg(fee, 0, 'f', 2)
+                                .arg(feePct, 0, 'f', 1)
+                                .arg(net, 0, 'f', 2));
+    m_sideFeeLabel->setToolTip(tip);
+  }
 }
 
 void ChartWindow::refreshIntradayTitle()
@@ -1151,12 +1256,21 @@ void ChartWindow::refreshIntradayTitle()
                    .arg(m_lastPredictHigh, 0, 'f', 2)
                    .arg(m_lastPredictLow, 0, 'f', 2);
   }
-  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高: %3 | 今低: %4%5")
+  QString feeText;
+  if (currentTypeCode() == QStringLiteral("zs") && !m_plotPoints.isEmpty()) {
+    const double curPrice = m_plotPoints.last().second;
+    if (curPrice > 0.0) {
+      const double fee = curPrice * AppSettings::instance().feeRate();
+      feeText = tr("  |  手续费: %1/g").arg(fee, 0, 'f', 2);
+    }
+  }
+  m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高: %3 | 今低: %4%5%6")
                         .arg(typeName)
                         .arg(n)
                         .arg(high, 0, 'f', 2)
                         .arg(low, 0, 'f', 2)
-                        .arg(predText));
+                        .arg(predText)
+                        .arg(feeText));
 }
 
 void ChartWindow::applyLocalForecastLines(double predHigh, double predLow)

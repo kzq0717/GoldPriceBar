@@ -1315,20 +1315,30 @@ void QmlBridge::evaluateDecision(double price) {
                                 .arg(pct20, 0, 'f', 0);
     m_decisionSessionText = TradingSession::statusText(src, QDateTime::currentDateTime());
 
+    QString feeLine;
+    if (src == QStringLiteral("zs") && price > 0.0) {
+        const double fee = price * AppSettings::instance().feeRate();
+        const double net = price - fee;
+        feeLine = tr("\n• 浙商卖出手续费(0.4%): %1 元/g · 净到手: %2 元/g")
+                      .arg(fee, 0, 'f', 2)
+                      .arg(net, 0, 'f', 2);
+    }
+
     m_decisionTooltip = tr("【💡 实时趋势与交易决策参考】\n"
                            "• 建议：%1\n"
                            "• 当日预测区间：%2\n"
                            "• 预期时间窗口：%3\n"
                            "• 核心推演催化：%4\n"
                            "• 均线与分位：%5\n"
-                           "• 时段状态：%6\n"
+                           "• 时段状态：%6%7\n"
                            "（点击可直接打开分时走势图）")
                             .arg(m_decisionAdvice)
                             .arg(m_decisionRangeText)
                             .arg(m_decisionTimeWindowText)
                             .arg(m_predCatalyst.isEmpty() ? (m_predDailyPath.isEmpty() ? tr("待定") : m_predDailyPath) : m_predCatalyst)
                             .arg(m_decisionMetricsText)
-                            .arg(m_decisionSessionText);
+                            .arg(m_decisionSessionText)
+                            .arg(feeLine);
     emit decisionChanged();
 
     // 当出现重要决策级别 (触及高点/低点/计划价) 时推送托盘通知

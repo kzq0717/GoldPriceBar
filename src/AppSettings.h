@@ -140,6 +140,10 @@ class AppSettings : public QObject {
     double positionCost() const;
     void setPositionCost(double c);
 
+    /** 浙商银行卖出手续费率（默认 0.4%，即 0.004） */
+    double feeRate() const;
+    void setFeeRate(double rate);
+
     /** 溢价监测：主/对照价比值偏离近窗均值超过阈值则提醒（百分比） */
     bool premiumAlertEnabled() const;
     void setPremiumAlertEnabled(bool on);
@@ -215,6 +219,7 @@ class AppSettings : public QObject {
     int m_percentileHigh = 80;
     double m_positionGrams = 0.0;
     double m_positionCost = 0.0;
+    double m_feeRate = 0.004;
     bool m_premiumAlertEnabled = true;
     double m_premiumThresholdPct = 2.0;
     bool m_dailyReportEnabled = true;

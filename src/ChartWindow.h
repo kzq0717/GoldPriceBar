@@ -86,6 +86,7 @@ private:
     void applySidePanelChrome();
     void updateSidePanelValues(double current, double predict, bool hasPredict,
                                double high, double low, const QString& modeTag);
+    void updateFeeDisplay(double currentPrice);
     int nearestPointIndex(qreal xMsecs) const;
     /** 预测当日最高/最低（基于已现高低 + 波动 + 剩余时段） */
     bool computeDayRangeForecast(double& outPredHigh, double& outPredLow) const;
@@ -106,6 +107,7 @@ private:
     QPushButton* m_queryPeriodBtn = nullptr;
 
     QFrame* m_toolbar = nullptr;
+    QLabel* m_tbFeeLabel = nullptr;
     QToolButton* m_maMenuBtn = nullptr;
     QToolButton* m_ma5Btn = nullptr;
     QToolButton* m_ma10Btn = nullptr;
@@ -136,6 +138,7 @@ private:
     QFrame* m_sidePanel = nullptr;
     QFrame* m_sideForecastCard = nullptr;
     QLabel* m_sideCurrentLabel = nullptr;
+    QLabel* m_sideFeeLabel = nullptr;
     QLabel* m_sidePredictLabel = nullptr;
     QLabel* m_sidePredictHighLabel = nullptr;
     QLabel* m_sidePredictLowLabel = nullptr;

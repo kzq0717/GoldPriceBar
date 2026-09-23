@@ -534,6 +534,18 @@ void AppSettings::setPositionCost(double c) {
     }
 }
 
+double AppSettings::feeRate() const {
+    return m_feeRate;
+}
+
+void AppSettings::setFeeRate(double rate) {
+    rate = qMax(0.0, rate);
+    if (!qFuzzyCompare(m_feeRate, rate)) {
+        m_feeRate = rate;
+        emit settingsChanged();
+    }
+}
+
 bool AppSettings::premiumAlertEnabled() const {
     return m_premiumAlertEnabled;
 }
@@ -674,6 +686,7 @@ void AppSettings::load() {
     m_percentileHigh = s.value("percentileHigh", 80).toInt();
     m_positionGrams = s.value("positionGrams", 0.0).toDouble();
     m_positionCost = s.value("positionCost", 0.0).toDouble();
+    m_feeRate = s.value("feeRate", 0.004).toDouble();
     m_premiumAlertEnabled = s.value("premiumAlertEnabled", true).toBool();
     m_premiumThresholdPct = s.value("premiumThresholdPct", 2.0).toDouble();
     m_dailyReportEnabled = s.value("dailyReportEnabled", true).toBool();
@@ -735,6 +748,7 @@ void AppSettings::save() {
     s.setValue("percentileHigh", m_percentileHigh);
     s.setValue("positionGrams", m_positionGrams);
     s.setValue("positionCost", m_positionCost);
+    s.setValue("feeRate", m_feeRate);
     s.setValue("premiumAlertEnabled", m_premiumAlertEnabled);
     s.setValue("premiumThresholdPct", m_premiumThresholdPct);
     s.setValue("dailyReportEnabled", m_dailyReportEnabled);
