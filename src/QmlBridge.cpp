@@ -1285,9 +1285,31 @@ void QmlBridge::evaluateDecision(double price) {
         }
     }
 
-    // 预测高低区间决策
+    // 预测高低区间与经典形态决策融合
     if (level == 1) {
-        if (predHigh > 0.0 && price >= predHigh * 0.9985) {
+        const auto fcRes = ForecastService::instance().lastForecast();
+        const bool hasPattern = fcRes.valid && !fcRes.patternName.isEmpty();
+        const bool patternIsBuy = hasPattern && (fcRes.patternBias == QStringLiteral("看多突破") || fcRes.patternBias == QStringLiteral("强烈看多"));
+        const bool patternIsSell = hasPattern && (fcRes.patternBias == QStringLiteral("看空破位") || fcRes.patternBias == QStringLiteral("强烈看空"));
+
+        // 1. 形态破位优先：若已发生形态/0.618破位，坚决禁止低吸，优先防守减仓
+        if (patternIsSell) {
+            level = 5;
+            tag = tr("⚠️ 形态破位·防守减仓");
+            color = QStringLiteral("#FF7875");
+            bg = QStringLiteral("#3E1C1F");
+            advice = tr("触发【%1】！%2").arg(fcRes.patternName, fcRes.patternStrategy);
+        }
+        // 2. 形态突破/黄金口袋企稳买入优先：顺势多头共振
+        else if (patternIsBuy) {
+            level = 3;
+            tag = tr("🚀 形态突破·顺势买入");
+            color = QStringLiteral("#52C41A");
+            bg = QStringLiteral("#163219");
+            advice = tr("触发【%1】！%2").arg(fcRes.patternName, fcRes.patternStrategy);
+        }
+        // 3. 极值区间推演决策
+        else if (predHigh > 0.0 && price >= predHigh * 0.9985) {
             level = 5;
             tag = tr("🎯 触及高点·分批卖出");
             color = QStringLiteral("#FF7875");

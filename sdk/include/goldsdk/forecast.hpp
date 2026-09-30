@@ -73,7 +73,8 @@ enum class PatternType {
     VReversalTop,           // 脉冲冲高 倒V 型反转（假突破承压跳水）
     ChannelUp,              // 上升通道（顺势向上）
     ChannelDown,            // 下降通道（弱势下行）
-    Broadening              // 扩散喇叭形（情绪分歧加剧，振幅发散）
+    Broadening,             // 扩散喇叭形（情绪分歧加剧，振幅发散）
+    FibonacciGoldenPocket   // 斐波那契黄金口袋回踩（0.5~0.618健康洗盘逢低买入）
 };
 
 struct PatternResult {
@@ -84,7 +85,18 @@ struct PatternResult {
     double resistance = 0.0;   // 上轨 / 颈线阻力位
     double support = 0.0;      // 下轨 / 支撑位
     double breakoutTarget = 0.0; // 突破理论目标位
+    double fib50 = 0.0;        // 斐波那契 0.500 水平位
+    double fib618 = 0.0;       // 斐波那契 0.618 水平位
+    double fibSwingHigh = 0.0; // 主波段波峰
+    double fibSwingLow = 0.0;  // 主波段波谷
     bool valid = false;
+};
+
+struct PatternConfig {
+    double feeRate = 0.004;         // 预估交易费率（默认 0.4% 浙商积存金，gj可为0）
+    double highAlreadyInProb = 0.0; // 日内高点已确立概率 (0~1)
+    double lowAlreadyInProb = 0.0;  // 日内低点已确立概率 (0~1)
+    TrendBias multiDayBias = TrendBias::Range; // 多日中长趋势
 };
 
 /** 本地当日高低预测 + 多日趋势 + 经典形态（无 Qt）。 */
@@ -104,8 +116,9 @@ public:
     /** @param closes 近 20~60 日收盘，旧→新 */
     static MultiDayTrend multiDayTrend(const std::vector<double>& closes);
 
-    /** 识别价格序列中的经典形态（楔形、三角形、双底双顶等） */
-    static PatternResult identifyPattern(const std::vector<IntradayPoint>& points);
+    /** 识别价格序列中的经典形态（楔形、三角形、双底双顶、斐波那契黄金口袋等） */
+    static PatternResult identifyPattern(const std::vector<IntradayPoint>& points,
+                                         const PatternConfig& cfg = PatternConfig{});
 };
 
 } // namespace goldsdk

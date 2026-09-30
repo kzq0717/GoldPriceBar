@@ -74,6 +74,7 @@ private:
     void updateHighLowMarkers();
     void updateForecast();
     void applyLocalForecastLines(double predHigh, double predLow);
+    void applyFibonacciLines(double fib50, double fib618);
     void applyForecastPoints(const QVector<QPair<QDateTime, double>>& forecast, const QString& modeTag);
     void onForecastServiceUpdated(const struct ForecastResult& res);
     void refreshIntradayTitle();
@@ -142,6 +143,8 @@ private:
     QLineSeries* m_yesterdaySeries = nullptr;
     QLineSeries* m_forecastSeries = nullptr;      // 预测最高（水平虚线）
     QLineSeries* m_forecastLowSeries = nullptr;   // 预测最低（水平虚线）
+    QLineSeries* m_fib50Series = nullptr;         // 斐波那契 0.500 回调线
+    QLineSeries* m_fib618Series = nullptr;        // 斐波那契 0.618 黄金口袋线
     QScatterSeries* m_currentSeries = nullptr;
     QScatterSeries* m_highSeries = nullptr;
     QScatterSeries* m_lowSeries = nullptr;

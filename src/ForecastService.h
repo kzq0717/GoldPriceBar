@@ -34,6 +34,8 @@ struct ForecastResult {
     double patternResistance = 0.0;  // 上轨/关键阻力
     double patternSupport = 0.0;     // 下轨/关键支撑
     double patternBreakoutTarget = 0.0; // 突破理论目标位
+    double patternFib50 = 0.0;       // 斐波那契 0.500
+    double patternFib618 = 0.0;      // 斐波那契 0.618 黄金口袋
 };
 
 class ForecastService : public QObject {

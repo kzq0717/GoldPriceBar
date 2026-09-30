@@ -609,7 +609,12 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
             ip.price = pt.second;
             pts.push_back(ip);
         }
-        const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+        goldsdk::PatternConfig pcfg;
+        pcfg.feeRate = (m_currentSource == QStringLiteral("gj") || m_currentSource == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+        pcfg.highAlreadyInProb = m_lastResult.highAlreadyInProb;
+        pcfg.lowAlreadyInProb = m_lastResult.lowAlreadyInProb;
+        pcfg.multiDayBias = trend.valid ? trend.bias : goldsdk::TrendBias::Range;
+        const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
         if (pat.valid) {
             m_lastResult.patternName = QString::fromStdString(pat.name);
             m_lastResult.patternBias = QString::fromStdString(pat.bias);
@@ -617,6 +622,8 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
             m_lastResult.patternResistance = pat.resistance;
             m_lastResult.patternSupport = pat.support;
             m_lastResult.patternBreakoutTarget = pat.breakoutTarget;
+            m_lastResult.patternFib50 = pat.fib50;
+            m_lastResult.patternFib618 = pat.fib618;
         }
     }
     m_lastResult.modeTag = (m_provider == QStringLiteral("gemini") ? tr("Gemini大模型") : tr("Grok大模型"));
@@ -702,6 +709,7 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     // 多日趋势过滤（利于正收益：非多头时不强调冲高）
     QString multiBias = tr("震荡");
     bool allowLong = true;
+    goldsdk::MultiDayTrend trend;
     {
         std::vector<double> closes;
         const QDate to = QDate::currentDate();
@@ -712,7 +720,7 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
             if (r.second > 0.0)
                 closes.push_back(r.second);
         }
-        const auto trend = goldsdk::ForecastEngine::multiDayTrend(closes);
+        trend = goldsdk::ForecastEngine::multiDayTrend(closes);
         if (trend.valid) {
             multiBias = QString::fromUtf8(trend.label());
             allowLong = trend.allowLongBias();
@@ -739,7 +747,12 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     m_lastResult.modeTag = tag;
     m_lastResult.timestamp = QDateTime::currentDateTime();
 
-    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    goldsdk::PatternConfig pcfg;
+    pcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    pcfg.highAlreadyInProb = fr.highAlreadyInProb;
+    pcfg.lowAlreadyInProb = fr.lowAlreadyInProb;
+    pcfg.multiDayBias = trend.valid ? trend.bias : goldsdk::TrendBias::Range;
+    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     if (pat.valid) {
         m_lastResult.patternName = QString::fromStdString(pat.name);
         m_lastResult.patternBias = QString::fromStdString(pat.bias);
@@ -747,6 +760,8 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
         m_lastResult.patternResistance = pat.resistance;
         m_lastResult.patternSupport = pat.support;
         m_lastResult.patternBreakoutTarget = pat.breakoutTarget;
+        m_lastResult.patternFib50 = pat.fib50;
+        m_lastResult.patternFib618 = pat.fib618;
     }
 
     ExtremeDatabase::instance().insertForecastLog(

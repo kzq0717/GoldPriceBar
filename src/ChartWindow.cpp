@@ -170,6 +170,25 @@ void ChartWindow::setupChart() {
   dashLow.setWidth(2);
   m_forecastLowSeries->setPen(dashLow);
 
+  // 斐波那契 0.50 与 0.618 黄金口袋参考线：水平虚线（初始隐藏，检测到主波段时自动激活）
+  m_fib50Series = new QLineSeries(this);
+  m_fib50Series->setName(tr("Fib 0.50 回调位"));
+  m_fib50Series->setPointsVisible(false);
+  m_fib50Series->setVisible(false);
+  QPen fib50Pen(QColor(250, 173, 20));
+  fib50Pen.setStyle(Qt::DashLine);
+  fib50Pen.setWidth(2);
+  m_fib50Series->setPen(fib50Pen);
+
+  m_fib618Series = new QLineSeries(this);
+  m_fib618Series->setName(tr("Fib 0.618 黄金口袋"));
+  m_fib618Series->setPointsVisible(false);
+  m_fib618Series->setVisible(false);
+  QPen fib618Pen(QColor(82, 196, 26));
+  fib618Pen.setStyle(Qt::DashLine);
+  fib618Pen.setWidth(2);
+  m_fib618Series->setPen(fib618Pen);
+
   // 当前点：红色呼吸光点（带高亮白色描边）
   m_currentSeries = new QScatterSeries(this);
   m_currentSeries->setName(tr("当前"));
@@ -196,6 +215,8 @@ void ChartWindow::setupChart() {
   m_chart->addSeries(m_yesterdaySeries);
   m_chart->addSeries(m_forecastSeries);
   m_chart->addSeries(m_forecastLowSeries);
+  m_chart->addSeries(m_fib50Series);
+  m_chart->addSeries(m_fib618Series);
   m_chart->addSeries(m_highSeries);
   m_chart->addSeries(m_lowSeries);
   m_chart->addSeries(m_currentSeries);
@@ -221,7 +242,8 @@ void ChartWindow::setupChart() {
 
   const QList<QAbstractSeries*> seriesList = {
       m_series, m_ma5Series, m_ma10Series, m_ma20Series, m_yesterdaySeries,
-      m_forecastSeries, m_forecastLowSeries, m_currentSeries, m_highSeries, m_lowSeries};
+      m_forecastSeries, m_forecastLowSeries, m_fib50Series, m_fib618Series,
+      m_currentSeries, m_highSeries, m_lowSeries};
   for (QAbstractSeries *s : seriesList) {
     if (!s)
       continue;
@@ -1459,7 +1481,16 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
       ip.price = p.second;
       pts.push_back(ip);
     }
-    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    goldsdk::PatternConfig pcfg;
+    const QString code = currentTypeCode();
+    pcfg.feeRate = (code == QStringLiteral("gj") || code == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    const auto lastFc = ForecastService::instance().lastForecast();
+    if (lastFc.valid) {
+      pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
+      pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+    }
+    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
+    applyFibonacciLines(pat.fib50, pat.fib618);
     if (pat.valid) {
       m_currentPatternText = QString::fromStdString(pat.name);
       if (m_sidePatternLabel) {
@@ -1483,6 +1514,9 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
           } else {
             desc += QStringLiteral("\n[关键阻力: %1 | 关键支撑: %2]").arg(pat.resistance, 0, 'f', 2).arg(pat.support, 0, 'f', 2);
           }
+        }
+        if (pat.fib50 > 0.0 && pat.fib618 > 0.0 && pat.type != goldsdk::PatternType::FibonacciGoldenPocket) {
+          desc += QStringLiteral("\n[黄金口袋参考: Fib 50% %1 | Fib 61.8% %2]").arg(pat.fib50, 0, 'f', 2).arg(pat.fib618, 0, 'f', 2);
         }
 
         const QString code = currentTypeCode();
@@ -1523,6 +1557,8 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
         m_sidePatternStrategyLabel->setToolTip(desc);
       }
     }
+  } else {
+    applyFibonacciLines(0.0, 0.0);
   }
 
   // 预测变化时同步刷新图表标题（今高/今低 + 预测高/低 + 形态）
@@ -1584,7 +1620,14 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
         ip.price = p.second;
         pts.push_back(ip);
       }
-      pat = goldsdk::ForecastEngine::identifyPattern(pts);
+      goldsdk::PatternConfig pcfg;
+      pcfg.feeRate = isZs ? feeRate : 0.0;
+      const auto lastFc = ForecastService::instance().lastForecast();
+      if (lastFc.valid) {
+        pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
+        pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+      }
+      pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     }
 
     // 只有确认向上突破或向下跌破时，才呈现鲜明的买入/卖出触发状态！
@@ -1800,6 +1843,27 @@ void ChartWindow::applyLocalForecastLines(double predHigh, double predLow)
     m_forecastLowSeries->append(t0.toMSecsSinceEpoch(), predLow);
     m_forecastLowSeries->append(t1.toMSecsSinceEpoch(), predLow);
   }
+}
+
+void ChartWindow::applyFibonacciLines(double fib50, double fib618)
+{
+  if (!m_fib50Series || !m_fib618Series)
+    return;
+  m_fib50Series->clear();
+  m_fib618Series->clear();
+  if (fib50 <= 0.0 || fib618 <= 0.0 || !isIntradayMode()) {
+    m_fib50Series->setVisible(false);
+    m_fib618Series->setVisible(false);
+    return;
+  }
+  const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
+  const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
+  m_fib50Series->append(t0.toMSecsSinceEpoch(), fib50);
+  m_fib50Series->append(t1.toMSecsSinceEpoch(), fib50);
+  m_fib618Series->append(t0.toMSecsSinceEpoch(), fib618);
+  m_fib618Series->append(t1.toMSecsSinceEpoch(), fib618);
+  m_fib50Series->setVisible(true);
+  m_fib618Series->setVisible(true);
 }
 
 void ChartWindow::onForecastServiceUpdated(const ForecastResult& res)
@@ -2026,6 +2090,8 @@ void ChartWindow::updateSeries() {
     m_axisY->setRange(900.0, 1100.0);
     if (m_forecastSeries) m_forecastSeries->clear();
     if (m_forecastLowSeries) m_forecastLowSeries->clear();
+    if (m_fib50Series) { m_fib50Series->clear(); m_fib50Series->setVisible(false); }
+    if (m_fib618Series) { m_fib618Series->clear(); m_fib618Series->setVisible(false); }
     m_currentSeries->clear();
     m_highSeries->clear();
     m_lowSeries->clear();
@@ -2232,6 +2298,10 @@ void ChartWindow::setForecastVisible(bool on)
         m_forecastSeries->setVisible(on);
     if (m_forecastLowSeries)
         m_forecastLowSeries->setVisible(on);
+    if (m_fib50Series)
+        m_fib50Series->setVisible(on && m_fib50Series->count() > 0);
+    if (m_fib618Series)
+        m_fib618Series->setVisible(on && m_fib618Series->count() > 0);
     if (m_currentSeries)
         m_currentSeries->setVisible(on);
 }
@@ -2292,6 +2362,8 @@ void ChartWindow::loadIntradayForDate(const QDate& day)
     m_series->clear();
     if (m_forecastSeries) m_forecastSeries->clear();
     if (m_forecastLowSeries) m_forecastLowSeries->clear();
+    if (m_fib50Series) { m_fib50Series->clear(); m_fib50Series->setVisible(false); }
+    if (m_fib618Series) { m_fib618Series->clear(); m_fib618Series->setVisible(false); }
     if (m_currentSeries) m_currentSeries->clear();
     if (m_highSeries) m_highSeries->clear();
     if (m_lowSeries) m_lowSeries->clear();
@@ -2439,6 +2511,8 @@ void ChartWindow::loadDailyRange(const QDate& from, const QDate& to)
     m_series->clear();
     if (m_forecastSeries) m_forecastSeries->clear();
     if (m_forecastLowSeries) m_forecastLowSeries->clear();
+    if (m_fib50Series) { m_fib50Series->clear(); m_fib50Series->setVisible(false); }
+    if (m_fib618Series) { m_fib618Series->clear(); m_fib618Series->setVisible(false); }
     if (m_currentSeries) m_currentSeries->clear();
     if (m_highSeries) m_highSeries->clear();
     if (m_lowSeries) m_lowSeries->clear();
@@ -2596,6 +2670,8 @@ void ChartWindow::applyChartTheme()
         setDot(m_yesterdaySeries, QColor(120, 144, 156), 1);    // 昨日：蓝灰点线（非白）
         setDash(m_forecastSeries, QColor(255, 82, 82), 2);      // 预测高：鲜红虚线
         setDash(m_forecastLowSeries, QColor(0, 230, 118), 2);   // 预测低：鲜绿虚线
+        setDash(m_fib50Series, QColor(250, 173, 20), 2);        // Fib 50%: 暖金虚线
+        setDash(m_fib618Series, QColor(82, 196, 26), 2);        // Fib 61.8%: 翠绿虚线
 
         if (m_currentSeries) {
             m_currentSeries->setMarkerShape(QScatterSeries::MarkerShapeCircle);
@@ -2625,6 +2701,8 @@ void ChartWindow::applyChartTheme()
         setDot(m_yesterdaySeries, QColor(120, 120, 120), 1);
         setDash(m_forecastSeries, QColor(231, 76, 60), 2);      // 预测高：红虚线
         setDash(m_forecastLowSeries, QColor(39, 174, 96), 2);   // 预测低：绿虚线
+        setDash(m_fib50Series, QColor(212, 107, 8), 2);         // Fib 50%: 琥珀金虚线
+        setDash(m_fib618Series, QColor(56, 158, 13), 2);        // Fib 61.8%: 墨绿虚线
 
         if (m_currentSeries) {
             m_currentSeries->setMarkerShape(QScatterSeries::MarkerShapeCircle);
@@ -2868,7 +2946,8 @@ void ChartWindow::updateMovingAverages()
     // 确保轴正确绑定
     if (m_axisX && m_axisY) {
         for (QLineSeries* s : {m_ma5Series, m_ma10Series, m_ma20Series,
-                               m_forecastSeries, m_forecastLowSeries}) {
+                               m_forecastSeries, m_forecastLowSeries,
+                               m_fib50Series, m_fib618Series}) {
             if (!s) continue;
             const auto axes = s->attachedAxes();
             if (!axes.contains(m_axisX))

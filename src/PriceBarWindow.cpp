@@ -1081,8 +1081,15 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
         ip.price = p.second;
         pts.push_back(ip);
     }
-
-    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    goldsdk::PatternConfig pcfg;
+    const QString src = AppSettings::instance().dataSource();
+    pcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    const auto lastFc = ForecastService::instance().lastForecast();
+    if (lastFc.valid) {
+        pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
+        pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+    }
+    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     if (!pat.valid)
         return;
 

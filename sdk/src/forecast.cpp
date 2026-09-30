@@ -49,6 +49,13 @@ std::string formatWindow(int startMin, int endMin, const char* tag)
     return std::string(buf);
 }
 
+inline std::string fmtPrice(double v)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", v);
+    return std::string(buf);
+}
+
 std::vector<double> priorPeakWeights()
 {
     std::vector<double> w(48, 0.5);
@@ -458,7 +465,8 @@ MultiDayTrend ForecastEngine::multiDayTrend(const std::vector<double>& closes)
     return t;
 }
 
-PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& points)
+PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& points,
+                                             const PatternConfig& cfg)
 {
     PatternResult res;
     if (points.size() < 12)
@@ -493,7 +501,217 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
+    const double curPx = points.back().price;
+    const double breakBuffer = std::clamp(curPx * 0.0003, 0.08, 0.25); // 施密特迟滞防抖缓冲区 (0.08~0.25元)
+
+    // 动态波幅门槛：确保回踩企稳反弹至前高的利润空间能够有效覆盖手续费摩擦成本（积存金0.4%）并保有安全边际
+    const double minAmpRatio = (cfg.feeRate > 0.0005) ? std::max(cfg.feeRate * 1.8, 0.006) : 0.0030;
+    const double minAmpAbs = (curPx > 1000.0) ? 5.0 : 2.0; // 伦敦金(USD) vs 积存金(CNY)
+    const double requiredAmp = std::max(curPx * minAmpRatio, minAmpAbs);
+
+    // -------------------------------------------------------------------------
+    // 斐波那契主升/主跌波段扫描与黄金口袋计算 (Fibonacci Golden Pocket 0.5~0.618)
+    // -------------------------------------------------------------------------
+    double bestBullAmp = 0.0;
+    int bestBullLowIdx = -1, bestBullHighIdx = -1;
+    double bestBullLowPx = 0.0, bestBullHighPx = 0.0;
+
+    // A. 从 troughs 与 peaks 中寻找主升浪
+    for (const auto& pk : peaks) {
+        if (pk.index > n - 2) continue; // 必须留有回踩空间
+        for (const auto& tr : troughs) {
+            if (tr.index < pk.index && (pk.index - tr.index) >= 3) {
+                const double amp = pk.price - tr.price;
+                if (amp >= requiredAmp && amp > bestBullAmp) {
+                    bestBullAmp = amp;
+                    bestBullLowIdx = tr.index;
+                    bestBullHighIdx = pk.index;
+                    bestBullLowPx = tr.price;
+                    bestBullHighPx = pk.price;
+                }
+            }
+        }
+    }
+
+    // B. 从近期窗口 [n - fibLookback, n - 1] 扫描全局主升浪
+    const int fibLookback = std::min(n, 300);
+    int scanMaxIdx = -1;
+    double scanMaxPx = -1e9;
+    for (int i = n - fibLookback + 4; i <= n - 2; ++i) {
+        const double p = points[static_cast<size_t>(i)].price;
+        if (p > scanMaxPx) {
+            scanMaxPx = p;
+            scanMaxIdx = i;
+        }
+    }
+    if (scanMaxIdx >= 0) {
+        int scanMinIdx = -1;
+        double scanMinPx = 1e9;
+        for (int i = std::max(0, n - fibLookback); i < scanMaxIdx; ++i) {
+            const double p = points[static_cast<size_t>(i)].price;
+            if (p < scanMinPx) {
+                scanMinPx = p;
+                scanMinIdx = i;
+            }
+        }
+        if (scanMinIdx >= 0) {
+            const double amp = scanMaxPx - scanMinPx;
+            if (amp >= requiredAmp && amp >= bestBullAmp) {
+                bestBullAmp = amp;
+                bestBullLowIdx = scanMinIdx;
+                bestBullHighIdx = scanMaxIdx;
+                bestBullLowPx = scanMinPx;
+                bestBullHighPx = scanMaxPx;
+            }
+        }
+    }
+
+    if (bestBullAmp >= requiredAmp) {
+        res.fib50 = bestBullHighPx - 0.500 * bestBullAmp;
+        res.fib618 = bestBullHighPx - 0.618 * bestBullAmp;
+        res.fibSwingHigh = bestBullHighPx;
+        res.fibSwingLow = bestBullLowPx;
+    }
+
+    PatternResult fibCandidate;
+    bool hasFibCandidate = false;
+
+    // 判定多头黄金口袋回踩 (Kirito 经典战法：健康回踩 0.50~0.618 黄金口袋逢低买入)
+    if (bestBullAmp >= requiredAmp) {
+        double pbMin = bestBullHighPx;
+        for (int i = bestBullHighIdx; i < n; ++i) {
+            pbMin = std::min(pbMin, points[static_cast<size_t>(i)].price);
+        }
+        const double fib50 = res.fib50;
+        const double fib618 = res.fib618;
+        const double fib382 = bestBullHighPx - 0.382 * bestBullAmp;
+
+        // 回踩触及或深入 0.50~0.618 黄金口袋核心区间
+        if (pbMin <= fib50 + breakBuffer && pbMin >= fib618 - breakBuffer * 1.5) {
+            // 情况 A：黄金口袋企稳反弹（经典顺势逢低买入触发🚀）
+            if (curPx >= pbMin + breakBuffer * 0.35 && curPx >= fib618 - breakBuffer && curPx <= fib382 + breakBuffer) {
+                fibCandidate.type = PatternType::FibonacciGoldenPocket;
+                fibCandidate.fib50 = fib50;
+                fibCandidate.fib618 = fib618;
+                fibCandidate.fibSwingHigh = bestBullHighPx;
+                fibCandidate.fibSwingLow = bestBullLowPx;
+                fibCandidate.support = fib618;
+                fibCandidate.resistance = bestBullHighPx;
+                fibCandidate.breakoutTarget = bestBullHighPx + bestBullAmp * 0.382;
+
+                // 核心趋势与日内高点切合度核验：
+                if (cfg.highAlreadyInProb >= 0.65 || cfg.multiDayBias == TrendBias::StrongBear) {
+                    fibCandidate.name = "斐波那契黄金口袋 (顺势偏空·弱反抽观察)";
+                    fibCandidate.bias = "弱势蓄势";
+                    fibCandidate.strategy = "现价回踩斐波那契 0.50~0.618 黄金口袋关键支撑区并微幅反弹，但受多日空头排列/日内高点已确立压制，反抽动能有限，切勿盲目追涨做多，注意逢高防守。";
+                } else {
+                    fibCandidate.name = "斐波那契黄金口袋 (0.5~0.618回踩企稳🚀)";
+                    fibCandidate.bias = "强烈看多";
+                    fibCandidate.strategy = "主升浪上涨后健康回踩斐波那契 0.50~0.618 黄金口袋关键支撑区并企稳反弹！顺势逢低布局，防守位设在 0.618 支撑 "
+                                           + fmtPrice(fib618) + "，第一止盈目标看前高 " + fmtPrice(bestBullHighPx)
+                                           + "，突破后理论扩展目标看 " + fmtPrice(fibCandidate.breakoutTarget) + "。";
+                }
+                fibCandidate.valid = true;
+                hasFibCandidate = true;
+            }
+            // 情况 B：正在黄金口袋支撑区回踩测试蓄势
+            else if (curPx >= fib618 - breakBuffer && curPx <= fib50 + breakBuffer) {
+                fibCandidate.type = PatternType::FibonacciGoldenPocket;
+                fibCandidate.fib50 = fib50;
+                fibCandidate.fib618 = fib618;
+                fibCandidate.fibSwingHigh = bestBullHighPx;
+                fibCandidate.fibSwingLow = bestBullLowPx;
+                fibCandidate.name = "斐波那契黄金口袋 (0.5~0.618回踩测试)";
+                fibCandidate.bias = "多头蓄势";
+                fibCandidate.support = fib618;
+                fibCandidate.resistance = fib50;
+                fibCandidate.breakoutTarget = bestBullHighPx;
+                fibCandidate.strategy = "现价回踩进入斐波那契 0.50~0.618 黄金口袋核心支撑区间 ("
+                                       + fmtPrice(fib618) + " ~ " + fmtPrice(fib50)
+                                       + ")，正在测试多头承接力，切忌恐慌杀跌，密切观察止跌企稳低吸机会。";
+                fibCandidate.valid = true;
+                hasFibCandidate = true;
+            }
+        }
+        // 情况 C：跌破 0.618 黄金口袋最后防守位
+        if (!hasFibCandidate && pbMin < fib618 - breakBuffer && curPx < fib618 - breakBuffer && curPx >= bestBullLowPx - breakBuffer) {
+            fibCandidate.type = PatternType::FibonacciGoldenPocket;
+            fibCandidate.fib50 = fib50;
+            fibCandidate.fib618 = fib618;
+            fibCandidate.fibSwingHigh = bestBullHighPx;
+            fibCandidate.fibSwingLow = bestBullLowPx;
+            fibCandidate.name = "斐波那契黄金口袋 (0.618失守破位⚠️)";
+            fibCandidate.bias = "看空破位";
+            fibCandidate.resistance = fib618;
+            fibCandidate.support = bestBullLowPx;
+            fibCandidate.breakoutTarget = bestBullLowPx;
+            fibCandidate.strategy = "价格有效跌破斐波那契 0.618 黄金口袋关键防守支撑 ("
+                                   + fmtPrice(fib618) + ")，回调已演变为深度破位，原支撑转为强阻力，需防范进一步回探起涨点 "
+                                   + fmtPrice(bestBullLowPx) + "，注意防守减仓。";
+            fibCandidate.valid = true;
+            hasFibCandidate = true;
+        }
+    }
+
+    // 判定空头黄金口袋反弹受阻 (Bearish Golden Pocket)
+    if (!hasFibCandidate) {
+        double bestBearAmp = 0.0;
+        int bestBearHighIdx = -1, bestBearLowIdx = -1;
+        double bestBearHighPx = 0.0, bestBearLowPx = 0.0;
+        for (const auto& tr : troughs) {
+            if (tr.index > n - 2) continue;
+            for (const auto& pk : peaks) {
+                if (pk.index < tr.index && (tr.index - pk.index) >= 3) {
+                    const double amp = pk.price - tr.price;
+                    if (amp >= requiredAmp && amp > bestBearAmp) {
+                        bestBearAmp = amp;
+                        bestBearHighIdx = pk.index;
+                        bestBearLowIdx = tr.index;
+                        bestBearHighPx = pk.price;
+                        bestBearLowPx = tr.price;
+                    }
+                }
+            }
+        }
+        if (bestBearAmp >= requiredAmp) {
+            double pbMax = bestBearLowPx;
+            for (int i = bestBearLowIdx; i < n; ++i) {
+                pbMax = std::max(pbMax, points[static_cast<size_t>(i)].price);
+            }
+            const double bearFib50 = bestBearLowPx + 0.500 * bestBearAmp;
+            const double bearFib618 = bestBearLowPx + 0.618 * bestBearAmp;
+            const double bearFib382 = bestBearLowPx + 0.382 * bestBearAmp;
+            if (pbMax >= bearFib50 - breakBuffer && pbMax <= bearFib618 + breakBuffer * 1.5) {
+                if (curPx <= pbMax - breakBuffer * 0.35 && curPx <= bearFib618 + breakBuffer && curPx >= bearFib382 - breakBuffer) {
+                    fibCandidate.type = PatternType::FibonacciGoldenPocket;
+                    fibCandidate.fib50 = bearFib50;
+                    fibCandidate.fib618 = bearFib618;
+                    fibCandidate.fibSwingHigh = bestBearHighPx;
+                    fibCandidate.fibSwingLow = bestBearLowPx;
+                    fibCandidate.resistance = bearFib618;
+                    fibCandidate.support = bestBearLowPx;
+                    fibCandidate.breakoutTarget = bestBearLowPx - bestBearAmp * 0.382;
+
+                    if (cfg.lowAlreadyInProb >= 0.65 || cfg.multiDayBias == TrendBias::StrongBull) {
+                        fibCandidate.name = "斐波那契黄金口袋 (顺势偏多·回调休整)";
+                        fibCandidate.bias = "中性蓄势";
+                        fibCandidate.strategy = "急跌后反弹测试 0.50~0.618 黄金口袋压制，但大周期多头趋势强劲且日内低点已确立，回调属于良性洗盘，切勿盲目杀跌，耐心等待多头重聚。";
+                    } else {
+                        fibCandidate.name = "斐波那契黄金口袋 (0.5~0.618反弹受阻⚠️)";
+                        fibCandidate.bias = "强烈看空";
+                        fibCandidate.strategy = "急跌后弱势反弹至斐波那契 0.50~0.618 黄金口袋强压区受阻回落！反抽动能衰竭，建议逢高减仓防守，谨防二次探底 "
+                                               + fmtPrice(bestBearLowPx) + "。";
+                    }
+                    fibCandidate.valid = true;
+                    hasFibCandidate = true;
+                }
+            }
+        }
+    }
+
     if (peaks.size() < 2 || troughs.size() < 2) {
+        if (hasFibCandidate)
+            return fibCandidate;
         res.type = PatternType::None;
         res.name = "震荡整理";
         res.bias = "震荡";
@@ -506,11 +724,9 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     const auto& p2 = peaks.back();
     const auto& t1 = troughs[troughs.size() - 2];
     const auto& t2 = troughs.back();
-    const double curPx = points.back().price;
 
     const double priceRange = std::max(0.1, p2.price - t2.price);
     const double slopeThreshold = priceRange * 0.003;
-    const double breakBuffer = std::clamp(curPx * 0.0003, 0.08, 0.25); // 施密特迟滞防抖缓冲区 (0.08~0.25元)
 
     // =========================================================================
     // 1) 脉冲 V 型反转 / 倒 V 冲高跳水 (黄金数据公布/情绪急杀剧烈洗盘)
@@ -604,7 +820,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.support = neckline;
                     res.resistance = target;
                     res.strategy = "现价已强势突破头肩底颈线！经典大级别反转确立，颈线转为强支撑，上看目标位 "
-                                   + std::to_string(std::round(target * 100.0) / 100.0) + "。";
+                                   + fmtPrice(target) + "。";
                 } else {
                     res.name = "头肩底形态 (倒头肩蓄势)";
                     res.bias = "多头蓄势";
@@ -638,7 +854,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.resistance = neckline;
                     res.support = target;
                     res.strategy = "现价已跌破头肩顶颈线支撑！大级别顶部确认，原颈线转为强压，防范回落目标 "
-                                   + std::to_string(std::round(target * 100.0) / 100.0) + "。";
+                                   + fmtPrice(target) + "。";
                 } else {
                     res.name = "头肩顶形态 (高位受阻)";
                     res.bias = "空头蓄势";
@@ -675,7 +891,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.support = neckline;
                     res.resistance = target;
                     res.strategy = "三次回踩底部均获强力支撑，现价强势放量突破颈线，三重筑底确立，后市上看 "
-                                   + std::to_string(std::round(target * 100.0) / 100.0) + "。";
+                                   + fmtPrice(target) + "。";
                 } else {
                     res.name = "三重底形态 (三重筑底)";
                     res.bias = "多头蓄势";
@@ -709,7 +925,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.resistance = neckline;
                     res.support = target;
                     res.strategy = "三次冲高同一阻力位均严重受阻，现价跌破颈线支撑，多头放弃抵抗，下方目标 "
-                                   + std::to_string(std::round(target * 100.0) / 100.0) + "。";
+                                   + fmtPrice(target) + "。";
                 } else {
                     res.name = "三重顶形态 (三重承压)";
                     res.bias = "空头蓄势";
@@ -745,12 +961,18 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 const double target = flagHigh + poleHeight;
                 res.breakoutTarget = target;
                 if (curPx >= flagHigh + breakBuffer) {
-                    res.name = "看涨旗形 (顺势主升浪🚀)";
+                    if (hasFibCandidate && (fibCandidate.bias == "强烈看多" || fibCandidate.bias == "多头蓄势")) {
+                        res.name = "看涨旗形 + 黄金口袋共振 (顺势主升浪🚀)";
+                        res.strategy = "放量向上突破看涨旗面，且旗面回踩完美契合斐波那契 0.50~0.618 黄金口袋关键支撑！顺势双重共振，第一目标位上看 "
+                                       + fmtPrice(target) + "。";
+                    } else {
+                        res.name = "看涨旗形 (顺势主升浪🚀)";
+                        res.strategy = "放量向上突破看涨旗面！主升浪中继形态确立，顺势看多，第一目标上看 "
+                                       + fmtPrice(target) + "。";
+                    }
                     res.bias = "看多突破";
                     res.support = flagHigh;
                     res.resistance = target;
-                    res.strategy = "放量向上突破看涨旗面！主升浪中继形态确立，顺势看多，第一目标上看 "
-                                   + std::to_string(std::round(target * 100.0) / 100.0) + "。";
                 } else {
                     res.name = "看涨旗形 (蓄势中继)";
                     res.bias = "多头蓄势";
@@ -780,7 +1002,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.resistance = flagLow;
                     res.support = target;
                     res.strategy = "向下跌破看跌旗面下轨！弱势中继形态确立，谨防顺势加速探底 "
-                                   + std::to_string(std::round(target * 100.0) / 100.0) + "。";
+                                   + fmtPrice(target) + "。";
                 } else {
                     res.name = "看跌旗形 (偏空中继)";
                     res.bias = "空头蓄势";
@@ -808,12 +1030,18 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             const double target = neckline + (neckline - baseSupport);
             res.breakoutTarget = target;
             if (curPx >= neckline + breakBuffer) {
-                res.name = "双底突破 (W底确立🚀)";
+                if (hasFibCandidate && (fibCandidate.bias == "强烈看多" || fibCandidate.bias == "多头蓄势")) {
+                    res.name = "双底突破 + 黄金口袋共振 (W底强力反转🚀)";
+                    res.strategy = "突破W底颈线，且筑底回踩恰好落入斐波那契 0.50~0.618 黄金口袋强支撑！双重多头共振，第一目标位上看 "
+                                   + fmtPrice(target) + "。";
+                } else {
+                    res.name = "双底突破 (W底确立🚀)";
+                    res.strategy = "现价已强势突破W底颈线！颈线位已由阻力转为强支撑，双底反转形态确立，第一目标位上看 "
+                                   + fmtPrice(target) + "。";
+                }
                 res.bias = "看多突破";
                 res.support = neckline;
                 res.resistance = target;
-                res.strategy = "现价已强势突破W底颈线！颈线位已由阻力转为强支撑，双底反转形态确立，第一目标位上看 "
-                               + std::to_string(std::round(target * 100.0) / 100.0) + "。";
             } else {
                 res.name = "双底形态 (W底筑底)";
                 res.bias = "多头蓄势";
@@ -845,7 +1073,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 res.resistance = neckline;
                 res.support = target;
                 res.strategy = "现价已跌破M顶颈线支撑！颈线位已转为反弹强阻力，双顶下行形态确立，下方第一目标位看至 "
-                               + std::to_string(std::round(target * 100.0) / 100.0) + "。";
+                               + fmtPrice(target) + "。";
             } else {
                 res.name = "双顶形态 (M顶受阻)";
                 res.bias = "空头蓄势";
@@ -885,11 +1113,17 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.type = PatternType::FallingWedge;
         res.breakoutTarget = p1.price;
         if (curPx >= curUpper + breakBuffer) {
-            res.name = "下降楔形 (向上突破🚀)";
+            if (hasFibCandidate && (fibCandidate.bias == "强烈看多" || fibCandidate.bias == "多头蓄势")) {
+                res.name = "下降楔形 + 黄金口袋共振 (向上突破🚀)";
+                res.strategy = "下降楔形向上突破上轨，且下沿获得斐波那契 0.50~0.618 黄金口袋坚实承接！空头衰竭反转，顺势看多，第一目标上看 "
+                               + fmtPrice(p1.price) + "。";
+            } else {
+                res.name = "下降楔形 (向上突破🚀)";
+                res.strategy = "现价已向上突破下降楔形上轨！空头衰竭确认，反转向上变盘，顺势看多。";
+            }
             res.bias = "看多突破";
             res.support = curUpper;
             res.resistance = p1.price;
-            res.strategy = "现价已向上突破下降楔形上轨！空头衰竭确认，反转向上变盘，顺势看多。";
         } else if (curPx <= curLower - breakBuffer) {
             res.name = "下降楔形 (向下破位⚠️)";
             res.bias = "看空破位";
@@ -1030,6 +1264,10 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.strategy = "处于弱势下降通道运行，逢反弹受阻通道上轨可适度防守。";
         res.valid = true;
         return res;
+    }
+
+    if (hasFibCandidate) {
+        return fibCandidate;
     }
 
     res.type = PatternType::None;
