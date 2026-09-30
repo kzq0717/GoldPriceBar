@@ -54,7 +54,40 @@ struct MultiDayTrend {
     }
 };
 
-/** 本地当日高低预测 + 多日趋势（无 Qt）。 */
+enum class PatternType {
+    None,
+    RisingWedge,            // 上升楔形（多头衰竭，警惕下破反转）
+    FallingWedge,           // 下降楔形（空头衰竭，蓄势看涨向上突破）
+    SymmetricalTriangle,    // 对称三角形（多空收敛，变盘临近）
+    AscendingTriangle,      // 上升三角形（阻力水平，低点抬高）
+    DescendingTriangle,     // 下降三角形（支撑水平，高点下移）
+    DoubleBottom,           // 双底 / W底（筑底企稳）
+    DoubleTop,              // 双顶 / M顶（顶部承压）
+    TripleBottom,           // 三重底（多次筑底支撑稳固）
+    TripleTop,              // 三重顶（多次冲高受阻）
+    HeadAndShouldersBottom, // 倒头肩 / 头肩底（强力看多大级别反转）
+    HeadAndShouldersTop,    // 头肩顶（强力看空大级别反转）
+    BullFlag,               // 看涨旗形（急拉后微幅回踩整理，顺势中继）
+    BearFlag,               // 看跌旗形（急跌后微幅反弹整理，顺势中继）
+    VReversalBottom,        // 脉冲急跌 V 型反转（深度洗盘快速收复）
+    VReversalTop,           // 脉冲冲高 倒V 型反转（假突破承压跳水）
+    ChannelUp,              // 上升通道（顺势向上）
+    ChannelDown,            // 下降通道（弱势下行）
+    Broadening              // 扩散喇叭形（情绪分歧加剧，振幅发散）
+};
+
+struct PatternResult {
+    PatternType type = PatternType::None;
+    std::string name;          // 形态名称，如 "下降楔形 (Falling Wedge)"
+    std::string bias;          // "看多" / "看空" / "震荡"
+    std::string strategy;      // 交易策略与操作建议
+    double resistance = 0.0;   // 上轨 / 颈线阻力位
+    double support = 0.0;      // 下轨 / 支撑位
+    double breakoutTarget = 0.0; // 突破理论目标位
+    bool valid = false;
+};
+
+/** 本地当日高低预测 + 多日趋势 + 经典形态（无 Qt）。 */
 class ForecastEngine {
 public:
     /**
@@ -70,6 +103,9 @@ public:
 
     /** @param closes 近 20~60 日收盘，旧→新 */
     static MultiDayTrend multiDayTrend(const std::vector<double>& closes);
+
+    /** 识别价格序列中的经典形态（楔形、三角形、双底双顶等） */
+    static PatternResult identifyPattern(const std::vector<IntradayPoint>& points);
 };
 
 } // namespace goldsdk

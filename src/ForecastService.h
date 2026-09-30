@@ -27,6 +27,13 @@ struct ForecastResult {
     double remainingUpside = 0.0;
     double peakWindowProb = 0.0;     // 0~1
     QString multiDayBias;            // 强多/偏多/震荡/...
+    // 黄金经典形态策略
+    QString patternName;             // 识别形态名称
+    QString patternBias;             // 形态多空倾向
+    QString patternStrategy;         // 形态操作策略建议
+    double patternResistance = 0.0;  // 上轨/关键阻力
+    double patternSupport = 0.0;     // 下轨/关键支撑
+    double patternBreakoutTarget = 0.0; // 突破理论目标位
 };
 
 class ForecastService : public QObject {

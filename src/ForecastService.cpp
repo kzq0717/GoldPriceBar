@@ -519,12 +519,14 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
         return;
     }
 
-    // 严谨校验与锚定：全日预期最高价不得低于已出现今高，最低价不得高于已出现今低
+    // 保留模型给出的客观预测阻力位与支撑位基准，不随实际价格波动强制抹除原始预测
     double actH = 0.0, actL = 0.0;
     HistoryCache::instance().todayHigh(actH);
     HistoryCache::instance().todayLow(actL);
-    if (actH > 0.0) predHigh = qMax(predHigh, actH);
-    if (actL > 0.0) predLow  = qMin(predLow, actL);
+    // 仅在预测值明显颠倒异常时做底线修正
+    if (predHigh < predLow) {
+        qSwap(predHigh, predLow);
+    }
 
     m_lastResult.valid = true;
     m_lastResult.predHigh = predHigh;
@@ -595,6 +597,26 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
                     }
                 }
             }
+        }
+
+        // 形态识别
+        const auto ptsSamples = ExtremeDatabase::instance().loadIntradaySamples(
+            QDate::currentDate(), m_currentSource);
+        std::vector<goldsdk::IntradayPoint> pts;
+        for (const auto& pt : ptsSamples) {
+            goldsdk::IntradayPoint ip;
+            ip.epochMs = pt.first.toMSecsSinceEpoch();
+            ip.price = pt.second;
+            pts.push_back(ip);
+        }
+        const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+        if (pat.valid) {
+            m_lastResult.patternName = QString::fromStdString(pat.name);
+            m_lastResult.patternBias = QString::fromStdString(pat.bias);
+            m_lastResult.patternStrategy = QString::fromStdString(pat.strategy);
+            m_lastResult.patternResistance = pat.resistance;
+            m_lastResult.patternSupport = pat.support;
+            m_lastResult.patternBreakoutTarget = pat.breakoutTarget;
         }
     }
     m_lastResult.modeTag = (m_provider == QStringLiteral("gemini") ? tr("Gemini大模型") : tr("Grok大模型"));
@@ -716,6 +738,16 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     m_lastResult.multiDayBias = multiBias;
     m_lastResult.modeTag = tag;
     m_lastResult.timestamp = QDateTime::currentDateTime();
+
+    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    if (pat.valid) {
+        m_lastResult.patternName = QString::fromStdString(pat.name);
+        m_lastResult.patternBias = QString::fromStdString(pat.bias);
+        m_lastResult.patternStrategy = QString::fromStdString(pat.strategy);
+        m_lastResult.patternResistance = pat.resistance;
+        m_lastResult.patternSupport = pat.support;
+        m_lastResult.patternBreakoutTarget = pat.breakoutTarget;
+    }
 
     ExtremeDatabase::instance().insertForecastLog(
         m_lastResult.timestamp, src, m_lastResult.modeTag,

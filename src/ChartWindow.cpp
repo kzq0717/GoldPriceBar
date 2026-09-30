@@ -308,6 +308,17 @@ void ChartWindow::setupChart() {
       "}"
       "QFrame#chartToolbar QPushButton#exportCsv:hover{"
       "  background:#1c2433;color:#e8eaed;border-color:#5b8def;"
+      "}"
+      "QFrame#chartToolbar QPushButton#zoomBtn{"
+      "  background:#1c2433;color:#9aa8bc;"
+      "  border:1px solid #2f3a4f;border-radius:8px;"
+      "  padding:3px 8px;min-height:28px;font-size:12px;font-weight:600;"
+      "}"
+      "QFrame#chartToolbar QPushButton#zoomBtn:hover{"
+      "  background:#243044;color:#e8eaed;border-color:#5b8def;"
+      "}"
+      "QFrame#chartToolbar QPushButton#zoomBtn:pressed{"
+      "  background:#1a3a5c;color:#7eb6ff;"
       "}");
 
   auto *tb = new QHBoxLayout(m_toolbar);
@@ -415,21 +426,21 @@ void ChartWindow::setupChart() {
   m_tbFeeLabel->setObjectName(QStringLiteral("tbFeeLabel"));
   m_tbFeeLabel->setStyleSheet(
       "QLabel#tbFeeLabel{"
-      "  background:#201a11;"
-      "  color:#ffd591;"
-      "  border:1px solid #874d00;"
+      "  background:#1a1d24;"
+      "  color:#8c9ba5;"
+      "  border:1px solid #2a3347;"
       "  border-radius:8px;"
       "  padding:4px 10px;"
       "  font-size:12px;"
       "  font-weight:600;"
       "}"
       "QLabel#tbFeeLabel:hover{"
-      "  background:#2b2114;"
-      "  border-color:#d48806;"
-      "  color:#ffe58f;"
+      "  background:#232731;"
+      "  border-color:#3e4a61;"
+      "  color:#a5b5c3;"
       "}");
   m_tbFeeLabel->setCursor(Qt::PointingHandCursor);
-  m_tbFeeLabel->setText(tr("💰 浙商卖出手续费: -- 元/g (0.4%)"));
+  m_tbFeeLabel->setText(tr("🎯 策略提示: 正在计算…"));
   tb->addWidget(m_tbFeeLabel);
 
   tb->addStretch(1);
@@ -519,6 +530,36 @@ void ChartWindow::setupChart() {
   statRow->addWidget(statDivider, 0);
   statRow->addLayout(hitBox, 1);
   sideLay->addLayout(statRow);
+
+  auto *patCard = new QFrame(m_sidePanel);
+  patCard->setObjectName(QStringLiteral("patternCard"));
+  patCard->setStyleSheet(
+      "QFrame#patternCard{"
+      "  background:#161c29;border:1px solid #283347;border-radius:8px;"
+      "  padding:5px 8px;"
+      "}");
+  auto *patLay = new QVBoxLayout(patCard);
+  patLay->setContentsMargins(0, 0, 0, 0);
+  patLay->setSpacing(3);
+
+  auto *patHeader = new QHBoxLayout();
+  patHeader->setSpacing(4);
+  patHeader->setContentsMargins(0, 0, 0, 0);
+  auto *patTitle = new QLabel(tr("📐 走势形态:"), patCard);
+  patTitle->setStyleSheet("color:#8592a6;font-size:11px;font-weight:600;");
+  m_sidePatternLabel = new QLabel(tr("分析中…"), patCard);
+  m_sidePatternLabel->setStyleSheet("color:#ffd591;font-size:12px;font-weight:bold;");
+  patHeader->addWidget(patTitle);
+  patHeader->addWidget(m_sidePatternLabel);
+  patHeader->addStretch(1);
+  patLay->addLayout(patHeader);
+
+  m_sidePatternStrategyLabel = new QLabel(tr("正在识别走势形态与策略…"), patCard);
+  m_sidePatternStrategyLabel->setStyleSheet("color:#9aa8bc;font-size:11px;line-height:14px;");
+  m_sidePatternStrategyLabel->setWordWrap(true);
+  patLay->addWidget(m_sidePatternStrategyLabel);
+
+  sideLay->addWidget(patCard);
 
   auto sep = [m_sidePanel = m_sidePanel]() {
     auto *line = new QFrame(m_sidePanel);
@@ -838,11 +879,12 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
 
   const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
   {
+    // 基础防抖间隔至少 60 秒，避免随着每个微小价格跳动重算临界线导致频繁变化
     qint64 intervalMs =
-        qMax(15000LL, static_cast<qint64>(AppSettings::instance().forecastIntervalSec()) * 1000LL);
+        qMax(60000LL, static_cast<qint64>(AppSettings::instance().forecastIntervalSec()) * 1000LL);
     // 宏观高影响日：拉长请求间隔，降低噪声
     if (EventCalendar::isHighImpactDay())
-        intervalMs = qMax(intervalMs * 2, 120000LL);
+        intervalMs = qMax(intervalMs * 2, 180000LL);
     if (m_lastForecastMs == 0 || (nowMs - m_lastForecastMs) >= intervalMs) {
         updateForecast();
     }
@@ -921,36 +963,233 @@ void ChartWindow::showEvent(QShowEvent *event) {
 
 bool ChartWindow::eventFilter(QObject *watched, QEvent *event) {
   if (watched == m_chartView || watched == m_chartView->viewport()) {
-    if (event->type() == QEvent::MouseMove) {
-      auto *me = static_cast<QMouseEvent *>(event);
-      QPoint pos = me->pos();
-      if (watched == m_chartView->viewport())
-        pos = m_chartView->viewport()->mapTo(m_chartView, pos);
-      updateCrosshair(pos);
-    } else if (event->type() == QEvent::Leave) {
-      hideCrosshair();
+    switch (event->type()) {
+      case QEvent::Wheel: {
+        auto *we = static_cast<QWheelEvent *>(event);
+        QPoint pos = we->position().toPoint();
+        if (watched == m_chartView->viewport())
+          pos = m_chartView->viewport()->mapTo(m_chartView, pos);
+
+        const QPointF scenePt = m_chartView->mapToScene(pos);
+        const QPointF itemPt = m_chart->mapFromScene(scenePt);
+        qreal centerMs = -1;
+        if (m_chart->plotArea().contains(itemPt) && m_series) {
+          const QPointF val = m_chart->mapToValue(itemPt, m_series);
+          centerMs = val.x();
+        }
+
+        const int delta = we->angleDelta().y();
+        if (delta != 0) {
+          const double factor = (delta > 0) ? 0.8 : 1.25;
+          zoomX(factor, centerMs);
+          hideCrosshair();
+        }
+        return true;
+      }
+      case QEvent::MouseButtonPress: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        QPoint pos = me->pos();
+        if (watched == m_chartView->viewport())
+          pos = m_chartView->viewport()->mapTo(m_chartView, pos);
+
+        if (me->button() == Qt::LeftButton || me->button() == Qt::RightButton || me->button() == Qt::MiddleButton) {
+          m_leftButtonPressed = true;
+          m_leftPressPos = pos;
+          m_panStartPos = pos;
+          if (m_axisX) {
+            m_panStartMinMs = m_axisX->min().toMSecsSinceEpoch();
+            m_panStartMaxMs = m_axisX->max().toMSecsSinceEpoch();
+          }
+          return true;
+        }
+        break;
+      }
+      case QEvent::MouseMove: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        QPoint pos = me->pos();
+        if (watched == m_chartView->viewport())
+          pos = m_chartView->viewport()->mapTo(m_chartView, pos);
+
+        if (m_leftButtonPressed && !m_isPanning) {
+          if ((pos - m_leftPressPos).manhattanLength() >= 3) {
+            m_isPanning = true;
+            m_chartView->setCursor(Qt::ClosedHandCursor);
+            hideCrosshair();
+          }
+        }
+
+        if (m_isPanning && m_axisX && m_chart) {
+          const int dx = pos.x() - m_panStartPos.x();
+          const qreal plotW = m_chart->plotArea().width();
+          if (plotW > 10.0) {
+            const qint64 spanMs = m_panStartMaxMs - m_panStartMinMs;
+            const qint64 dtMs = static_cast<qint64>(dx * (static_cast<double>(spanMs) / plotW));
+            const qint64 newMin = m_panStartMinMs - dtMs;
+            const qint64 newMax = m_panStartMaxMs - dtMs;
+            m_axisX->setRange(QDateTime::fromMSecsSinceEpoch(newMin),
+                              QDateTime::fromMSecsSinceEpoch(newMax));
+          }
+          return true;
+        }
+        updateCrosshair(pos);
+        break;
+      }
+      case QEvent::MouseButtonRelease: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        QPoint pos = me->pos();
+        if (watched == m_chartView->viewport())
+          pos = m_chartView->viewport()->mapTo(m_chartView, pos);
+
+        m_leftButtonPressed = false;
+        if (m_isPanning) {
+          m_isPanning = false;
+          m_chartView->unsetCursor();
+          autoFitYForVisibleRange();
+          updateCrosshair(pos);
+          return true;
+        }
+        break;
+      }
+      case QEvent::MouseButtonDblClick: {
+        resetZoomRange();
+        return true;
+      }
+      case QEvent::Leave: {
+        if (!m_isPanning)
+          hideCrosshair();
+        break;
+      }
+      default:
+        break;
     }
   }
   return QWidget::eventFilter(watched, event);
 }
 
+void ChartWindow::zoomX(double factor, qreal centerMs)
+{
+    if (!m_axisX || factor <= 0.0)
+        return;
+    const qint64 curMin = m_axisX->min().toMSecsSinceEpoch();
+    const qint64 curMax = m_axisX->max().toMSecsSinceEpoch();
+    const qint64 curSpan = curMax - curMin;
+    if (curSpan <= 0)
+        return;
+
+    // 限制最小跨度 3 分钟 (180,000 ms)，最大跨度 60 天
+    const qint64 newSpan = qBound(180000LL, static_cast<qint64>(curSpan * factor), 86400000LL * 60LL);
+    if (newSpan == curSpan)
+        return;
+
+    qint64 center = (centerMs > 0) ? static_cast<qint64>(centerMs) : (curMin + curSpan / 2);
+    if (center < curMin || center > curMax)
+        center = curMin + curSpan / 2;
+
+    const double ratio = static_cast<double>(center - curMin) / static_cast<double>(curSpan);
+    const qint64 newMin = center - static_cast<qint64>(newSpan * ratio);
+    const qint64 newMax = newMin + newSpan;
+
+    m_axisX->setRange(QDateTime::fromMSecsSinceEpoch(newMin),
+                      QDateTime::fromMSecsSinceEpoch(newMax));
+    autoFitYForVisibleRange();
+}
+
+void ChartWindow::panX(qreal deltaPx)
+{
+    if (!m_axisX || !m_chart || qFuzzyIsNull(deltaPx))
+        return;
+    const qreal plotW = m_chart->plotArea().width();
+    if (plotW <= 10.0)
+        return;
+    const qint64 curMin = m_axisX->min().toMSecsSinceEpoch();
+    const qint64 curMax = m_axisX->max().toMSecsSinceEpoch();
+    const qint64 spanMs = curMax - curMin;
+    const qint64 dtMs = static_cast<qint64>(deltaPx * (static_cast<double>(spanMs) / plotW));
+    m_axisX->setRange(QDateTime::fromMSecsSinceEpoch(curMin - dtMs),
+                      QDateTime::fromMSecsSinceEpoch(curMax - dtMs));
+    autoFitYForVisibleRange();
+}
+
+void ChartWindow::applyFitDataRange()
+{
+    if (!m_axisX || m_plotPoints.isEmpty())
+        return;
+
+    const QDateTime tFirst = m_plotPoints.first().first;
+    const QDateTime tLast = m_plotPoints.last().first;
+    const qint64 spanSec = tFirst.secsTo(tLast);
+
+    // 前后留 3% 边距，至少留 60 秒
+    const qint64 padSec = qMax(60LL, static_cast<qint64>(qMax(spanSec, 1800LL) * 0.03));
+    m_axisX->setRange(tFirst.addSecs(-padSec), tLast.addSecs(padSec));
+    m_isCompactView = true;
+    autoFitYForVisibleRange();
+}
+
+void ChartWindow::resetZoomRange()
+{
+    if (!m_axisX)
+        return;
+
+    if (m_defaultMinX.isValid() && m_defaultMaxX.isValid()) {
+        m_axisX->setRange(m_defaultMinX, m_defaultMaxX);
+    } else if (isIntradayMode()) {
+        const QDateTime dayStart = QDateTime(QDate::currentDate(), QTime(0, 0, 0));
+        m_axisX->setRange(dayStart, dayStart.addDays(1));
+    }
+    m_isCompactView = false;
+    autoFitYForVisibleRange();
+}
+
+void ChartWindow::autoFitYForVisibleRange()
+{
+    if (!m_axisX || !m_axisY || m_plotPoints.isEmpty())
+        return;
+
+    const qint64 minX = m_axisX->min().toMSecsSinceEpoch();
+    const qint64 maxX = m_axisX->max().toMSecsSinceEpoch();
+
+    double vMin = 1e9, vMax = -1e9;
+    int count = 0;
+    for (const auto& pt : m_plotPoints) {
+        const qint64 t = pt.first.toMSecsSinceEpoch();
+        if (t >= minX && t <= maxX && pt.second > 0.0) {
+            vMin = qMin(vMin, pt.second);
+            vMax = qMax(vMax, pt.second);
+            count++;
+        }
+    }
+
+    if (count > 0 && vMax >= vMin) {
+        if (m_hasPredict) {
+            if (m_lastPredictLow > 0 && m_lastPredictLow < vMin && (vMin - m_lastPredictLow) < (vMax - vMin) * 2.0)
+                vMin = m_lastPredictLow;
+            if (m_lastPredictHigh > 0 && m_lastPredictHigh > vMax && (m_lastPredictHigh - vMax) < (vMax - vMin) * 2.0)
+                vMax = m_lastPredictHigh;
+        }
+
+        const double span = qMax(0.5, vMax - vMin);
+        const double margin = qMax(0.3, span * 0.12);
+        m_axisY->setRange(vMin - margin, vMax + margin);
+    }
+}
+
 int ChartWindow::nearestPointIndex(qreal xMsecs) const {
   if (m_plotPoints.isEmpty())
     return -1;
-  int best = 0;
-  qreal bestDist =
-      qAbs(static_cast<qreal>(m_plotPoints.first().first.toMSecsSinceEpoch()) -
-           xMsecs);
-  for (int i = 1; i < m_plotPoints.size(); ++i) {
-    const qreal d =
-        qAbs(static_cast<qreal>(m_plotPoints.at(i).first.toMSecsSinceEpoch()) -
-             xMsecs);
-    if (d < bestDist) {
-      bestDist = d;
-      best = i;
-    }
-  }
-  return best;
+  const qint64 target = static_cast<qint64>(xMsecs);
+  auto it = std::lower_bound(m_plotPoints.begin(), m_plotPoints.end(), target,
+      [](const QPair<QDateTime, double>& pt, qint64 t) {
+          return pt.first.toMSecsSinceEpoch() < t;
+      });
+  if (it == m_plotPoints.end())
+      return static_cast<int>(m_plotPoints.size() - 1);
+  if (it == m_plotPoints.begin())
+      return 0;
+  const int idx = static_cast<int>(std::distance(m_plotPoints.begin(), it));
+  const qint64 d1 = qAbs(m_plotPoints[idx - 1].first.toMSecsSinceEpoch() - target);
+  const qint64 d2 = qAbs(m_plotPoints[idx].first.toMSecsSinceEpoch() - target);
+  return (d1 <= d2) ? (idx - 1) : idx;
 }
 
 void ChartWindow::updateCrosshair(const QPoint &viewPos) {
@@ -973,9 +1212,36 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
 
   const QDateTime t = m_plotPoints.at(idx).first;
   const double price = m_plotPoints.at(idx).second;
-  m_tipLabel->setText(QStringLiteral("%1\n%2")
-                          .arg(t.toString(QStringLiteral("HH:mm:ss")))
-                          .arg(price, 0, 'f', 2));
+
+  QString tipText;
+  if (!isIntradayMode()) {
+    // 跨天日线模式：展示具体日期与收盘价（解决 00:00:01 丢失日期问题）
+    tipText = QStringLiteral("📅 %1\n收盘: %2 元/g")
+                  .arg(t.toString(QStringLiteral("yyyy-MM-dd")))
+                  .arg(price, 0, 'f', 2);
+  } else if (m_periodCombo && m_periodCombo->currentData().toInt() == 1) {
+    // 历史单日分时：展示年月日 + 时分秒
+    tipText = QStringLiteral("🕒 %1 %2\n价格: %3 元/g")
+                  .arg(t.toString(QStringLiteral("yyyy-MM-dd")))
+                  .arg(t.toString(QStringLiteral("HH:mm:ss")))
+                  .arg(price, 0, 'f', 2);
+  } else {
+    // 今日实时分时：展示时分秒
+    tipText = QStringLiteral("🕒 %1\n价格: %2 元/g")
+                  .arg(t.toString(QStringLiteral("HH:mm:ss")))
+                  .arg(price, 0, 'f', 2);
+  }
+
+  // 若处于预测极值突破/跌破状态，提示标注
+  if (m_hasPredict && isIntradayMode()) {
+    if (m_lastPredictLow > 0.0 && price < m_lastPredictLow) {
+      tipText += QStringLiteral(" (⚠️已破预低)");
+    } else if (m_lastPredictHigh > 0.0 && price > m_lastPredictHigh) {
+      tipText += QStringLiteral(" (🚀已破预高)");
+    }
+  }
+
+  m_tipLabel->setText(tipText);
   m_tipLabel->adjustSize();
 
   int tx = viewPos.x() + 14;
@@ -1153,8 +1419,21 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
   setNum(m_sideLowLabel, low);
 
   if (hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
-    setNum(m_sidePredictHighLabel, m_lastPredictHigh);
-    setNum(m_sidePredictLowLabel, m_lastPredictLow);
+    if (current > 0.0 && current > m_lastPredictHigh) {
+      m_sidePredictHighLabel->setText(QStringLiteral("%1 (突破)").arg(m_lastPredictHigh, 0, 'f', 2));
+      m_sidePredictHighLabel->setToolTip(tr("当前实时价格已突破预期最高阻力位！"));
+    } else {
+      setNum(m_sidePredictHighLabel, m_lastPredictHigh);
+      m_sidePredictHighLabel->setToolTip(QString());
+    }
+
+    if (current > 0.0 && current < m_lastPredictLow) {
+      m_sidePredictLowLabel->setText(QStringLiteral("%1 (击穿)").arg(m_lastPredictLow, 0, 'f', 2));
+      m_sidePredictLowLabel->setToolTip(tr("当前实时价格已跌破预期最低支撑位！"));
+    } else {
+      setNum(m_sidePredictLowLabel, m_lastPredictLow);
+      m_sidePredictLowLabel->setToolTip(QString());
+    }
   } else if (hasPredict && predict > 0.0) {
     setNum(m_sidePredictHighLabel, predict);
     if (m_sidePredictLowLabel)
@@ -1170,7 +1449,83 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
     m_sideModeLabel->setToolTip(tag);
   }
 
-  // 预测变化时同步刷新图表标题（今高/今低 + 预测高/低）
+  // 经典黄金走势策略分析（楔形、三角形、双底双顶、通道等）
+  if (m_plotPoints.size() >= 12) {
+    std::vector<goldsdk::IntradayPoint> pts;
+    pts.reserve(static_cast<size_t>(m_plotPoints.size()));
+    for (const auto& p : m_plotPoints) {
+      goldsdk::IntradayPoint ip;
+      ip.epochMs = p.first.toMSecsSinceEpoch();
+      ip.price = p.second;
+      pts.push_back(ip);
+    }
+    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    if (pat.valid) {
+      m_currentPatternText = QString::fromStdString(pat.name);
+      if (m_sidePatternLabel) {
+        QString color = QStringLiteral("#ffd591"); // 默认温金
+        if (pat.bias == "看多突破" || pat.bias == "强烈看多")
+          color = QStringLiteral("#ff7875"); // 暖红看多突破
+        else if (pat.bias == "看空破位" || pat.bias == "强烈看空")
+          color = QStringLiteral("#5cdbd3"); // 绿/青看空破位
+        else if (pat.bias.find("变盘") != std::string::npos)
+          color = QStringLiteral("#ffc53d"); // 警示橙黄
+        m_sidePatternLabel->setText(QString::fromStdString(pat.name));
+        m_sidePatternLabel->setStyleSheet(QStringLiteral("color:%1;font-size:12px;font-weight:bold;").arg(color));
+      }
+      if (m_sidePatternStrategyLabel) {
+        QString desc = QString::fromStdString(pat.strategy);
+        if (pat.resistance > 0.0 && pat.support > 0.0) {
+          if (pat.bias.find("突破") != std::string::npos || pat.bias == "强烈看多") {
+            desc += QStringLiteral("\n[🚀突破目标: %1 | 回踩支撑: %2]").arg(pat.resistance, 0, 'f', 2).arg(pat.support, 0, 'f', 2);
+          } else if (pat.bias.find("破位") != std::string::npos || pat.bias.find("跌破") != std::string::npos || pat.bias == "强烈看空") {
+            desc += QStringLiteral("\n[⚠️破位目标: %1 | 反弹阻力: %2]").arg(pat.support, 0, 'f', 2).arg(pat.resistance, 0, 'f', 2);
+          } else {
+            desc += QStringLiteral("\n[关键阻力: %1 | 关键支撑: %2]").arg(pat.resistance, 0, 'f', 2).arg(pat.support, 0, 'f', 2);
+          }
+        }
+
+        const QString code = currentTypeCode();
+        const bool isZs = (code == QStringLiteral("zs"));
+        const double feeRate = AppSettings::instance().feeRate(); // 0.004 即 0.4%
+        if (isZs && current > 0.0) {
+          if (pat.bias == "看多突破" || pat.bias == "强烈看多" || pat.bias == "多头蓄势") {
+            const double breakEven = current / (1.0 - feeRate);
+            const double target = pat.resistance > current ? pat.resistance : (pat.breakoutTarget > current ? pat.breakoutTarget : current * 1.015);
+            const double targetNet = target * (1.0 - feeRate);
+            const double netProfit = targetNet - current;
+            desc += QStringLiteral("\n\n【浙商·买入策略排除0.4%手续费测算】\n"
+                                   "• 现价买入成本: %1 元/g\n"
+                                   "• 保本卖出价格: %2 元/g (抗费损 +%3 元/g)\n"
+                                   "• 目标位(%4)净得: %5 元/g (预计净利: %6%7 元/g)")
+                        .arg(current, 0, 'f', 2)
+                        .arg(breakEven, 0, 'f', 2)
+                        .arg(breakEven - current, 0, 'f', 2)
+                        .arg(target, 0, 'f', 2)
+                        .arg(targetNet, 0, 'f', 2)
+                        .arg(netProfit >= 0.0 ? QStringLiteral("+") : QStringLiteral(""))
+                        .arg(netProfit, 0, 'f', 2);
+          } else if (pat.bias == "看空破位" || pat.bias == "强烈看空" || pat.bias == "空头蓄势") {
+            const double fee = current * feeRate;
+            const double net = current - fee;
+            desc += QStringLiteral("\n\n【浙商·卖出策略排除0.4%手续费测算】\n"
+                                   "• 现价卖出价格: %1 元/g\n"
+                                   "• 排除卖出手续费(0.4%): -%2 元/g\n"
+                                   "• 预计实际净到手: %3 元/g\n"
+                                   "• 建议: 触及高点阻力或破位，逢高分批止盈/减仓防守！")
+                        .arg(current, 0, 'f', 2)
+                        .arg(fee, 0, 'f', 2)
+                        .arg(net, 0, 'f', 2);
+          }
+        }
+
+        m_sidePatternStrategyLabel->setText(desc);
+        m_sidePatternStrategyLabel->setToolTip(desc);
+      }
+    }
+  }
+
+  // 预测变化时同步刷新图表标题（今高/今低 + 预测高/低 + 形态）
   if (isIntradayMode())
     refreshIntradayTitle();
 
@@ -1184,57 +1539,212 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
   const double feeRate = AppSettings::instance().feeRate();
   const double feePct = feeRate * 100.0;
 
-  if (!isZs) {
-    if (m_tbFeeLabel) m_tbFeeLabel->setVisible(false);
-    if (m_sideFeeLabel) m_sideFeeLabel->setVisible(false);
-    return;
-  }
-
   if (currentPrice <= 0.0 && !m_plotPoints.isEmpty()) {
     currentPrice = m_plotPoints.last().second;
   }
 
-  if (currentPrice <= 0.0) {
-    if (m_tbFeeLabel) {
-      m_tbFeeLabel->setVisible(true);
-      m_tbFeeLabel->setText(tr("💰 浙商卖出手续费: -- 元/g (%1%)").arg(feePct, 0, 'f', 1));
-    }
-    if (m_sideFeeLabel) {
-      m_sideFeeLabel->setVisible(true);
-      m_sideFeeLabel->setText(tr("卖出手续费: --/g (%1%)").arg(feePct, 0, 'f', 1));
-    }
-    return;
-  }
-
-  const double fee = currentPrice * feeRate;
-  const double net = currentPrice - fee;
-
-  const QString tip = tr("【浙商银行·积存金交易费率参考】\n"
-                         "当前现价: %1 元/g\n"
-                         "卖出手续费率: %2%\n"
-                         "当前卖出手续费: %3 元/g\n"
-                         "预计到手净价: %4 元/g")
-                          .arg(currentPrice, 0, 'f', 2)
-                          .arg(feePct, 0, 'f', 1)
-                          .arg(fee, 0, 'f', 2)
-                          .arg(net, 0, 'f', 2);
-
-  if (m_tbFeeLabel) {
-    m_tbFeeLabel->setVisible(true);
-    m_tbFeeLabel->setText(tr("💰 浙商卖出手续费: %1元/g (%2%) | 净到手: %3元/g")
-                              .arg(fee, 0, 'f', 2)
-                              .arg(feePct, 0, 'f', 1)
-                              .arg(net, 0, 'f', 2));
-    m_tbFeeLabel->setToolTip(tip);
-  }
-
+  // 1. 侧边栏手续费专属卡片（仅对浙商显示）
   if (m_sideFeeLabel) {
-    m_sideFeeLabel->setVisible(true);
-    m_sideFeeLabel->setText(tr("卖出手续费: %1/g (%2%) · 净得: %3")
-                                .arg(fee, 0, 'f', 2)
+    if (!isZs) {
+      m_sideFeeLabel->setVisible(false);
+    } else {
+      m_sideFeeLabel->setVisible(true);
+      if (currentPrice <= 0.0) {
+        m_sideFeeLabel->setText(tr("卖出手续费: --/g (%1%)").arg(feePct, 0, 'f', 1));
+      } else {
+        const double fee = currentPrice * feeRate;
+        const double net = currentPrice - fee;
+        const QString tip = tr("【浙商银行·积存金交易费率参考】\n"
+                               "当前现价: %1 元/g\n"
+                               "卖出手续费率: %2%\n"
+                               "当前卖出手续费: %3 元/g\n"
+                               "预计到手净价: %4 元/g")
+                                .arg(currentPrice, 0, 'f', 2)
                                 .arg(feePct, 0, 'f', 1)
-                                .arg(net, 0, 'f', 2));
-    m_sideFeeLabel->setToolTip(tip);
+                                .arg(fee, 0, 'f', 2)
+                                .arg(net, 0, 'f', 2);
+        m_sideFeeLabel->setText(tr("卖出手续费: %1/g (%2%) · 净得: %3")
+                                    .arg(fee, 0, 'f', 2)
+                                    .arg(feePct, 0, 'f', 1)
+                                    .arg(net, 0, 'f', 2));
+        m_sideFeeLabel->setToolTip(tip);
+      }
+    }
+  }
+
+  // 2. 顶部工具栏策略提示徽标（针对买入策略、卖出策略给出鲜明提示，排除浙商0.4%手续费）
+  if (m_tbFeeLabel) {
+    goldsdk::PatternResult pat;
+    if (m_plotPoints.size() >= 12) {
+      std::vector<goldsdk::IntradayPoint> pts;
+      pts.reserve(static_cast<size_t>(m_plotPoints.size()));
+      for (const auto& p : m_plotPoints) {
+        goldsdk::IntradayPoint ip;
+        ip.epochMs = p.first.toMSecsSinceEpoch();
+        ip.price = p.second;
+        pts.push_back(ip);
+      }
+      pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    }
+
+    // 只有确认向上突破或向下跌破时，才呈现鲜明的买入/卖出触发状态！
+    const bool isBuy = pat.valid && (pat.bias == "看多突破" || pat.bias == "强烈看多");
+    const bool isSell = pat.valid && (pat.bias == "看空破位" || pat.bias == "强烈看空");
+
+    if (isBuy) {
+      const double breakEven = isZs ? (currentPrice / (1.0 - feeRate)) : currentPrice;
+      const double target = pat.resistance > currentPrice ? pat.resistance : (pat.breakoutTarget > currentPrice ? pat.breakoutTarget : currentPrice * 1.015);
+      const double targetNet = isZs ? (target * (1.0 - feeRate)) : target;
+      const double netProfit = targetNet - currentPrice;
+
+      QString text;
+      if (isZs) {
+        text = tr("🟢【买入策略触发】%1 | 排除0.4%手续费保本价: %2 | 目标净得: %3")
+                   .arg(QString::fromStdString(pat.name))
+                   .arg(breakEven, 0, 'f', 2)
+                   .arg(targetNet, 0, 'f', 2);
+      } else {
+        text = tr("🟢【买入策略触发】%1 | 阻力目标: %2 | 回踩支撑: %3")
+                   .arg(QString::fromStdString(pat.name))
+                   .arg(pat.resistance, 0, 'f', 2)
+                   .arg(pat.support, 0, 'f', 2);
+      }
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(text);
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#132c1c;"
+          "  color:#73d13d;"
+          "  border:1px solid #237804;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:bold;"
+          "}"
+          "QLabel#tbFeeLabel:hover{"
+          "  background:#1b3d27;"
+          "  border-color:#52c41a;"
+          "  color:#95de64;"
+          "}");
+      m_tbFeeLabel->setToolTip(
+          tr("【🟢 买入策略触发提示】\n"
+             "• 形态名称：%1\n"
+             "• 多空偏向：%2\n"
+             "• 操作指引：%3\n"
+             "• 现价：%4 元/g\n"
+             "• 排除浙商0.4%卖出手续费保本卖出价：%5 元/g (抗费损 +%6 元/g)\n"
+             "• 目标位 %7 排除手续费后预计净到手：%8 元/g (预期净盈: %9%10 元/g)")
+              .arg(QString::fromStdString(pat.name))
+              .arg(QString::fromStdString(pat.bias))
+              .arg(QString::fromStdString(pat.strategy))
+              .arg(currentPrice, 0, 'f', 2)
+              .arg(breakEven, 0, 'f', 2)
+              .arg(breakEven - currentPrice, 0, 'f', 2)
+              .arg(target, 0, 'f', 2)
+              .arg(targetNet, 0, 'f', 2)
+              .arg(netProfit >= 0 ? QStringLiteral("+") : QStringLiteral(""))
+              .arg(netProfit, 0, 'f', 2));
+    } else if (isSell) {
+      const double fee = currentPrice * feeRate;
+      const double net = currentPrice - fee;
+
+      QString text;
+      if (isZs) {
+        text = tr("🔴【卖出策略触发】%1 | 排除0.4%手续费净到手: %2 (扣费-%3)")
+                   .arg(QString::fromStdString(pat.name))
+                   .arg(net, 0, 'f', 2)
+                   .arg(fee, 0, 'f', 2);
+      } else {
+        text = tr("🔴【卖出策略触发】%1 | 关键阻力: %2 | 破位支撑: %3")
+                   .arg(QString::fromStdString(pat.name))
+                   .arg(pat.resistance, 0, 'f', 2)
+                   .arg(pat.support, 0, 'f', 2);
+      }
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(text);
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#2c1314;"
+          "  color:#ff7875;"
+          "  border:1px solid #a8071a;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:bold;"
+          "}"
+          "QLabel#tbFeeLabel:hover{"
+          "  background:#3e1c1f;"
+          "  border-color:#ff4d4f;"
+          "  color:#ffa39e;"
+          "}");
+      m_tbFeeLabel->setToolTip(
+          tr("【🔴 卖出策略触发提示】\n"
+             "• 形态名称：%1\n"
+             "• 多空偏向：%2\n"
+             "• 操作指引：%3\n"
+             "• 现价：%4 元/g\n"
+             "• 排除浙商0.4%卖出手续费金额：-%5 元/g\n"
+             "• 预计实际净到手价格：%6 元/g\n"
+             "建议按计划逢高分批止盈或破位离场防守！")
+              .arg(QString::fromStdString(pat.name))
+              .arg(QString::fromStdString(pat.bias))
+              .arg(QString::fromStdString(pat.strategy))
+              .arg(currentPrice, 0, 'f', 2)
+              .arg(fee, 0, 'f', 2)
+              .arg(net, 0, 'f', 2));
+    } else if (pat.valid) {
+      // 处于形态构筑/蓄势整理期，未形成突破前保持沉稳展示，绝不频繁跳动
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(tr("🎯【走势观察】%1 · 现价 %2").arg(QString::fromStdString(pat.name)).arg(currentPrice > 0.0 ? QString::number(currentPrice, 'f', 2) : tr("--")));
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#1f1d16;"
+          "  color:#ffd591;"
+          "  border:1px solid #874d00;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:600;"
+          "}"
+          "QLabel#tbFeeLabel:hover{"
+          "  background:#2b261a;"
+          "  border-color:#d48806;"
+          "  color:#ffe58f;"
+          "}");
+      m_tbFeeLabel->setToolTip(
+          tr("【🎯 当前走势形态与策略观察】\n"
+             "• 形态名称：%1\n"
+             "• 当前状态：%2\n"
+             "• 操作建议：%3\n"
+             "• 现价：%4 元/g\n"
+             "• 阻力位：%5 | 支撑位：%6\n"
+             "（形态正在构筑蓄势中，尚未形成确定性突破，建议维持观望。）")
+              .arg(QString::fromStdString(pat.name))
+              .arg(QString::fromStdString(pat.bias))
+              .arg(QString::fromStdString(pat.strategy))
+              .arg(currentPrice, 0, 'f', 2)
+              .arg(pat.resistance, 0, 'f', 2)
+              .arg(pat.support, 0, 'f', 2));
+    } else {
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(tr("🎯【策略提示】震荡整理观望 · 现价 %1").arg(currentPrice > 0.0 ? QString::number(currentPrice, 'f', 2) : tr("--")));
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#1a1d24;"
+          "  color:#8c9ba5;"
+          "  border:1px solid #2a3347;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:500;"
+          "}"
+          "QLabel#tbFeeLabel:hover{"
+          "  background:#232731;"
+          "  border-color:#3e4a61;"
+          "  color:#a5b5c3;"
+          "}");
+      m_tbFeeLabel->setToolTip(tr("【🎯 当前走势策略参考】\n现价处于日内震荡整理区间，暂无明确形态突破或破位买卖策略，建议维持现有仓位观望。"));
+    }
   }
 }
 
@@ -1252,25 +1762,26 @@ void ChartWindow::refreshIntradayTitle()
   const int n = m_plotPoints.size();
   QString predText;
   if (m_hasPredict && m_lastPredictHigh > 0.0 && m_lastPredictLow > 0.0) {
-    predText = tr("  |  预高: %1 | 预低: %2")
-                   .arg(m_lastPredictHigh, 0, 'f', 2)
-                   .arg(m_lastPredictLow, 0, 'f', 2);
-  }
-  QString feeText;
-  if (currentTypeCode() == QStringLiteral("zs") && !m_plotPoints.isEmpty()) {
-    const double curPrice = m_plotPoints.last().second;
-    if (curPrice > 0.0) {
-      const double fee = curPrice * AppSettings::instance().feeRate();
-      feeText = tr("  |  手续费: %1/g").arg(fee, 0, 'f', 2);
+    const double curPrice = m_plotPoints.isEmpty() ? 0.0 : m_plotPoints.last().second;
+    QString breachNote;
+    if (curPrice > 0.0 && curPrice < m_lastPredictLow) {
+      breachNote = tr(" ⚠️破预低");
+    } else if (curPrice > 0.0 && curPrice > m_lastPredictHigh) {
+      breachNote = tr(" 🚀破预高");
     }
+    predText = tr("  |  预高: %1 | 预低: %2%3")
+                   .arg(m_lastPredictHigh, 0, 'f', 2)
+                   .arg(m_lastPredictLow, 0, 'f', 2)
+                   .arg(breachNote);
   }
+  QString patternNote = m_currentPatternText.isEmpty() ? QString() : tr("  |  形态: %1").arg(m_currentPatternText);
   m_chart->setTitle(tr("%1 · 今日分时（%2点）  今高: %3 | 今低: %4%5%6")
                         .arg(typeName)
                         .arg(n)
                         .arg(high, 0, 'f', 2)
                         .arg(low, 0, 'f', 2)
                         .arg(predText)
-                        .arg(feeText));
+                        .arg(patternNote));
 }
 
 void ChartWindow::applyLocalForecastLines(double predHigh, double predLow)
@@ -1472,6 +1983,7 @@ void ChartWindow::onChartReplyFinished(QNetworkReply *reply) {
   const QJsonArray arr = root.value(QStringLiteral("data")).toArray();
   QVector<QPair<qint64, double>> chartPoints;
   chartPoints.reserve(arr.size());
+  const qint64 nowSec = QDateTime::currentSecsSinceEpoch();
   for (const QJsonValue &v : arr) {
     if (!v.isObject())
       continue;
@@ -1479,7 +1991,7 @@ void ChartWindow::onChartReplyFinished(QNetworkReply *reply) {
     const qint64 t =
         static_cast<qint64>(o.value(QStringLiteral("t")).toDouble());
     const double p = o.value(QStringLiteral("p")).toDouble();
-    if (t > 0 && p > 0.0)
+    if (t > 0 && t <= nowSec + 60 && p > 0.0)
       chartPoints.append({t, p});
   }
 
@@ -1641,6 +2153,10 @@ void ChartWindow::updateSeries() {
     maxTime = nextMidnight.addSecs(3600);
 
   m_axisX->setRange(minTime, maxTime);
+  m_defaultMinX = minTime;
+  m_defaultMaxX = maxTime;
+  if (m_isCompactView)
+    applyFitDataRange();
 
   qreal margin = qMax(0.3, (maxPrice - minPrice) * 0.12);
   if (qFuzzyCompare(minPrice, maxPrice))
@@ -1892,6 +2408,8 @@ void ChartWindow::loadIntradayForDate(const QDate& day)
         const QDateTime x1 = tLast.addSecs(300);
         m_axisX->setRange(x0, x1);
         m_axisX->setFormat(QStringLiteral("HH:mm"));
+        m_defaultMinX = x0;
+        m_defaultMaxX = x1;
     }
 
     const QString span = tr("%1–%2")
@@ -1966,9 +2484,13 @@ void ChartWindow::loadDailyRange(const QDate& from, const QDate& to)
         m_lowSeries->append(m_plotPoints.at(lo).first.toMSecsSinceEpoch(), minP);
         m_lowSeries->setVisible(true);
     }
-    if (m_axisX)
-        m_axisX->setRange(QDateTime(from, QTime(0, 0)).addDays(-1),
-                          QDateTime(to, QTime(23, 59)).addDays(1));
+    if (m_axisX) {
+        const QDateTime x0 = QDateTime(from, QTime(0, 0)).addDays(-1);
+        const QDateTime x1 = QDateTime(to, QTime(23, 59)).addDays(1);
+        m_axisX->setRange(x0, x1);
+        m_defaultMinX = x0;
+        m_defaultMaxX = x1;
+    }
     const double margin = qMax(0.5, (maxP - minP) * 0.12);
     if (m_axisY)
         m_axisY->setRange(minP - margin, maxP + margin);
@@ -2206,158 +2728,148 @@ void ChartWindow::updateMovingAverages()
     m_ma20Series->setVisible(want20 && intraday);
 
     // 勾选均线时绝不能关掉预测线
+    m_ma5Series->setVisible(want5);
+    if (m_ma10Series)
+        m_ma10Series->setVisible(want10);
+    m_ma20Series->setVisible(want20);
+
+    // 勾选均线时绝不能关掉预测线
     if (intraday)
         setForecastVisible(true);
 
-    if (!any || !intraday) {
+    if (!any || m_plotPoints.isEmpty()) {
         if (m_chart)
             m_chart->update();
         return;
     }
 
-    if (m_plotPoints.isEmpty()) {
-        if (m_chart)
-            m_chart->update();
-        return;
-    }
+    const int n = m_plotPoints.size();
+    double pxMin = m_plotPoints.first().second, pxMax = pxMin;
 
-    double lastPx = m_plotPoints.last().second;
-    double pxMin = lastPx, pxMax = lastPx;
-    for (const auto& pt : m_plotPoints) {
-        if (pt.second <= 0)
-            continue;
-        pxMin = qMin(pxMin, pt.second);
-        pxMax = qMax(pxMax, pt.second);
-    }
-
-    // 日线收盘：与现价尺度一致才画水平 MA（5/10/20 日）
-    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, currentTypeCode());
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, QStringLiteral("zs"));
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(40, QStringLiteral("gj"));
-
-    // 尺度纠正：日线若是另一单位（如美元盎司），按现价/末日线比值缩放
-    if (!closes.isEmpty() && lastPx > 0.0) {
-        const double lastClose = closes.last().second;
-        if (lastClose > 0.0) {
-            const double ratio = lastPx / lastClose;
-            // 明显不在同一量级（如 930 vs 2600）
-            if (ratio < 0.55 || ratio > 1.8) {
-                for (auto& c : closes)
-                    c.second *= ratio;
+    if (!intraday) {
+        // ==================== 日线模式：基于多日历史收盘计算日线 MA5 / MA10 / MA20 ====================
+        const QDate firstDate = m_plotPoints.first().first.date();
+        auto preCloses = ExtremeDatabase::instance().loadDailyClosesRange(
+            firstDate.addDays(-45), firstDate.addDays(-1), currentTypeCode());
+        if (preCloses.size() < 20) {
+            auto gjPre = ExtremeDatabase::instance().loadDailyClosesRange(
+                firstDate.addDays(-45), firstDate.addDays(-1), QStringLiteral("gj"));
+            if (!gjPre.isEmpty() && !m_plotPoints.isEmpty()) {
+                const double r = m_plotPoints.first().second / gjPre.last().second;
+                for (auto& pc : gjPre)
+                    pc.second *= r;
+                preCloses = gjPre;
             }
         }
-    }
 
-    auto smaDaily = [](const QVector<QPair<QDate, double>>& c, int n) -> double {
-        if (c.size() < n)
-            return 0.0;
-        double s = 0.0;
-        for (int i = c.size() - n; i < c.size(); ++i)
-            s += c.at(i).second;
-        return s / static_cast<double>(n);
-    };
+        QVector<QPair<QDateTime, double>> allCloses = preCloses;
+        allCloses.append(m_plotPoints);
 
-    auto nearPrice = [&](double ma) {
-        if (ma <= 0.0 || lastPx <= 0.0)
-            return false;
-        return ma >= lastPx * 0.80 && ma <= lastPx * 1.20;
-    };
+        const int total = allCloses.size();
+        const int offset = preCloses.size();
 
-    const double d5 = smaDaily(closes, 5);
-    const double d10 = smaDaily(closes, 10);
-    const double d20 = smaDaily(closes, 20);
+        auto calcDailyMa = [&](int win, QLineSeries* series) {
+            if (!series) return;
+            series->setName(QStringLiteral("MA%1").arg(win));
+            for (int i = offset; i < total; ++i) {
+                if (i + 1 < win) continue;
+                double sum = 0.0;
+                for (int k = i - win + 1; k <= i; ++k)
+                    sum += allCloses.at(k).second;
+                const double ma = sum / static_cast<double>(win);
+                series->append(allCloses.at(i).first.toMSecsSinceEpoch(), ma);
+                pxMin = qMin(pxMin, ma);
+                pxMax = qMax(pxMax, ma);
+            }
+        };
 
-    const QDateTime t0 = QDateTime(QDate::currentDate(), QTime(0, 0));
-    const QDateTime t1 = QDateTime(QDate::currentDate(), QTime(23, 59, 59));
-    const qint64 x0 = t0.toMSecsSinceEpoch();
-    const qint64 x1 = t1.toMSecsSinceEpoch();
+        if (want5) calcDailyMa(5, m_ma5Series);
+        if (want10 && m_ma10Series) calcDailyMa(10, m_ma10Series);
+        if (want20) calcDailyMa(20, m_ma20Series);
 
-    // 分时滚动均线（保证勾选后一定有曲线，不依赖日线库）
-    const int n = m_plotPoints.size();
-    QVector<double> pref(n + 1, 0.0);
-    for (int i = 0; i < n; ++i)
-        pref[i + 1] = pref[i] + m_plotPoints.at(i).second;
-    auto winAvg = [&](int i, int win) -> double {
-        if (i + 1 < win)
-            return 0.0;
-        return (pref[i + 1] - pref[i + 1 - win]) / static_cast<double>(win);
-    };
-    const int step = qMax(1, n / 400);
-
-    auto fillRolling = [&](QLineSeries* series, int win, bool use) {
-        if (!series || !use)
-            return;
-        series->setName(win == 5 ? tr("MA5") : (win == 10 ? tr("MA10") : tr("MA20")));
-        for (int i = 0; i < n; i += step) {
-            const double a = winAvg(i, win);
-            if (a > 0.0)
-                series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), a);
+    } else {
+        // ==================== 分时模式：绘制贴合分时行情的灵动平滑均线曲线 ====================
+        const double lastPx = m_plotPoints.last().second;
+        // 获取多日历史日线收盘价，优先当前品种（如浙商），不足20天自动使用伦敦金(gj)折算补齐
+        auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(30, currentTypeCode());
+        if (closes.size() < 20) {
+            auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(30, QStringLiteral("gj"));
+            if (!gjCloses.isEmpty() && lastPx > 0.0) {
+                const double lastGj = gjCloses.last().second;
+                const double ratio = (lastGj > 0.0) ? (lastPx / lastGj) : 1.0;
+                for (auto& c : gjCloses)
+                    c.second *= ratio;
+                closes = gjCloses;
+            }
         }
-        const double aLast = winAvg(n - 1, win);
-        if (aLast > 0.0)
-            series->append(m_plotPoints.last().first.toMSecsSinceEpoch(), aLast);
-    };
 
-    // 优先：有合格日线则画水平参考线；否则用分时滚动 MA
-    if (want5) {
-        if (nearPrice(d5)) {
-            m_ma5Series->append(x0, d5);
-            m_ma5Series->append(x1, d5);
-            m_ma5Series->setName(tr("MA5日"));
-            pxMin = qMin(pxMin, d5);
-            pxMax = qMax(pxMax, d5);
-        } else {
-            fillRolling(m_ma5Series, 5, true);
-        }
-    }
-    if (want10 && m_ma10Series) {
-        if (nearPrice(d10)) {
-            m_ma10Series->append(x0, d10);
-            m_ma10Series->append(x1, d10);
-            m_ma10Series->setName(tr("MA10日"));
-            pxMin = qMin(pxMin, d10);
-            pxMax = qMax(pxMax, d10);
-        } else {
-            fillRolling(m_ma10Series, 10, true);
-        }
-    }
-    if (want20) {
-        if (nearPrice(d20)) {
-            m_ma20Series->append(x0, d20);
-            m_ma20Series->append(x1, d20);
-            m_ma20Series->setName(tr("MA20日"));
-            pxMin = qMin(pxMin, d20);
-            pxMax = qMax(pxMax, d20);
-        } else {
-            fillRolling(m_ma20Series, 20, true);
-        }
+        auto getSumPrev = [&](int days) -> double {
+            if (closes.size() < days) return 0.0;
+            double s = 0.0;
+            for (int i = closes.size() - days; i < closes.size(); ++i)
+                s += closes.at(i).second;
+            return s;
+        };
+        const double sum4 = getSumPrev(4);
+        const double sum9 = getSumPrev(9);
+        const double sum19 = getSumPrev(19);
+
+        // 分时价格前缀和
+        QVector<double> pref(n + 1, 0.0);
+        for (int i = 0; i < n; ++i)
+            pref[i + 1] = pref[i] + m_plotPoints.at(i).second;
+
+        auto rollingAvg = [&](int i, int win) -> double {
+            const int w = qMin(i + 1, win);
+            return (pref[i + 1] - pref[i + 1 - w]) / static_cast<double>(w);
+        };
+
+        const int step = qMax(1, n / 350);
+
+        auto fillIntradayCurve = [&](QLineSeries* series, int maDays, double sumPrev, int rollingWin) {
+            if (!series) return;
+            series->setName(QStringLiteral("MA%1").arg(maDays));
+            const bool hasHist = (sumPrev > 0.0);
+
+            for (int i = 0; i < n; i += step) {
+                const double rAvg = rollingAvg(i, rollingWin);
+                const double maVal = hasHist ? ((sumPrev + rAvg) / static_cast<double>(maDays)) : rAvg;
+                if (maVal > 0.0) {
+                    series->append(m_plotPoints.at(i).first.toMSecsSinceEpoch(), maVal);
+                    pxMin = qMin(pxMin, maVal);
+                    pxMax = qMax(pxMax, maVal);
+                }
+            }
+            const double rLast = rollingAvg(n - 1, rollingWin);
+            const double maLast = hasHist ? ((sumPrev + rLast) / static_cast<double>(maDays)) : rLast;
+            if (maLast > 0.0) {
+                series->append(m_plotPoints.last().first.toMSecsSinceEpoch(), maLast);
+                pxMin = qMin(pxMin, maLast);
+                pxMax = qMax(pxMax, maLast);
+            }
+        };
+
+        // 产生真实起伏的均线曲线
+        if (want5) fillIntradayCurve(m_ma5Series, 5, sum4, 8);
+        if (want10 && m_ma10Series) fillIntradayCurve(m_ma10Series, 10, sum9, 16);
+        if (want20) fillIntradayCurve(m_ma20Series, 20, sum19, 30);
     }
 
-    // Y 轴纳入均线与预测高低，避免预测虚线被裁掉
-    if (m_hasPredict) {
-        if (m_lastPredictHigh > 0)
-            pxMax = qMax(pxMax, m_lastPredictHigh);
-        if (m_lastPredictLow > 0)
-            pxMin = qMin(pxMin, m_lastPredictLow);
-    }
-    if (m_axisY && pxMax > pxMin) {
-        const double pad = qMax(0.3, (pxMax - pxMin) * 0.10);
+    // Y 轴自适应均线范围
+    if (m_axisY && pxMax > pxMin && intraday) {
+        const double pad = qMax(0.3, (pxMax - pxMin) * 0.08);
         const double curMin = m_axisY->min();
         const double curMax = m_axisY->max();
-        // 只扩大、不无故压缩（防止把已有分时/预测挤没）
         const double yLo = qMin(curMin, pxMin - pad);
         const double yHi = qMax(curMax, pxMax + pad);
         m_axisY->setRange(yLo, yHi);
     }
 
-    // 确保轴绑定（防止某些路径下系列未挂轴）
+    // 确保轴正确绑定
     if (m_axisX && m_axisY) {
         for (QLineSeries* s : {m_ma5Series, m_ma10Series, m_ma20Series,
                                m_forecastSeries, m_forecastLowSeries}) {
-            if (!s)
-                continue;
+            if (!s) continue;
             const auto axes = s->attachedAxes();
             if (!axes.contains(m_axisX))
                 s->attachAxis(m_axisX);
@@ -2365,11 +2877,6 @@ void ChartWindow::updateMovingAverages()
                 s->attachAxis(m_axisY);
         }
     }
-
-    if (m_forecastSeries)
-        m_forecastSeries->setVisible(true);
-    if (m_forecastLowSeries)
-        m_forecastLowSeries->setVisible(true);
 
     if (m_chart)
         m_chart->update();

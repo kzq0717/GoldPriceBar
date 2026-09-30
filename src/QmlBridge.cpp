@@ -631,8 +631,16 @@ void QmlBridge::saveAllSettings(const QVariantMap &m) {
 QVariantMap QmlBridge::get10DayAmplitude() {
     auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(
         10, AppSettings::instance().dataSource());
-    if (closes.size() < 3)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+    if (closes.size() < 3) {
+        auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+        if (!gjCloses.isEmpty() && m_price > 0.0) {
+            const double lastGj = gjCloses.last().second;
+            const double ratio = (lastGj > 0.0) ? (m_price / lastGj) : 1.0;
+            for (auto &c : gjCloses)
+                c.second *= ratio;
+            closes = gjCloses;
+        }
+    }
     if (closes.size() < 3) {
         QVariantMap res;
         res["text"] = tr("日线样本不足（需导入历史或运行累积）");
@@ -990,8 +998,16 @@ void QmlBridge::checkPlanAlerts(double price) {
 double QmlBridge::computeMa5() const {
     const QString src = AppSettings::instance().dataSource();
     auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, src);
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+    if (closes.size() < 5) {
+        auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+        if (!gjCloses.isEmpty() && m_price > 0.0) {
+            const double lastGj = gjCloses.last().second;
+            const double ratio = (lastGj > 0.0) ? (m_price / lastGj) : 1.0;
+            for (auto &c : gjCloses)
+                c.second *= ratio;
+            closes = gjCloses;
+        }
+    }
     if (closes.size() < 5)
         return 0.0;
     double s = 0.0;
@@ -1005,8 +1021,16 @@ double QmlBridge::computePercentile(double price) const {
     if (src == QStringLiteral("xau"))
         src = QStringLiteral("gj");
     auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, src);
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
+    if (closes.size() < 5) {
+        auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
+        if (!gjCloses.isEmpty() && price > 0.0) {
+            const double lastGj = gjCloses.last().second;
+            const double ratio = (lastGj > 0.0) ? (price / lastGj) : 1.0;
+            for (auto &c : gjCloses)
+                c.second *= ratio;
+            closes = gjCloses;
+        }
+    }
     if (closes.isEmpty() || price <= 0.0)
         return 50.0;
     int below = 0;
@@ -1317,11 +1341,19 @@ void QmlBridge::evaluateDecision(double price) {
 
     QString feeLine;
     if (src == QStringLiteral("zs") && price > 0.0) {
-        const double fee = price * AppSettings::instance().feeRate();
+        const double feeRate = AppSettings::instance().feeRate();
+        const double fee = price * feeRate;
         const double net = price - fee;
-        feeLine = tr("\n• 浙商卖出手续费(0.4%): %1 元/g · 净到手: %2 元/g")
-                      .arg(fee, 0, 'f', 2)
-                      .arg(net, 0, 'f', 2);
+        const double breakEven = price / (1.0 - feeRate);
+        if (level == 3) {
+            feeLine = tr("\n• 浙商卖出手续费(0.4%): 买入保本卖出价 %1 元/g (抗费损 +%2 元/g)")
+                          .arg(breakEven, 0, 'f', 2)
+                          .arg(breakEven - price, 0, 'f', 2);
+        } else {
+            feeLine = tr("\n• 浙商卖出手续费(0.4%): 扣费 %1 元/g · 预计净到手: %2 元/g")
+                          .arg(fee, 0, 'f', 2)
+                          .arg(net, 0, 'f', 2);
+        }
     }
 
     m_decisionTooltip = tr("【💡 实时趋势与交易决策参考】\n"

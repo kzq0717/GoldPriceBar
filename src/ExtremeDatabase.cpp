@@ -456,14 +456,25 @@ QVector<QPair<QDateTime, double>> ExtremeDatabase::loadIntradaySamples(
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
     QSqlQuery q(db);
     q.prepare(QStringLiteral(
-        "SELECT ts, price FROM intraday_samples "
+        "SELECT ts, price, minute_key FROM intraday_samples "
         "WHERE trade_date=? AND source=? ORDER BY minute_key ASC"));
     q.addBindValue(day.toString(Qt::ISODate));
     q.addBindValue(src);
     if (!q.exec())
         return out;
     while (q.next()) {
-        const QDateTime dt = QDateTime::fromString(q.value(0).toString(), Qt::ISODateWithMs);
+        const QString tsStr = q.value(0).toString();
+        QDateTime dt = QDateTime::fromString(tsStr, Qt::ISODateWithMs);
+        if (!dt.isValid())
+            dt = QDateTime::fromString(tsStr, Qt::ISODate);
+        if (!dt.isValid())
+            dt = QDateTime::fromString(tsStr, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        if (!dt.isValid()) {
+            const QString mKey = q.value(2).toString();
+            const QTime t = QTime::fromString(mKey, QStringLiteral("HH:mm"));
+            if (t.isValid())
+                dt = QDateTime(day, t);
+        }
         const double p = q.value(1).toDouble();
         if (dt.isValid() && p > 0.0)
             out.append({dt, p});

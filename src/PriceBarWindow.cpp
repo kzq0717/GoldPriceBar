@@ -11,6 +11,8 @@
 #include "Logger.h"
 #include "ExtremeDatabase.h"
 #include "EventCalendar.h"
+#include "ForecastService.h"
+#include <goldsdk/forecast.hpp>
 
 #include <QHBoxLayout>
 #include <QSizePolicy>
@@ -294,6 +296,7 @@ void PriceBarWindow::onPriceUpdated(double price, double change, const QString &
     updatePriceDisplay(price, change, sourceName);
     updatePnLDisplay(price);
     evaluateSmartAlerts(price);
+    evaluateStrategyAlerts(price);
     evaluatePremium(price);
     updateNetworkHealth();
     {
@@ -920,8 +923,16 @@ double PriceBarWindow::computeMa5() const {
                 ? QStringLiteral("ms")
                 : (AppSettings::instance().dataSource() == QStringLiteral("gj") ? QStringLiteral("gj")
                                                                                 : QStringLiteral("zs")));
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+    if (closes.size() < 5) {
+        auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+        if (!gjCloses.isEmpty() && m_lastPrice > 0.0) {
+            const double lastGj = gjCloses.last().second;
+            const double ratio = (lastGj > 0.0) ? (m_lastPrice / lastGj) : 1.0;
+            for (auto &c : gjCloses)
+                c.second *= ratio;
+            closes = gjCloses;
+        }
+    }
     if (closes.size() < 5)
         return 0.0;
     double s = 0.0;
@@ -935,8 +946,16 @@ double PriceBarWindow::computePercentile(double price) const {
     if (src == QStringLiteral("xau"))
         src = QStringLiteral("gj");
     auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, src);
-    if (closes.size() < 5)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
+    if (closes.size() < 5) {
+        auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(20, QStringLiteral("gj"));
+        if (!gjCloses.isEmpty() && price > 0.0) {
+            const double lastGj = gjCloses.last().second;
+            const double ratio = (lastGj > 0.0) ? (price / lastGj) : 1.0;
+            for (auto &c : gjCloses)
+                c.second *= ratio;
+            closes = gjCloses;
+        }
+    }
     if (closes.isEmpty() || price <= 0.0)
         return 50.0;
     int below = 0;
@@ -1040,6 +1059,143 @@ void PriceBarWindow::evaluatePremium(double primaryPrice) {
         m_trayIcon->showMessage(tr("溢价监测"), tr("比值偏离 %1%（阈 %2%）").arg(devPct, 0, 'f', 1).arg(thr, 0, 'f', 1),
             QSystemTrayIcon::Warning, 3500);
     }
+}
+
+void PriceBarWindow::evaluateStrategyAlerts(double price) {
+    if (price <= 0.0)
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+    if (!m_trayIcon || !AppSettings::instance().trayNotifyOnAlert())
+        return;
+
+    const auto ptsQ = HistoryCache::instance().todayPoints();
+    if (ptsQ.size() < 12)
+        return;
+
+    std::vector<goldsdk::IntradayPoint> pts;
+    pts.reserve(static_cast<size_t>(ptsQ.size()));
+    for (const auto &p : ptsQ) {
+        goldsdk::IntradayPoint ip;
+        ip.epochMs = p.first.toMSecsSinceEpoch();
+        ip.price = p.second;
+        pts.push_back(ip);
+    }
+
+    const auto pat = goldsdk::ForecastEngine::identifyPattern(pts);
+    if (!pat.valid)
+        return;
+
+    // 只有明确确立向上突破或向下跌破时，才属于真正的买卖触发动作！
+    const bool isBuy = (pat.bias == "看多突破" || pat.bias == "强烈看多");
+    const bool isSell = (pat.bias == "看空破位" || pat.bias == "强烈看空");
+
+    if (!isBuy && !isSell)
+        return; // 形态蓄势、通道运行或震荡整理期，坚决不触发弹窗打扰！
+
+    const QDateTime now = QDateTime::currentDateTime();
+    const int cool = qMax(600, AppSettings::instance().alertCooldownSec() * 2);
+
+    const QString currentPatName = QString::fromStdString(pat.name);
+
+    // 核心防抖与防反复横跳拦截器 (Anti-Whipsaw Filter)
+    if (m_lastStrategyNotify.isValid()) {
+        const qint64 elapsedSec = m_lastStrategyNotify.secsTo(now);
+        const double priceDiff = std::abs(price - m_lastStrategyPrice);
+
+        // 1. 同方向或波动未明显拉开：在冷却期内且价格位移不足 0.25%（约 1.7 元），拦截不弹窗
+        if (elapsedSec < cool && priceDiff < price * 0.0025) {
+            return;
+        }
+
+        // 2. 关键防护：买入/卖出方向急剧对翻拦截！
+        // 如果上一次是买入提示，本次是卖出提示（或反之），若 15 分钟内价差未超过 1.50 元，坚决判定为临界抖动噪点拦截！
+        const QString currentKind = isBuy ? QStringLiteral("buy") : QStringLiteral("sell");
+        if (!m_lastStrategyKind.isEmpty() && m_lastStrategyKind != currentKind) {
+            if (elapsedSec < 900 && priceDiff < 1.50) {
+                return; // 彻底消灭在 0.01 元价差内的多空频繁打脸！
+            }
+        }
+    }
+
+    m_lastStrategyNotify = now;
+    m_lastStrategyPrice = price;
+    m_lastStrategyKind = isBuy ? QStringLiteral("buy") : QStringLiteral("sell");
+    m_lastStrategyPatternName = currentPatName;
+    m_lastStrategyBias = pat.bias;
+
+    const bool isZs = (AppSettings::instance().dataSource() == QStringLiteral("zs"));
+    const double feeRate = AppSettings::instance().feeRate(); // 默认 0.004 即 0.4%
+
+    QString title;
+    QString body;
+
+    if (isBuy) {
+        title = tr("🟢 积存金·买入策略提示");
+        if (isZs) {
+            const double breakEven = price / (1.0 - feeRate);
+            const double target = pat.resistance > price ? pat.resistance : (pat.breakoutTarget > price ? pat.breakoutTarget : price * 1.015);
+            const double targetNet = target * (1.0 - feeRate);
+            const double netProfit = targetNet - price;
+            body = tr("【%1】现价 %2 触发买入策略！\n"
+                      "• 排除0.4%卖出手续费保本价: %3 元/g\n"
+                      "• 目标位 %4 排除手续费后预计净得: %5 元/g (净利: %6%7 元/g)\n"
+                      "• 指引: %8")
+                       .arg(currentPatName)
+                       .arg(price, 0, 'f', 2)
+                       .arg(breakEven, 0, 'f', 2)
+                       .arg(target, 0, 'f', 2)
+                       .arg(targetNet, 0, 'f', 2)
+                       .arg(netProfit >= 0.0 ? QStringLiteral("+") : QStringLiteral(""))
+                       .arg(netProfit, 0, 'f', 2)
+                       .arg(QString::fromStdString(pat.strategy));
+        } else {
+            body = tr("【%1】现价 %2 触发买入策略！目标阻力: %3，回踩支撑: %4。\n指引: %5")
+                       .arg(currentPatName)
+                       .arg(price, 0, 'f', 2)
+                       .arg(pat.resistance, 0, 'f', 2)
+                       .arg(pat.support, 0, 'f', 2)
+                       .arg(QString::fromStdString(pat.strategy));
+        }
+    } else {
+        title = tr("🔴 积存金·卖出策略提示");
+        if (isZs) {
+            const double fee = price * feeRate;
+            const double net = price - fee;
+            body = tr("【%1】现价 %2 触发卖出防守！\n"
+                      "• 排除0.4%卖出手续费: -%3 元/g\n"
+                      "• 预计实际到手净价: %4 元/g\n"
+                      "• 指引: 触及高点阻力或破位，逢高分批止盈/减仓防守！")
+                       .arg(currentPatName)
+                       .arg(price, 0, 'f', 2)
+                       .arg(fee, 0, 'f', 2)
+                       .arg(net, 0, 'f', 2);
+        } else {
+            body = tr("【%1】现价 %2 触发卖出防守！关键阻力: %3，破位支撑: %4。\n指引: %5")
+                       .arg(currentPatName)
+                       .arg(price, 0, 'f', 2)
+                       .arg(pat.resistance, 0, 'f', 2)
+                       .arg(pat.support, 0, 'f', 2)
+                       .arg(QString::fromStdString(pat.strategy));
+        }
+    }
+
+    m_trayIcon->showMessage(title, body, isBuy ? QSystemTrayIcon::Information : QSystemTrayIcon::Warning, 6500);
+
+    if (AppSettings::instance().alertSound())
+        QApplication::beep();
+
+    m_alertKind = isBuy ? AlertKind::Low : AlertKind::High;
+    if (m_alertDot) {
+        m_alertDot->show();
+        if (!m_alertBlinkTimer->isActive())
+            m_alertBlinkTimer->start();
+    }
+
+    ExtremeDatabase::instance().insertAlertEvent(
+        now, AppSettings::instance().dataSource(),
+        isBuy ? QStringLiteral("strategy_buy") : QStringLiteral("strategy_sell"),
+        price, 0.0, body);
 }
 
 QString PriceBarWindow::buildDailyReportText() const {

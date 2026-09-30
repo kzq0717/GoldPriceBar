@@ -101,6 +101,12 @@ private:
     void setCurrentMarker(qint64 xMs, double y, bool startPulse = true);
     void updateCurrentMarker();
 
+    void zoomX(double factor, qreal centerMs = -1);
+    void panX(qreal deltaPx);
+    void applyFitDataRange();
+    void resetZoomRange();
+    void autoFitYForVisibleRange();
+
     QComboBox* m_periodCombo = nullptr;
     QDateEdit* m_dateFromEdit = nullptr;
     QDateEdit* m_dateToEdit = nullptr;
@@ -116,6 +122,16 @@ private:
     QAction* m_ma5Action = nullptr;
     QAction* m_ma10Action = nullptr;
     QAction* m_ma20Action = nullptr;
+
+    bool m_isPanning = false;
+    bool m_leftButtonPressed = false;
+    QPoint m_panStartPos;
+    QPoint m_leftPressPos;
+    qint64 m_panStartMinMs = 0;
+    qint64 m_panStartMaxMs = 0;
+    QDateTime m_defaultMinX;
+    QDateTime m_defaultMaxX;
+    bool m_isCompactView = false;
 
     QChartView* m_chartView = nullptr;
     QChart* m_chart = nullptr;
@@ -150,6 +166,9 @@ private:
     QLabel* m_sideModeLabel = nullptr;
     QListWidget* m_sideForecastList = nullptr;
     QLabel* m_sideTrendLabel = nullptr;
+    QLabel* m_sidePatternLabel = nullptr;
+    QLabel* m_sidePatternStrategyLabel = nullptr;
+    QString m_currentPatternText;
     QLabel* m_sideHitRateLabel = nullptr;
     QLabel* m_sideClockLabel = nullptr;
     QLabel* m_sideSessionLabel = nullptr;

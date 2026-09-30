@@ -64,6 +64,7 @@ class PriceBarWindow : public QWidget {
     void updatePnLDisplay(double price);
     void evaluateSmartAlerts(double price);
     void evaluatePremium(double primaryPrice);
+    void evaluateStrategyAlerts(double price);
     void checkDailyReport();
     void showDailyReport(bool force = false);
     void updateNetworkHealth();
@@ -113,6 +114,11 @@ class PriceBarWindow : public QWidget {
     QDateTime m_lastPlanNotify;
     QDateTime m_lastSmartNotify;
     QDateTime m_lastPremiumNotify;
+    QDateTime m_lastStrategyNotify;
+    double m_lastStrategyPrice = 0.0;
+    QString m_lastStrategyKind; // "buy" or "sell"
+    QString m_lastStrategyPatternName;
+    std::string m_lastStrategyBias;
     double m_lastSecondaryPrice = 0.0;
     QVector<double> m_premiumRatios; // 近窗主/对照比值
     QTimer *m_dailyReportTimer = nullptr;

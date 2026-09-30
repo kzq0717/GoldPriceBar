@@ -2,6 +2,7 @@
 #include "AppSettings.h"
 #include "EventCalendar.h"
 #include "ExtremeDatabase.h"
+#include "HistoryCache.h"
 #include "Logger.h"
 #include "UpdateChecker.h"
 
@@ -1012,10 +1013,23 @@ void SettingsDialog::refreshAmplitudeHint(bool applyToSpins)
 {
     if (!m_amplitudeHintLabel && !applyToSpins)
         return;
-    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(
-        10, AppSettings::instance().dataSource());
-    if (closes.size() < 3)
-        closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+    const QString src = AppSettings::instance().dataSource();
+    auto closes = ExtremeDatabase::instance().loadRecentDailyCloses(10, src);
+    if (closes.size() < 3) {
+        auto gjCloses = ExtremeDatabase::instance().loadRecentDailyCloses(10, QStringLiteral("gj"));
+        double curPx = 0.0;
+        const auto pts = HistoryCache::instance().todayPoints();
+        if (!pts.isEmpty()) {
+            curPx = pts.last().second;
+        }
+        if (!gjCloses.isEmpty() && curPx > 0.0) {
+            const double lastGj = gjCloses.last().second;
+            const double ratio = (lastGj > 0.0) ? (curPx / lastGj) : 1.0;
+            for (auto& c : gjCloses)
+                c.second *= ratio;
+            closes = gjCloses;
+        }
+    }
     if (closes.size() < 3) {
         if (m_amplitudeHintLabel)
             m_amplitudeHintLabel->setText(tr("日线样本不足（需导入历史或运行累积）"));
