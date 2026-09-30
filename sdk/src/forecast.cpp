@@ -509,6 +509,46 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     const double minAmpAbs = (curPx > 1000.0) ? 5.0 : 2.0; // 伦敦金(USD) vs 积存金(CNY)
     const double requiredAmp = std::max(curPx * minAmpRatio, minAmpAbs);
 
+    auto enrichResult = [&](PatternResult& r) {
+        if (!r.valid) return;
+        const double fee = cfg.feeRate;
+        if (r.bias == "看多突破" || r.bias == "强烈看多") {
+            const double target = (r.breakoutTarget > curPx) ? r.breakoutTarget : ((r.resistance > curPx) ? r.resistance : curPx * 1.015);
+            const double stopLoss = (r.support > 0.0 && r.support < curPx) ? r.support : curPx * 0.99;
+            r.netReward = (fee > 0.0) ? (target * (1.0 - fee) - curPx) : (target - curPx);
+            r.netRisk = (fee > 0.0) ? (curPx - stopLoss * (1.0 - fee)) : (curPx - stopLoss);
+            r.rrr = (r.netRisk > 0.05) ? std::max(0.0, r.netReward / r.netRisk) : 0.0;
+            const double atrDist = (cfg.atr > 0.0) ? (cfg.atr * (curPx > 1000.0 ? 1.8 : 1.5)) : (curPx * 0.005);
+            r.atrTrailingStop = std::max(stopLoss, curPx - atrDist);
+
+            // 严格净盈亏比过滤：如果扣除手续费后净利润 <= 0 或盈亏比不足 1.2，平滑降级为蓄势观察
+            if (r.netReward <= 0.0 || (r.rrr > 0.0 && r.rrr < 1.2)) {
+                r.bias = "多头蓄势";
+                r.strategy += " 【注意：扣费后净盈亏比仅 " + fmtPrice(r.rrr) + ":1，空间偏窄，建议轻仓观望，等待更优回踩。】";
+            }
+        } else if (r.bias == "看空破位" || r.bias == "强烈看空") {
+            const double target = (r.breakoutTarget > 0.0 && r.breakoutTarget < curPx) ? r.breakoutTarget : ((r.support > 0.0 && r.support < curPx) ? r.support : curPx * 0.985);
+            const double stopLoss = (r.resistance > curPx) ? r.resistance : curPx * 1.01;
+            r.netReward = (fee > 0.0) ? (curPx * (1.0 - fee) - target) : (curPx - target);
+            r.netRisk = (fee > 0.0) ? (stopLoss - curPx * (1.0 - fee)) : (stopLoss - curPx);
+            r.rrr = (r.netRisk > 0.05) ? std::max(0.0, r.netReward / r.netRisk) : 0.0;
+            const double atrDist = (cfg.atr > 0.0) ? (cfg.atr * (curPx > 1000.0 ? 1.8 : 1.5)) : (curPx * 0.005);
+            r.atrTrailingStop = curPx + atrDist;
+        } else {
+            const double atrDist = (cfg.atr > 0.0) ? (cfg.atr * (curPx > 1000.0 ? 1.8 : 1.5)) : (curPx * 0.005);
+            if (r.support > 0.0 && r.support < curPx) {
+                r.atrTrailingStop = std::max(r.support, curPx - atrDist);
+            } else {
+                r.atrTrailingStop = curPx - atrDist;
+            }
+        }
+    };
+
+    auto returnRes = [&](PatternResult r) -> PatternResult {
+        enrichResult(r);
+        return r;
+    };
+
     // -------------------------------------------------------------------------
     // 斐波那契主升/主跌波段扫描与黄金口袋计算 (Fibonacci Golden Pocket 0.5~0.618)
     // -------------------------------------------------------------------------
@@ -709,15 +749,19 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
+    if (hasFibCandidate) {
+        enrichResult(fibCandidate);
+    }
+
     if (peaks.size() < 2 || troughs.size() < 2) {
         if (hasFibCandidate)
-            return fibCandidate;
+            return returnRes(fibCandidate);
         res.type = PatternType::None;
         res.name = "震荡整理";
         res.bias = "震荡";
         res.strategy = "日内波幅平缓，暂无典型几何形态，关注日内极值支撑与阻力。";
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     const auto& p1 = peaks[peaks.size() - 2];
@@ -765,7 +809,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "急速探底后快速强力抽升，多头承接盘强劲，现价正冲击起跌阻力位，等待放量突破确认。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
         // 倒V冲高跳水：最高点在区间中段，自最高点快速跳水回吐涨幅 >= 85%
@@ -792,7 +836,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "脉冲拉升后遭遇沉重抛压大幅回落，上方形成假突破套牢盘，正在测试起涨支撑。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
     }
@@ -829,7 +873,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "右肩构筑企稳，倒头肩形态蓄势冲击颈线阻力，放量突破将开启大级别主升浪。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
     }
@@ -863,7 +907,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "右肩冲高乏力，头肩顶形成，当前测试颈线支撑，若跌破颈线将引发加速下挫。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
     }
@@ -900,7 +944,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "关键支撑经过三次严苛测试依然有效，多头底部扎实，等待放量突破颈线确认。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
     }
@@ -934,7 +978,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "上方水平阻力位三次冲高无法突破，抛压沉重，当前测试颈线，破位需坚决防守。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
     }
@@ -981,7 +1025,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "强势冲高后微幅回踩构筑旗面整理，属于健康顺势中继，等待突破旗面上轨。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
         // 看跌旗形：旗杆急跌，随后微幅反弹整理
@@ -1011,7 +1055,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.strategy = "急跌后低位弱势反弹构筑看跌旗面，反弹动能有限，随时谨防二次破位。";
                 }
                 res.valid = true;
-                return res;
+                return returnRes(res);
             }
         }
     }
@@ -1050,7 +1094,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 res.strategy = "双底支撑有效确立，现价正在向颈线阻力蓄势发起冲击，突破颈线后将打开翻倍反弹空间。";
             }
             res.valid = true;
-            return res;
+            return returnRes(res);
         }
     }
 
@@ -1082,7 +1126,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 res.strategy = "高位双顶强阻力压制，反弹未能创新高，当前测试颈线支撑，若跌破颈线谨防加速回落。";
             }
             res.valid = true;
-            return res;
+            return returnRes(res);
         }
     }
 
@@ -1103,7 +1147,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.breakoutTarget = curUpper + priceRange * 0.5;
         res.strategy = "高点更高、低点更低，振幅发散放大，市场多空情绪分歧剧烈，避免追单，谨防剧烈单边爆发！";
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     // =========================================================================
@@ -1138,7 +1182,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.strategy = "下降楔形波幅持续收敛，空头下探动能衰竭，等待放量突破上轨阻力！";
         }
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     // =========================================================================
@@ -1161,7 +1205,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.strategy = "上升楔形持续收紧，高位上冲动能递减，谨防跌破下轨支撑引发快速回落！";
         }
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     // =========================================================================
@@ -1190,7 +1234,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.strategy = "高低点对称收敛，多空决战蓄势，关注突破方向，顺势跟随。";
         }
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     // =========================================================================
@@ -1214,7 +1258,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.strategy = "水平阻力位多次测试，低点持续抬高，多头蓄势占优，等待向上突破。";
         }
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     // =========================================================================
@@ -1238,7 +1282,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.strategy = "水平支撑位多次受压，高点逐级压低，空头蓄势占优，谨防破位下行。";
         }
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     // =========================================================================
@@ -1253,7 +1297,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.breakoutTarget = curUpper + priceRange * 0.5;
         res.strategy = "处于多头上升通道运行，可沿通道下轨顺势做多，破下轨止损。";
         res.valid = true;
-        return res;
+        return returnRes(res);
     } else if (peakSlope < -slopeThreshold && troughSlope < -slopeThreshold) {
         res.type = PatternType::ChannelDown;
         res.name = "下降通道 (Channel Down)";
@@ -1263,11 +1307,11 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.breakoutTarget = curLower - priceRange * 0.5;
         res.strategy = "处于弱势下降通道运行，逢反弹受阻通道上轨可适度防守。";
         res.valid = true;
-        return res;
+        return returnRes(res);
     }
 
     if (hasFibCandidate) {
-        return fibCandidate;
+        return returnRes(fibCandidate);
     }
 
     res.type = PatternType::None;
@@ -1277,7 +1321,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     res.support = std::min(t2.price, curLower);
     res.strategy = "处于箱体区间震荡，可高抛低吸或等待突破方向明朗。";
     res.valid = true;
-    return res;
+    return returnRes(res);
 }
 
 } // namespace goldsdk

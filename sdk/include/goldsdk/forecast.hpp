@@ -89,6 +89,10 @@ struct PatternResult {
     double fib618 = 0.0;       // 斐波那契 0.618 水平位
     double fibSwingHigh = 0.0; // 主波段波峰
     double fibSwingLow = 0.0;  // 主波段波谷
+    double rrr = 0.0;          // 扣除手续费后的预期净盈亏比 (Reward-to-Risk Ratio)
+    double netReward = 0.0;    // 扣除手续费后的理论净收益
+    double netRisk = 0.0;      // 理论防守风险
+    double atrTrailingStop = 0.0; // 动态 ATR 追踪移动止盈位
     bool valid = false;
 };
 
@@ -96,6 +100,7 @@ struct PatternConfig {
     double feeRate = 0.004;         // 预估交易费率（默认 0.4% 浙商积存金，gj可为0）
     double highAlreadyInProb = 0.0; // 日内高点已确立概率 (0~1)
     double lowAlreadyInProb = 0.0;  // 日内低点已确立概率 (0~1)
+    double atr = 0.0;               // 真实波幅均值 ATR(10)
     TrendBias multiDayBias = TrendBias::Range; // 多日中长趋势
 };
 

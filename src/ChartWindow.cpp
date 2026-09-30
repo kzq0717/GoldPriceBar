@@ -1484,6 +1484,7 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
     goldsdk::PatternConfig pcfg;
     const QString code = currentTypeCode();
     pcfg.feeRate = (code == QStringLiteral("gj") || code == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    pcfg.atr = ExtremeDatabase::instance().computeAtr(10, code);
     const auto lastFc = ForecastService::instance().lastForecast();
     if (lastFc.valid) {
       pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
@@ -1553,6 +1554,16 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
           }
         }
 
+        if (pat.rrr > 0.0) {
+          desc += QStringLiteral("\n\n【实战风控·利益最大化参数】\n"
+                                 "• 预期净盈亏比 (RRR): %1:1 (扣费后)\n"
+                                 "• 动态 ATR 移动止盈/保盈位: %2 元/g\n"
+                                 "• 理论净利润空间: %3 元/g")
+                      .arg(pat.rrr, 0, 'f', 2)
+                      .arg(pat.atrTrailingStop, 0, 'f', 2)
+                      .arg(pat.netReward, 0, 'f', 2);
+        }
+
         m_sidePatternStrategyLabel->setText(desc);
         m_sidePatternStrategyLabel->setToolTip(desc);
       }
@@ -1610,6 +1621,22 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
 
   // 2. 顶部工具栏策略提示徽标（针对买入策略、卖出策略给出鲜明提示，排除浙商0.4%手续费）
   if (m_tbFeeLabel) {
+    if (EventCalendar::isEventBlackoutWindow()) {
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(tr("⏳【重磅数据避险静默期】谨防双向插针与价差放大，暂停追单！"));
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#2b2111;"
+          "  color:#ffc53d;"
+          "  border:1px solid #d48806;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:bold;"
+          "}");
+      return;
+    }
+
     goldsdk::PatternResult pat;
     if (m_plotPoints.size() >= 12) {
       std::vector<goldsdk::IntradayPoint> pts;
@@ -1622,6 +1649,7 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
       }
       goldsdk::PatternConfig pcfg;
       pcfg.feeRate = isZs ? feeRate : 0.0;
+      pcfg.atr = ExtremeDatabase::instance().computeAtr(10, code);
       const auto lastFc = ForecastService::instance().lastForecast();
       if (lastFc.valid) {
         pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
@@ -1642,15 +1670,19 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
 
       QString text;
       if (isZs) {
-        text = tr("🟢【买入策略触发】%1 | 排除0.4%手续费保本价: %2 | 目标净得: %3")
+        text = tr("🟢【买入策略触发】%1 | 保本价: %2 | 目标净得: %3 | RRR: %4:1 | 移动止盈: %5")
                    .arg(QString::fromStdString(pat.name))
                    .arg(breakEven, 0, 'f', 2)
-                   .arg(targetNet, 0, 'f', 2);
+                   .arg(targetNet, 0, 'f', 2)
+                   .arg(pat.rrr, 0, 'f', 1)
+                   .arg(pat.atrTrailingStop, 0, 'f', 2);
       } else {
-        text = tr("🟢【买入策略触发】%1 | 阻力目标: %2 | 回踩支撑: %3")
+        text = tr("🟢【买入策略触发】%1 | 目标: %2 | 支撑: %3 | RRR: %4:1 | 移动止盈: %5")
                    .arg(QString::fromStdString(pat.name))
-                   .arg(pat.resistance, 0, 'f', 2)
-                   .arg(pat.support, 0, 'f', 2);
+                   .arg(pat.breakoutTarget > 0.0 ? pat.breakoutTarget : pat.resistance, 0, 'f', 2)
+                   .arg(pat.support, 0, 'f', 2)
+                   .arg(pat.rrr, 0, 'f', 1)
+                   .arg(pat.atrTrailingStop, 0, 'f', 2);
       }
       m_tbFeeLabel->setVisible(true);
       m_tbFeeLabel->setText(text);

@@ -700,6 +700,7 @@ void PriceBarWindow::onSecondaryFinished(QNetworkReply *reply) {
     m_lastSecondaryPrice = price;
     if (m_lastPrice > 0.0) {
         evaluatePremium(m_lastPrice);
+        evaluateLeadLag(m_lastPrice);
         ExtremeDatabase::instance().insertSecondaryQuote(QDateTime::currentDateTime(),
             AppSettings::instance().dataSource(), m_lastPrice, QStringLiteral("gj"), price);
     }
@@ -1061,6 +1062,83 @@ void PriceBarWindow::evaluatePremium(double primaryPrice) {
     }
 }
 
+void PriceBarWindow::evaluateLeadLag(double primaryPrice) {
+    if (!AppSettings::instance().showSecondaryPrice())
+        return;
+    if (primaryPrice <= 0.0 || m_lastSecondaryPrice <= 0.0)
+        return;
+    if (AppSettings::instance().isInQuietHours())
+        return;
+
+    const QDateTime now = QDateTime::currentDateTime();
+    m_leadLagPoints.append({now, m_lastSecondaryPrice, primaryPrice});
+
+    // 保留最近 90 秒内的数据点
+    while (!m_leadLagPoints.isEmpty() && m_leadLagPoints.first().time.secsTo(now) > 90) {
+        m_leadLagPoints.removeFirst();
+    }
+    if (m_leadLagPoints.size() < 4)
+        return;
+
+    // 寻找 30~75 秒前的基准采样点
+    const LeadLagPoint* basePt = nullptr;
+    for (const auto& pt : m_leadLagPoints) {
+        const qint64 s = pt.time.secsTo(now);
+        if (s >= 30 && s <= 75) {
+            basePt = &pt;
+            break;
+        }
+    }
+    if (!basePt || basePt->secPrice <= 0.0 || basePt->primPrice <= 0.0)
+        return;
+
+    // 计算外盘（伦敦金）与内盘（积存金）在近窗口内的变动幅度
+    const double secChangePct = (m_lastSecondaryPrice - basePt->secPrice) / basePt->secPrice * 100.0;
+    const double primChangePct = (primaryPrice - basePt->primPrice) / basePt->primPrice * 100.0;
+
+    // 异动阈值：外盘拉升/跳水 >= 0.18%，而国内金滞后变动不足 0.05%
+    const bool bullLead = (secChangePct >= 0.18 && primChangePct <= 0.05);
+    const bool bearLead = (secChangePct <= -0.18 && primChangePct >= -0.05);
+
+    if (!bullLead && !bearLead)
+        return;
+
+    const int cool = qMax(300, AppSettings::instance().alertCooldownSec());
+    if (m_lastLeadLagNotify.isValid() && m_lastLeadLagNotify.secsTo(now) < cool)
+        return;
+
+    m_lastLeadLagNotify = now;
+
+    QString title;
+    QString body;
+    if (bullLead) {
+        title = tr("🚀 外盘先行拉升 (时滞抢跑机会)");
+        body = tr("外盘伦敦金急拉 +%1% (最新 %2)，国内盘仅变动 %3% (%4)，存在显著时滞差！顺势做多/抢跑跟进窗口开启。")
+                   .arg(secChangePct, 0, 'f', 2)
+                   .arg(m_lastSecondaryPrice, 0, 'f', 2)
+                   .arg(primChangePct >= 0 ? QStringLiteral("+") : QStringLiteral(""))
+                   .arg(primChangePct, 0, 'f', 2)
+                   .arg(primaryPrice, 0, 'f', 2);
+    } else {
+        title = tr("⚠️ 外盘先行跳水 (避险提示)");
+        body = tr("外盘伦敦金快速跳水 %1% (最新 %2)，国内盘尚未跟跌 (%3)，防守避险窗口开启，警惕国内金补跌！")
+                   .arg(secChangePct, 0, 'f', 2)
+                   .arg(m_lastSecondaryPrice, 0, 'f', 2)
+                   .arg(primaryPrice, 0, 'f', 2);
+    }
+
+    if (m_trayIcon && AppSettings::instance().trayNotifyOnAlert()) {
+        m_trayIcon->showMessage(title, body, bullLead ? QSystemTrayIcon::Information : QSystemTrayIcon::Warning, 5000);
+        if (AppSettings::instance().alertSound())
+            QApplication::beep();
+    }
+
+    ExtremeDatabase::instance().insertAlertEvent(
+        now, AppSettings::instance().dataSource(),
+        bullLead ? QStringLiteral("lead_lag_bull") : QStringLiteral("lead_lag_bear"),
+        primaryPrice, m_lastSecondaryPrice, body);
+}
+
 void PriceBarWindow::evaluateStrategyAlerts(double price) {
     if (price <= 0.0)
         return;
@@ -1068,6 +1146,12 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
         return;
     if (!m_trayIcon || !AppSettings::instance().trayNotifyOnAlert())
         return;
+
+    // 检查重磅数据避险静默期（非农/CPI/FOMC等）
+    if (EventCalendar::isEventBlackoutWindow()) {
+        Logger::info(QStringLiteral("PriceBarWindow: strategy alert suppressed due to macro event blackout window"));
+        return;
+    }
 
     const auto ptsQ = HistoryCache::instance().todayPoints();
     if (ptsQ.size() < 12)
@@ -1084,6 +1168,7 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
     goldsdk::PatternConfig pcfg;
     const QString src = AppSettings::instance().dataSource();
     pcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    pcfg.atr = ExtremeDatabase::instance().computeAtr(10, src);
     const auto lastFc = ForecastService::instance().lastForecast();
     if (lastFc.valid) {
         pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
@@ -1164,6 +1249,11 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
                        .arg(pat.support, 0, 'f', 2)
                        .arg(QString::fromStdString(pat.strategy));
         }
+        if (pat.rrr > 0.0) {
+            body += tr("\n• 扣费后预期盈亏比(RRR): %1:1\n• 动态ATR移动追踪止损/保盈位: %2 元/g")
+                        .arg(pat.rrr, 0, 'f', 2)
+                        .arg(pat.atrTrailingStop, 0, 'f', 2);
+        }
     } else {
         title = tr("🔴 积存金·卖出策略提示");
         if (isZs) {
@@ -1184,6 +1274,10 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
                        .arg(pat.resistance, 0, 'f', 2)
                        .arg(pat.support, 0, 'f', 2)
                        .arg(QString::fromStdString(pat.strategy));
+        }
+        if (pat.atrTrailingStop > 0.0) {
+            body += tr("\n• 动态防守位: %1 元/g")
+                        .arg(pat.atrTrailingStop, 0, 'f', 2);
         }
     }
 

@@ -98,3 +98,80 @@ QString EventCalendar::pendingAlertText()
     }
     return parts.join(QStringLiteral("；"));
 }
+
+static bool getEventTimeWindow(const EventCalendar::Event& e, const QDate& curDate,
+                               int& startM, int& endM, QString& timeDesc)
+{
+    const int month = curDate.month();
+    const bool isDst = (month >= 4 && month <= 10); // 夏令时判断
+
+    if (e.title.contains(QStringLiteral("非农")) || e.title.contains(QStringLiteral("CPI"))) {
+        if (e.date == curDate) {
+            if (isDst) {
+                startM = 20 * 60 + 15; // 20:15
+                endM = 20 * 60 + 45;   // 20:45
+                timeDesc = QStringLiteral("20:30");
+            } else {
+                startM = 21 * 60 + 15; // 21:15
+                endM = 21 * 60 + 45;   // 21:45
+                timeDesc = QStringLiteral("21:30");
+            }
+            return true;
+        }
+    } else if (e.title.contains(QStringLiteral("FOMC"))) {
+        // 美联储决议北京时间通常在日程当天深夜或次日凌晨 (02:00/03:00)
+        if (e.date == curDate || e.date.addDays(1) == curDate) {
+            if (isDst) {
+                startM = 1 * 60 + 50;  // 01:50
+                endM = 2 * 60 + 45;    // 02:45
+                timeDesc = QStringLiteral("02:00");
+            } else {
+                startM = 2 * 60 + 50;  // 02:50
+                endM = 3 * 60 + 45;    // 03:45
+                timeDesc = QStringLiteral("03:00");
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool EventCalendar::isEventBlackoutWindow(const QDateTime& dt)
+{
+    const QDate curDate = dt.date();
+    const int curM = dt.time().hour() * 60 + dt.time().minute();
+    for (const auto& e : allEvents()) {
+        if (e.impact < 3) continue;
+        int startM = 0, endM = 0;
+        QString timeDesc;
+        if (getEventTimeWindow(e, curDate, startM, endM, timeDesc)) {
+            if (curM >= startM && curM <= endM)
+                return true;
+        }
+    }
+    return false;
+}
+
+QString EventCalendar::currentEventWarning(const QDateTime& dt)
+{
+    const QDate curDate = dt.date();
+    const int curM = dt.time().hour() * 60 + dt.time().minute();
+    for (const auto& e : allEvents()) {
+        if (e.impact < 3) continue;
+        int startM = 0, endM = 0;
+        QString timeDesc;
+        if (getEventTimeWindow(e, curDate, startM, endM, timeDesc)) {
+            if (curM >= startM && curM <= endM) {
+                return QStringLiteral("⚠️ 重磅数据避险期 (%1 %2公布)：谨防流动性抽离与双向插针，暂停追单！")
+                    .arg(e.title, timeDesc);
+            }
+            // 提前 30 分钟预警
+            if (curM >= startM - 30 && curM < startM) {
+                const int remain = startM - curM;
+                return QStringLiteral("⏳ 重磅数据临近 (%1 %2)：距数据落地约 %3 分钟，注意提前收拢多头防守线。")
+                    .arg(e.title, timeDesc).arg(remain);
+            }
+        }
+    }
+    return QString();
+}

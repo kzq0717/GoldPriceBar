@@ -36,6 +36,10 @@ struct ForecastResult {
     double patternBreakoutTarget = 0.0; // 突破理论目标位
     double patternFib50 = 0.0;       // 斐波那契 0.500
     double patternFib618 = 0.0;      // 斐波那契 0.618 黄金口袋
+    double patternRrr = 0.0;         // 扣费后净盈亏比 (RRR)
+    double patternNetReward = 0.0;   // 扣费后净收益
+    double patternNetRisk = 0.0;     // 理论风险
+    double patternTrailingStop = 0.0;// ATR 移动追踪止盈位
 };
 
 class ForecastService : public QObject {

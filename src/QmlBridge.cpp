@@ -1286,14 +1286,31 @@ void QmlBridge::evaluateDecision(double price) {
     }
 
     // 预测高低区间与经典形态决策融合
-    if (level == 1) {
+    if (EventCalendar::isEventBlackoutWindow()) {
+        level = 4;
+        tag = tr("⏳ 数据避险·防双向插针");
+        color = QStringLiteral("#FAAD14");
+        bg = QStringLiteral("#352814");
+        const QString w = EventCalendar::currentEventWarning();
+        advice = !w.isEmpty() ? w : tr("当前正处于重磅宏观数据公布窗口（非农/CPI/FOMC等），价差急剧拉大且双向插针频繁，坚决暂停追单！");
+    } else if (level == 1) {
         const auto fcRes = ForecastService::instance().lastForecast();
         const bool hasPattern = fcRes.valid && !fcRes.patternName.isEmpty();
         const bool patternIsBuy = hasPattern && (fcRes.patternBias == QStringLiteral("看多突破") || fcRes.patternBias == QStringLiteral("强烈看多"));
         const bool patternIsSell = hasPattern && (fcRes.patternBias == QStringLiteral("看空破位") || fcRes.patternBias == QStringLiteral("强烈看空"));
 
+        // 0. ATR 移动追踪止盈检测（保盈截断）
+        if (fcRes.patternTrailingStop > 0.0 && price <= fcRes.patternTrailingStop && AppSettings::instance().positionGrams() > 0) {
+            level = 5;
+            tag = tr("🛡️ 触及移动止盈·保护利润");
+            color = QStringLiteral("#FF7875");
+            bg = QStringLiteral("#3E1C1F");
+            advice = tr("现价 %1 跌破动态 ATR 移动止盈/保盈线 %2，建议及时落袋为安，保护多头利润！")
+                         .arg(price, 0, 'f', 2)
+                         .arg(fcRes.patternTrailingStop, 0, 'f', 2);
+        }
         // 1. 形态破位优先：若已发生形态/0.618破位，坚决禁止低吸，优先防守减仓
-        if (patternIsSell) {
+        else if (patternIsSell) {
             level = 5;
             tag = tr("⚠️ 形态破位·防守减仓");
             color = QStringLiteral("#FF7875");
@@ -1307,6 +1324,11 @@ void QmlBridge::evaluateDecision(double price) {
             color = QStringLiteral("#52C41A");
             bg = QStringLiteral("#163219");
             advice = tr("触发【%1】！%2").arg(fcRes.patternName, fcRes.patternStrategy);
+            if (fcRes.patternRrr > 0.0) {
+                advice += tr(" [扣费后净盈亏比 RRR: %1:1 | 移动止盈位: %2]")
+                              .arg(fcRes.patternRrr, 0, 'f', 2)
+                              .arg(fcRes.patternTrailingStop, 0, 'f', 2);
+            }
         }
         // 3. 极值区间推演决策
         else if (predHigh > 0.0 && price >= predHigh * 0.9985) {
@@ -1345,6 +1367,11 @@ void QmlBridge::evaluateDecision(double price) {
             bg = QStringLiteral("#1B301D");
             advice = tr("处于近20日极低分位(%1%)且运行于MA5(%2)下方，短线超跌，建议关注企稳低吸机会。").arg(pct20, 0, 'f', 0).arg(ma5, 0, 'f', 2);
         }
+    }
+
+    const QString upcomingWarn = EventCalendar::currentEventWarning();
+    if (!upcomingWarn.isEmpty() && !advice.contains(upcomingWarn)) {
+        advice += QStringLiteral("\n") + upcomingWarn;
     }
 
     m_decisionLevel = level;
