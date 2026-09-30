@@ -613,6 +613,8 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
         pcfg.feeRate = (m_currentSource == QStringLiteral("gj") || m_currentSource == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
         pcfg.highAlreadyInProb = m_lastResult.highAlreadyInProb;
         pcfg.lowAlreadyInProb = m_lastResult.lowAlreadyInProb;
+        pcfg.predHigh = m_lastResult.predHigh;
+        pcfg.predLow = m_lastResult.predLow;
         pcfg.atr = ExtremeDatabase::instance().computeAtr(10, m_currentSource);
         pcfg.multiDayBias = trend.valid ? trend.bias : goldsdk::TrendBias::Range;
         const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
@@ -756,6 +758,8 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     pcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
     pcfg.highAlreadyInProb = fr.highAlreadyInProb;
     pcfg.lowAlreadyInProb = fr.lowAlreadyInProb;
+    pcfg.predHigh = fr.predHigh;
+    pcfg.predLow = fr.predLow;
     pcfg.atr = atr;
     pcfg.multiDayBias = trend.valid ? trend.bias : goldsdk::TrendBias::Range;
     const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);

@@ -1294,59 +1294,87 @@ void QmlBridge::evaluateDecision(double price) {
         const QString w = EventCalendar::currentEventWarning();
         advice = !w.isEmpty() ? w : tr("当前正处于重磅宏观数据公布窗口（非农/CPI/FOMC等），价差急剧拉大且双向插针频繁，坚决暂停追单！");
     } else if (level == 1) {
+        // 实时就地识别最新分时形态，传入推演极值阻力与支撑，保证与图表窗口毫秒级同频
+        goldsdk::PatternResult realPat;
+        if (pts.size() >= 12) {
+            goldsdk::PatternConfig pcfg;
+            pcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+            pcfg.atr = ExtremeDatabase::instance().computeAtr(10, src);
+            pcfg.predHigh = predHigh;
+            pcfg.predLow = predLow;
+            const auto lastFc = ForecastService::instance().lastForecast();
+            if (lastFc.valid) {
+                pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
+                pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+                pcfg.multiDayBias = lastFc.multiDayBias == QStringLiteral("强多") ? goldsdk::TrendBias::StrongBull :
+                                    lastFc.multiDayBias == QStringLiteral("偏多") ? goldsdk::TrendBias::MildBull :
+                                    lastFc.multiDayBias == QStringLiteral("偏空") ? goldsdk::TrendBias::MildBear :
+                                    lastFc.multiDayBias == QStringLiteral("强空") ? goldsdk::TrendBias::StrongBear : goldsdk::TrendBias::Range;
+            }
+            realPat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
+        }
+
         const auto fcRes = ForecastService::instance().lastForecast();
-        const bool hasPattern = fcRes.valid && !fcRes.patternName.isEmpty();
-        const bool patternIsBuy = hasPattern && (fcRes.patternBias == QStringLiteral("看多突破") || fcRes.patternBias == QStringLiteral("强烈看多"));
-        const bool patternIsSell = hasPattern && (fcRes.patternBias == QStringLiteral("看空破位") || fcRes.patternBias == QStringLiteral("强烈看空"));
+        const bool hasPattern = realPat.valid || (fcRes.valid && !fcRes.patternName.isEmpty());
+        const QString patName = realPat.valid ? QString::fromStdString(realPat.name) : fcRes.patternName;
+        const QString patBias = realPat.valid ? QString::fromStdString(realPat.bias) : fcRes.patternBias;
+        const QString patStrategy = realPat.valid ? QString::fromStdString(realPat.strategy) : fcRes.patternStrategy;
+        const double patTrailingStop = realPat.valid ? realPat.atrTrailingStop : fcRes.patternTrailingStop;
+        const double patRrr = realPat.valid ? realPat.rrr : fcRes.patternRrr;
+
+        const bool patternIsBuy = hasPattern && (patBias == QStringLiteral("看多突破") || patBias == QStringLiteral("强烈看多"));
+        const bool patternIsSell = hasPattern && (patBias == QStringLiteral("看空破位") || patBias == QStringLiteral("强烈看空"));
 
         // 0. ATR 移动追踪止盈检测（保盈截断）
-        if (fcRes.patternTrailingStop > 0.0 && price <= fcRes.patternTrailingStop && AppSettings::instance().positionGrams() > 0) {
+        if (patTrailingStop > 0.0 && price <= patTrailingStop && AppSettings::instance().positionGrams() > 0) {
             level = 5;
             tag = tr("🛡️ 触及移动止盈·保护利润");
             color = QStringLiteral("#FF7875");
             bg = QStringLiteral("#3E1C1F");
             advice = tr("现价 %1 跌破动态 ATR 移动止盈/保盈线 %2，建议及时落袋为安，保护多头利润！")
                          .arg(price, 0, 'f', 2)
-                         .arg(fcRes.patternTrailingStop, 0, 'f', 2);
+                         .arg(patTrailingStop, 0, 'f', 2);
         }
-        // 1. 形态破位优先：若已发生形态/0.618破位，坚决禁止低吸，优先防守减仓
-        else if (patternIsSell) {
-            level = 5;
-            tag = tr("⚠️ 形态破位·防守减仓");
-            color = QStringLiteral("#FF7875");
-            bg = QStringLiteral("#3E1C1F");
-            advice = tr("触发【%1】！%2").arg(fcRes.patternName, fcRes.patternStrategy);
-        }
-        // 2. 形态突破/黄金口袋企稳买入优先：顺势多头共振
-        else if (patternIsBuy) {
-            level = 3;
-            tag = tr("🚀 形态突破·顺势买入");
-            color = QStringLiteral("#52C41A");
-            bg = QStringLiteral("#163219");
-            advice = tr("触发【%1】！%2").arg(fcRes.patternName, fcRes.patternStrategy);
-            if (fcRes.patternRrr > 0.0) {
-                advice += tr(" [扣费后净盈亏比 RRR: %1:1 | 移动止盈位: %2]")
-                              .arg(fcRes.patternRrr, 0, 'f', 2)
-                              .arg(fcRes.patternTrailingStop, 0, 'f', 2);
-            }
-        }
-        // 3. 极值区间推演决策
+        // 1. 顶层极值高点阻力一票否决：价格已触及推演高点，上方空间锁死，坚决阻断追多，协同分批止盈/卖出！
         else if (predHigh > 0.0 && price >= predHigh * 0.9985) {
             level = 5;
             tag = tr("🎯 触及高点·分批卖出");
             color = QStringLiteral("#FF7875");
             bg = QStringLiteral("#3E1C1F");
-            advice = tr("现价已触及当日推演高点阻力区（%1），盈亏比偏低，建议逢高止盈锁定收益。预计高点窗口: %2。")
+            advice = tr("现价已触及当日推演高点阻力区（%1），上方获利抛压沉重且盈亏比偏低，建议逢高止盈锁定收益。预计高点窗口: %2。")
                          .arg(predHigh, 0, 'f', 2)
                          .arg(m_predHighTimeWindow.isEmpty() ? tr("时段末") : m_predHighTimeWindow);
-        } else if (predLow > 0.0 && price <= predLow * 1.0015) {
+        }
+        // 2. 形态破位优先：若已发生形态/0.618破位，坚决禁止低吸，优先防守减仓
+        else if (patternIsSell) {
+            level = 5;
+            tag = tr("⚠️ 形态破位·防守减仓");
+            color = QStringLiteral("#FF7875");
+            bg = QStringLiteral("#3E1C1F");
+            advice = tr("触发【%1】！%2").arg(patName, patStrategy);
+        }
+        // 3. 底层极值低点支撑保护：价格已下探推演低点，下方杀跌动能衰竭，坚决阻断地板杀跌，提示企稳分批买入！
+        else if (predLow > 0.0 && price <= predLow * 1.0015) {
             level = 3;
             tag = tr("🎯 触及低点·分批买入");
             color = QStringLiteral("#52C41A");
             bg = QStringLiteral("#163219");
-            advice = tr("现价已下探至当日推演低点支撑区（%1），风险收益比占优，适合分批买入或定投。预计低点窗口: %2。")
+            advice = tr("现价已下探至当日推演低点支撑区（%1），下方支撑强劲且风险收益比占优，适合企稳分批买入或定投。预计低点窗口: %2。")
                          .arg(predLow, 0, 'f', 2)
                          .arg(m_predLowTimeWindow.isEmpty() ? tr("时段末") : m_predLowTimeWindow);
+        }
+        // 4. 形态突破/黄金口袋企稳买入优先：顺势多头共振
+        else if (patternIsBuy) {
+            level = 3;
+            tag = tr("🚀 形态突破·顺势买入");
+            color = QStringLiteral("#52C41A");
+            bg = QStringLiteral("#163219");
+            advice = tr("触发【%1】！%2").arg(patName, patStrategy);
+            if (patRrr > 0.0) {
+                advice += tr(" [扣费后净盈亏比 RRR: %1:1 | 移动止盈位: %2]")
+                              .arg(patRrr, 0, 'f', 2)
+                              .arg(patTrailingStop, 0, 'f', 2);
+            }
         } else if (m_predHighTimeWindow.contains(QStringLiteral("高点大概率已现")) || m_predHighTimeWindow.contains(QStringLiteral("已确立"))) {
             level = 4;
             tag = tr("⚠️ 高点已现·防守保护");

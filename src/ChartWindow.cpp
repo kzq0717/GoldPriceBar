@@ -1489,6 +1489,8 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
     if (lastFc.valid) {
       pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
       pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+      pcfg.predHigh = lastFc.predHigh;
+      pcfg.predLow = lastFc.predLow;
     }
     const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     applyFibonacciLines(pat.fib50, pat.fib618);
@@ -1502,6 +1504,10 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
           color = QStringLiteral("#5cdbd3"); // 绿/青看空破位
         else if (pat.bias.find("变盘") != std::string::npos)
           color = QStringLiteral("#ffc53d"); // 警示橙黄
+        else if (pat.bias == "高位蓄势")
+          color = QStringLiteral("#ff7875"); // 暖红高位防守/分批卖出
+        else if (pat.bias == "低位企稳")
+          color = QStringLiteral("#52c41a"); // 翠绿低位防杀跌/关注低吸
         m_sidePatternLabel->setText(QString::fromStdString(pat.name));
         m_sidePatternLabel->setStyleSheet(QStringLiteral("color:%1;font-size:12px;font-weight:bold;").arg(color));
       }
@@ -1540,7 +1546,7 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
                         .arg(targetNet, 0, 'f', 2)
                         .arg(netProfit >= 0.0 ? QStringLiteral("+") : QStringLiteral(""))
                         .arg(netProfit, 0, 'f', 2);
-          } else if (pat.bias == "看空破位" || pat.bias == "强烈看空" || pat.bias == "空头蓄势") {
+          } else if (pat.bias == "看空破位" || pat.bias == "强烈看空" || pat.bias == "空头蓄势" || pat.bias == "高位蓄势") {
             const double fee = current * feeRate;
             const double net = current - fee;
             desc += QStringLiteral("\n\n【浙商·卖出策略排除0.4%手续费测算】\n"
@@ -1551,6 +1557,15 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
                         .arg(current, 0, 'f', 2)
                         .arg(fee, 0, 'f', 2)
                         .arg(net, 0, 'f', 2);
+          } else if (pat.bias == "低位企稳") {
+            const double breakEven = current / (1.0 - feeRate);
+            desc += QStringLiteral("\n\n【浙商·低吸策略排除0.4%手续费测算】\n"
+                                   "• 现价低吸成本: %1 元/g\n"
+                                   "• 保本卖出价格: %2 元/g (抗费损 +%3 元/g)\n"
+                                   "• 建议: 触及极值低点支撑，杀跌衰竭，关注企稳逢低分批建仓！")
+                        .arg(current, 0, 'f', 2)
+                        .arg(breakEven, 0, 'f', 2)
+                        .arg(breakEven - current, 0, 'f', 2);
           }
         }
 
@@ -1637,6 +1652,7 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
       return;
     }
 
+    const auto lastFc = ForecastService::instance().lastForecast();
     goldsdk::PatternResult pat;
     if (m_plotPoints.size() >= 12) {
       std::vector<goldsdk::IntradayPoint> pts;
@@ -1650,12 +1666,108 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
       goldsdk::PatternConfig pcfg;
       pcfg.feeRate = isZs ? feeRate : 0.0;
       pcfg.atr = ExtremeDatabase::instance().computeAtr(10, code);
-      const auto lastFc = ForecastService::instance().lastForecast();
       if (lastFc.valid) {
         pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
         pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+        pcfg.predHigh = lastFc.predHigh;
+        pcfg.predLow = lastFc.predLow;
       }
       pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
+    }
+
+    // 0. 日内极值阻力/支撑一票协同：现价触及高点阻力区时，坚决禁止显示买入策略，必须协同展示分批卖出/止盈防守！
+    const double predH = lastFc.valid ? lastFc.predHigh : 0.0;
+    const double predL = lastFc.valid ? lastFc.predLow : 0.0;
+    const bool touchHigh = (predH > 0.0 && currentPrice >= predH * 0.9985);
+    const bool touchLow = (predL > 0.0 && currentPrice <= predL * 1.0015);
+
+    if (touchHigh) {
+      const double fee = currentPrice * feeRate;
+      const double net = currentPrice - fee;
+      QString text;
+      if (isZs) {
+        text = tr("🎯【触及高点阻力】现价 %1 达推演高点区(%2) · 建议分批卖出/止盈防守 (扣0.4%净得: %3)")
+                   .arg(currentPrice, 0, 'f', 2)
+                   .arg(predH, 0, 'f', 2)
+                   .arg(net, 0, 'f', 2);
+      } else {
+        text = tr("🎯【触及高点阻力】现价 %1 达推演高点区(%2) · 建议分批卖出/止盈防守")
+                   .arg(currentPrice, 0, 'f', 2)
+                   .arg(predH, 0, 'f', 2);
+      }
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(text);
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#3E1C1F;"
+          "  color:#ff7875;"
+          "  border:1px solid #a8071a;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:bold;"
+          "}"
+          "QLabel#tbFeeLabel:hover{"
+          "  background:#4d2226;"
+          "  border-color:#ff4d4f;"
+          "  color:#ffa39e;"
+          "}");
+      m_tbFeeLabel->setToolTip(
+          tr("【🎯 触及高点阻力提示】\n"
+             "• 现价：%1 元/g\n"
+             "• 推演高点阻力：%2 元/g\n"
+             "• 当日高点确立概率：%3%\n"
+             "• 操作指引：现价已触及全天推演极值阻力区，上方获利盘与抛压沉重，盈亏比严重倒挂，严禁盲目追多！建议分批逢高止盈落袋。\n"
+             "• 排除浙商0.4%手续费后净到手：%4 元/g")
+              .arg(currentPrice, 0, 'f', 2)
+              .arg(predH, 0, 'f', 2)
+              .arg(lastFc.highAlreadyInProb * 100.0, 0, 'f', 0)
+              .arg(net, 0, 'f', 2));
+      return;
+    }
+
+    if (touchLow) {
+      const double breakEven = isZs ? (currentPrice / (1.0 - feeRate)) : currentPrice;
+      QString text;
+      if (isZs) {
+        text = tr("🎯【触及低点支撑】现价 %1 达推演低点区(%2) · 建议企稳分批建仓 (保本价: %3)")
+                   .arg(currentPrice, 0, 'f', 2)
+                   .arg(predL, 0, 'f', 2)
+                   .arg(breakEven, 0, 'f', 2);
+      } else {
+        text = tr("🎯【触及低点支撑】现价 %1 达推演低点区(%2) · 建议企稳分批建仓")
+                   .arg(currentPrice, 0, 'f', 2)
+                   .arg(predL, 0, 'f', 2);
+      }
+      m_tbFeeLabel->setVisible(true);
+      m_tbFeeLabel->setText(text);
+      m_tbFeeLabel->setStyleSheet(
+          "QLabel#tbFeeLabel{"
+          "  background:#132c1c;"
+          "  color:#73d13d;"
+          "  border:1px solid #237804;"
+          "  border-radius:8px;"
+          "  padding:4px 12px;"
+          "  font-size:12px;"
+          "  font-weight:bold;"
+          "}"
+          "QLabel#tbFeeLabel:hover{"
+          "  background:#1b3d27;"
+          "  border-color:#52c41a;"
+          "  color:#95de64;"
+          "}");
+      m_tbFeeLabel->setToolTip(
+          tr("【🎯 触及低点支撑提示】\n"
+             "• 现价：%1 元/g\n"
+             "• 推演低点支撑：%2 元/g\n"
+             "• 当日低点确立概率：%3%\n"
+             "• 操作指引：现价已下探至全天推演极值低点支撑区，杀跌动能衰竭，盈亏比极佳，坚决禁止恐慌杀跌！建议企稳后逢低分批建仓/定投。\n"
+             "• 保本卖出价：%4 元/g")
+              .arg(currentPrice, 0, 'f', 2)
+              .arg(predL, 0, 'f', 2)
+              .arg(lastFc.lowAlreadyInProb * 100.0, 0, 'f', 0)
+              .arg(breakEven, 0, 'f', 2));
+      return;
     }
 
     // 只有确认向上突破或向下跌破时，才呈现鲜明的买入/卖出触发状态！

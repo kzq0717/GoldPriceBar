@@ -1173,6 +1173,8 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
     if (lastFc.valid) {
         pcfg.highAlreadyInProb = lastFc.highAlreadyInProb;
         pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
+        pcfg.predHigh = lastFc.predHigh;
+        pcfg.predLow = lastFc.predLow;
     }
     const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     if (!pat.valid)

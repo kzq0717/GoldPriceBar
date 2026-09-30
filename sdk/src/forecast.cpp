@@ -513,6 +513,16 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         if (!r.valid) return;
         const double fee = cfg.feeRate;
         if (r.bias == "看多突破" || r.bias == "强烈看多") {
+            // 顶层防追高一票否决：若现价已触及当日推演高点阻力（或日内高点大概率已确立），坚决阻断买入信号！
+            const bool touchPredHigh = (cfg.predHigh > 0.0 && curPx >= cfg.predHigh * 0.9985);
+            if (touchPredHigh || cfg.highAlreadyInProb >= 0.65) {
+                r.bias = "高位蓄势";
+                r.name += " (触及高点阻力·防诱多⚠️)";
+                r.strategy = "现价虽有短线向上脉冲，但已触及当日推演高点极限阻力区 (" + fmtPrice(cfg.predHigh > 0.0 ? cfg.predHigh : curPx)
+                             + ")，上方空间被全天极值锁死，盈亏比严重倒挂，严禁盲目追多！建议分批逢高止盈、落袋为安。";
+                return;
+            }
+
             const double target = (r.breakoutTarget > curPx) ? r.breakoutTarget : ((r.resistance > curPx) ? r.resistance : curPx * 1.015);
             const double stopLoss = (r.support > 0.0 && r.support < curPx) ? r.support : curPx * 0.99;
             r.netReward = (fee > 0.0) ? (target * (1.0 - fee) - curPx) : (target - curPx);
@@ -527,6 +537,16 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 r.strategy += " 【注意：扣费后净盈亏比仅 " + fmtPrice(r.rrr) + ":1，空间偏窄，建议轻仓观望，等待更优回踩。】";
             }
         } else if (r.bias == "看空破位" || r.bias == "强烈看空") {
+            // 底层防地板杀跌一票否决：若现价已触及当日推演低点支撑（或日内低点大概率已确立），坚决阻断地板杀跌！
+            const bool touchPredLow = (cfg.predLow > 0.0 && curPx <= cfg.predLow * 1.0015);
+            if (touchPredLow || cfg.lowAlreadyInProb >= 0.65) {
+                r.bias = "低位企稳";
+                r.name += " (触及低点支撑·防杀跌⚠️)";
+                r.strategy = "现价虽破位下探，但已抵达当日推演极值低点关键支撑区 (" + fmtPrice(cfg.predLow > 0.0 ? cfg.predLow : curPx)
+                             + ")，下方杀跌动能衰竭，切勿盲目恐慌杀跌，密切关注企稳低吸机会。";
+                return;
+            }
+
             const double target = (r.breakoutTarget > 0.0 && r.breakoutTarget < curPx) ? r.breakoutTarget : ((r.support > 0.0 && r.support < curPx) ? r.support : curPx * 0.985);
             const double stopLoss = (r.resistance > curPx) ? r.resistance : curPx * 1.01;
             r.netReward = (fee > 0.0) ? (curPx * (1.0 - fee) - target) : (curPx - target);

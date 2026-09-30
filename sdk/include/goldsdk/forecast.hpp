@@ -101,6 +101,8 @@ struct PatternConfig {
     double highAlreadyInProb = 0.0; // 日内高点已确立概率 (0~1)
     double lowAlreadyInProb = 0.0;  // 日内低点已确立概率 (0~1)
     double atr = 0.0;               // 真实波幅均值 ATR(10)
+    double predHigh = 0.0;          // 当日推演高点阻力位
+    double predLow = 0.0;           // 当日推演低点支撑位
     TrendBias multiDayBias = TrendBias::Range; // 多日中长趋势
 };
 
