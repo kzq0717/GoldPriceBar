@@ -44,6 +44,7 @@ public:
 
 public slots:
     void onNewPrice(double price, double change, const QString& sourceName);
+    void onSecondaryPriceUpdated(double price);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -53,6 +54,7 @@ protected:
 
 private slots:
     void onChartReplyFinished(QNetworkReply* reply);
+    void onSecondaryChartReplyFinished(QNetworkReply* reply);
     void onPeriodChanged(int index);
     void onExportCsv();
     void onMaOptionChanged();
@@ -62,6 +64,7 @@ private:
     void updateSeries();
     void updateMonthSeries();
     void fetchChartFromApi();
+    void fetchSecondaryChartFromApi();
     void fillPeriodCombo();
     void applyPeriodSelection();
     void loadIntradayForDate(const QDate& day);
@@ -180,10 +183,13 @@ private:
 
     QNetworkAccessManager* m_network = nullptr;
     QPointer<QNetworkReply> m_pendingChart;
+    QPointer<QNetworkReply> m_pendingSecondaryChart;
     bool m_loading = false;
     QString m_forecastModeTag;
 
     QVector<QPair<QDateTime, double>> m_plotPoints;
+    QVector<QPair<QDateTime, double>> m_secondaryPlotPoints;
+    double m_lastCounterpartPrice = 0.0;
     double m_lastPredictPrice = 0.0; // 兼容侧栏：展示用（预测高）
     double m_lastPredictHigh = 0.0;
     double m_lastPredictLow = 0.0;

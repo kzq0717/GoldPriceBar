@@ -359,6 +359,9 @@ void QmlBridge::openChartWindow() {
     m_chartWindow->show();
     m_chartWindow->raise();
     m_chartWindow->activateWindow();
+    if (m_secondaryPrice > 0.0) {
+        m_chartWindow->onSecondaryPriceUpdated(m_secondaryPrice);
+    }
     m_chartWindow->refreshData();
     if (m_priceService && m_priceService->hasValidPrice()) {
         m_chartWindow->onNewPrice(m_priceService->lastPrice(), m_priceService->lastChange(), m_priceService->lastSourceName());
@@ -891,6 +894,9 @@ void QmlBridge::onSecondaryFinished(QNetworkReply *reply, const QString &sec) {
     m_secondaryPriceText = tr("%1 %2").arg(shortName).arg(price, 0, 'f', 2);
     Logger::info(QStringLiteral("Secondary price updated: %1 (price: %2)").arg(m_secondaryPriceText).arg(price, 0, 'f', 2));
     emit secondaryPriceChanged();
+    if (m_chartWindow) {
+        m_chartWindow->onSecondaryPriceUpdated(price);
+    }
 
     if (m_price > 0.0) {
         ExtremeDatabase::instance().insertSecondaryQuote(QDateTime::currentDateTime(),

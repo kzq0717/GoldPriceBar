@@ -352,6 +352,9 @@ void PriceBarWindow::onChartClicked() {
         Logger::info(QStringLiteral("ChartWindow created"));
     }
     Logger::info(QStringLiteral("ChartWindow refreshData"));
+    if (m_lastSecondaryPrice > 0.0) {
+        m_chartWindow->onSecondaryPriceUpdated(m_lastSecondaryPrice);
+    }
     m_chartWindow->refreshData();
     m_chartWindow->show();
     m_chartWindow->raise();
@@ -698,6 +701,9 @@ void PriceBarWindow::onSecondaryFinished(QNetworkReply *reply) {
     if (m_secondaryLabel)
         m_secondaryLabel->setText(tr("%1 %2").arg(shortName).arg(price, 0, 'f', 2));
     m_lastSecondaryPrice = price;
+    if (m_chartWindow) {
+        m_chartWindow->onSecondaryPriceUpdated(price);
+    }
     if (m_lastPrice > 0.0) {
         evaluatePremium(m_lastPrice);
         evaluateLeadLag(m_lastPrice);

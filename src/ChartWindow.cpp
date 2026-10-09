@@ -9,6 +9,7 @@
 #include "TradingSession.h"
 #include "EventCalendar.h"
 #include "ForecastService.h"
+#include "PriceService.h"
 
 
 #include <QBrush>
@@ -1233,37 +1234,103 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
   }
 
   const QDateTime t = m_plotPoints.at(idx).first;
-  const double price = m_plotPoints.at(idx).second;
+  const double currentPointPrice = m_plotPoints.at(idx).second;
 
-  QString tipText;
-  if (!isIntradayMode()) {
-    // 跨天日线模式：展示具体日期与收盘价（解决 00:00:01 丢失日期问题）
-    tipText = QStringLiteral("📅 %1\n收盘: %2 元/g")
-                  .arg(t.toString(QStringLiteral("yyyy-MM-dd")))
-                  .arg(price, 0, 'f', 2);
-  } else if (m_periodCombo && m_periodCombo->currentData().toInt() == 1) {
-    // 历史单日分时：展示年月日 + 时分秒
-    tipText = QStringLiteral("🕒 %1 %2\n价格: %3 元/g")
-                  .arg(t.toString(QStringLiteral("yyyy-MM-dd")))
-                  .arg(t.toString(QStringLiteral("HH:mm:ss")))
-                  .arg(price, 0, 'f', 2);
+  // 区分主源是积存金还是伦敦金
+  const QString code = currentTypeCode();
+  const bool primaryIsLondon = (code == QStringLiteral("gj") || code == QStringLiteral("xau"));
+  const QString secCode = primaryIsLondon ? QStringLiteral("zs") : QStringLiteral("gj");
+
+  // 若尚未加载对应副源分时点且本地数据库存在样本，则按需就地补载
+  if (m_secondaryPlotPoints.isEmpty()) {
+    const auto dbSamples = ExtremeDatabase::instance().loadIntradaySamples(t.date(), secCode);
+    if (!dbSamples.isEmpty()) {
+      m_secondaryPlotPoints = dbSamples;
+      std::sort(m_secondaryPlotPoints.begin(), m_secondaryPlotPoints.end(),
+                [](const auto &a, const auto &b) { return a.first < b.first; });
+      m_lastCounterpartPrice = m_secondaryPlotPoints.last().second;
+    }
+  }
+
+  // 检索匹配时刻 t 的副源报价（二分查找最贴近时间点）
+  double counterpartPrice = 0.0;
+  if (!m_secondaryPlotPoints.isEmpty()) {
+    const qint64 targetMs = t.toMSecsSinceEpoch();
+    auto it = std::lower_bound(m_secondaryPlotPoints.begin(), m_secondaryPlotPoints.end(), targetMs,
+        [](const QPair<QDateTime, double>& pt, qint64 ms) {
+            return pt.first.toMSecsSinceEpoch() < ms;
+        });
+    int secIdx = 0;
+    if (it == m_secondaryPlotPoints.end()) {
+      secIdx = m_secondaryPlotPoints.size() - 1;
+    } else if (it == m_secondaryPlotPoints.begin()) {
+      secIdx = 0;
+    } else {
+      int prevIdx = static_cast<int>(std::distance(m_secondaryPlotPoints.begin(), it)) - 1;
+      int currIdx = prevIdx + 1;
+      qint64 d1 = qAbs(m_secondaryPlotPoints[prevIdx].first.toMSecsSinceEpoch() - targetMs);
+      qint64 d2 = qAbs(m_secondaryPlotPoints[currIdx].first.toMSecsSinceEpoch() - targetMs);
+      secIdx = (d1 <= d2) ? prevIdx : currIdx;
+    }
+    counterpartPrice = m_secondaryPlotPoints.at(secIdx).second;
+  }
+  if (counterpartPrice <= 0.0) {
+    counterpartPrice = m_lastCounterpartPrice;
+  }
+
+  double jicunjinPrice = 0.0;
+  double londonGoldPrice = 0.0;
+  QString jicunjinName;
+
+  if (primaryIsLondon) {
+    londonGoldPrice = currentPointPrice;
+    jicunjinPrice = counterpartPrice;
+    jicunjinName = tr("浙商积存金");
   } else {
-    // 今日实时分时：展示时分秒
-    tipText = QStringLiteral("🕒 %1\n价格: %2 元/g")
-                  .arg(t.toString(QStringLiteral("HH:mm:ss")))
-                  .arg(price, 0, 'f', 2);
+    jicunjinPrice = currentPointPrice;
+    londonGoldPrice = counterpartPrice;
+    const QString canName = PriceService::canonicalSourceName(code);
+    jicunjinName = canName.contains(QStringLiteral("积存金")) ? canName : (canName + tr("·积存金"));
+  }
+
+  QString timeStr;
+  if (!isIntradayMode()) {
+    timeStr = t.toString(QStringLiteral("yyyy-MM-dd"));
+  } else if (m_periodCombo && m_periodCombo->currentData().toInt() == 1) {
+    timeStr = t.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+  } else {
+    timeStr = t.toString(QStringLiteral("HH:mm:ss"));
+  }
+
+  QStringList lines;
+  lines << QStringLiteral("<span style='color:#a0aec0;'>🕒 %1</span>").arg(timeStr);
+
+  if (jicunjinPrice > 0.0) {
+    lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: %2 元/g</span>")
+                 .arg(jicunjinName)
+                 .arg(jicunjinPrice, 0, 'f', 2);
+  } else {
+    lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: --.-- 元/g</span>")
+                 .arg(jicunjinName);
+  }
+
+  if (londonGoldPrice > 0.0) {
+    lines << QStringLiteral("<span style='color:#70bfff;font-weight:bold;'>🌍 伦敦金(XAU): $%1/oz</span>")
+                 .arg(londonGoldPrice, 0, 'f', 2);
+  } else {
+    lines << QStringLiteral("<span style='color:#70bfff;font-weight:bold;'>🌍 伦敦金(XAU): --.--</span>");
   }
 
   // 若处于预测极值突破/跌破状态，提示标注
   if (m_hasPredict && isIntradayMode()) {
-    if (m_lastPredictLow > 0.0 && price < m_lastPredictLow) {
-      tipText += QStringLiteral(" (⚠️已破预低)");
-    } else if (m_lastPredictHigh > 0.0 && price > m_lastPredictHigh) {
-      tipText += QStringLiteral(" (🚀已破预高)");
+    if (m_lastPredictLow > 0.0 && currentPointPrice < m_lastPredictLow) {
+      lines << QStringLiteral("<span style='color:#5cdbd3;font-size:11px;'>⚠️ 已破推演低点</span>");
+    } else if (m_lastPredictHigh > 0.0 && currentPointPrice > m_lastPredictHigh) {
+      lines << QStringLiteral("<span style='color:#ff7875;font-size:11px;'>🚀 已破推演高点</span>");
     }
   }
 
-  m_tipLabel->setText(tipText);
+  m_tipLabel->setText(lines.join(QStringLiteral("<br/>")));
   m_tipLabel->adjustSize();
 
   int tx = viewPos.x() + 14;
@@ -2138,6 +2205,8 @@ void ChartWindow::fetchChartFromApi() {
   m_loading = true;
   m_chart->setTitle(tr("正在加载分时数据…"));
 
+  fetchSecondaryChartFromApi();
+
   const QUrl url(
       AppSettings::instance().chartUrl()
           .arg(currentTypeCode()));
@@ -2154,6 +2223,92 @@ void ChartWindow::fetchChartFromApi() {
   m_pendingChart = reply;
   connect(reply, &QNetworkReply::finished, this,
           [this, reply]() { onChartReplyFinished(reply); });
+}
+
+void ChartWindow::fetchSecondaryChartFromApi() {
+  if (m_pendingSecondaryChart) {
+    m_pendingSecondaryChart->abort();
+    m_pendingSecondaryChart->deleteLater();
+    m_pendingSecondaryChart.clear();
+  }
+
+  const QString prim = currentTypeCode();
+  const QString secCode = (prim == QStringLiteral("gj") || prim == QStringLiteral("xau"))
+                              ? QStringLiteral("zs")
+                              : QStringLiteral("gj");
+
+  const QUrl url(AppSettings::instance().chartUrl().arg(secCode));
+  QNetworkRequest request(url);
+  request.setHeader(QNetworkRequest::UserAgentHeader,
+                    QStringLiteral("GoldPriceBarLite/1.3.10"));
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                       QNetworkRequest::AlwaysNetwork);
+  request.setTransferTimeout(12000);
+
+  QNetworkReply *reply = m_network->get(request);
+  m_pendingSecondaryChart = reply;
+  connect(reply, &QNetworkReply::finished, this,
+          [this, reply]() { onSecondaryChartReplyFinished(reply); });
+}
+
+void ChartWindow::onSecondaryChartReplyFinished(QNetworkReply *reply) {
+  if (m_pendingSecondaryChart.data() == reply)
+    m_pendingSecondaryChart.clear();
+  if (!reply)
+    return;
+
+  if (reply->error() != QNetworkReply::NoError) {
+    reply->deleteLater();
+    return;
+  }
+
+  const QByteArray raw = reply->readAll();
+  reply->deleteLater();
+
+  QJsonParseError err;
+  const QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
+  if (err.error != QJsonParseError::NoError || !doc.isObject())
+    return;
+
+  const QJsonObject root = doc.object();
+  if (root.value(QStringLiteral("code")).toInt() != 200)
+    return;
+
+  const QJsonArray arr = root.value(QStringLiteral("data")).toArray();
+  QVector<QPair<QDateTime, double>> secPoints;
+  secPoints.reserve(arr.size());
+  const qint64 nowSec = QDateTime::currentSecsSinceEpoch();
+  for (const QJsonValue &v : arr) {
+    if (!v.isObject())
+      continue;
+    const QJsonObject o = v.toObject();
+    const qint64 t =
+        static_cast<qint64>(o.value(QStringLiteral("t")).toDouble());
+    const double p = o.value(QStringLiteral("p")).toDouble();
+    if (t > 0 && t <= nowSec + 60 && p > 0.0)
+      secPoints.append({QDateTime::fromSecsSinceEpoch(t), p});
+  }
+
+  if (!secPoints.isEmpty()) {
+    std::sort(secPoints.begin(), secPoints.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    m_secondaryPlotPoints = secPoints;
+    m_lastCounterpartPrice = secPoints.last().second;
+  }
+}
+
+void ChartWindow::onSecondaryPriceUpdated(double price) {
+  if (price <= 0.0)
+    return;
+  m_lastCounterpartPrice = price;
+  const QDateTime now = QDateTime::currentDateTime();
+  if (m_secondaryPlotPoints.isEmpty() || m_secondaryPlotPoints.last().first.secsTo(now) >= 10) {
+    m_secondaryPlotPoints.append({now, price});
+  } else {
+    m_secondaryPlotPoints.last() = {now, price};
+  }
 }
 
 void ChartWindow::onChartReplyFinished(QNetworkReply *reply) {
@@ -2203,16 +2358,14 @@ void ChartWindow::onChartReplyFinished(QNetworkReply *reply) {
       chartPoints.append({t, p});
   }
 
-  if (chartPoints.isEmpty()) {
-    m_chart->setTitle(tr("分时数据为空"));
-    updateSeries();
-    return;
-  }
-
-  HistoryCache::instance().replaceFromChart(chartPoints);
+  if (!chartPoints.isEmpty()) {
+    HistoryCache::instance().replaceFromChart(chartPoints);
     ExtremeDatabase::instance().refreshDailyBarFromPoints(
         QDate::currentDate(), currentTypeCode(), chartPoints);
-  HistoryCache::instance().persistExtremesToDb(currentTypeCode());
+    HistoryCache::instance().persistExtremesToDb(currentTypeCode());
+  } else {
+    m_chart->setTitle(tr("分时数据为空"));
+  }
   updateSeries();
 }
 
@@ -2414,6 +2567,12 @@ void ChartWindow::closeEvent(QCloseEvent *event) {
     m_pendingChart->deleteLater();
     m_pendingChart.clear();
   }
+  if (m_pendingSecondaryChart) {
+    m_pendingSecondaryChart->disconnect(this);
+    m_pendingSecondaryChart->abort();
+    m_pendingSecondaryChart->deleteLater();
+    m_pendingSecondaryChart.clear();
+  }
   m_loading = false;
   QWidget::closeEvent(event);
 }
@@ -2517,6 +2676,19 @@ void ChartWindow::loadIntradayForDate(const QDate& day)
     if (day == QDate::currentDate()) {
         fetchChartFromApi();
         return;
+    }
+
+    const QString primCode = currentTypeCode();
+    const QString secCode = (primCode == QStringLiteral("gj") || primCode == QStringLiteral("xau"))
+                                ? QStringLiteral("zs")
+                                : QStringLiteral("gj");
+    m_secondaryPlotPoints = ExtremeDatabase::instance().loadIntradaySamples(day, secCode);
+    if (!m_secondaryPlotPoints.isEmpty()) {
+        std::sort(m_secondaryPlotPoints.begin(), m_secondaryPlotPoints.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+        m_lastCounterpartPrice = m_secondaryPlotPoints.last().second;
+    } else {
+        m_secondaryPlotPoints.clear();
     }
 
     auto raw = ExtremeDatabase::instance().loadIntradaySamples(day, currentTypeCode());
@@ -2662,6 +2834,19 @@ void ChartWindow::loadDailyRange(const QDate& from, const QDate& to)
     if (m_lowSeries) m_lowSeries->clear();
     hideCrosshair();
     m_hasPredict = false;
+
+    const QString primCode = currentTypeCode();
+    const QString secCode = (primCode == QStringLiteral("gj") || primCode == QStringLiteral("xau"))
+                                ? QStringLiteral("zs")
+                                : QStringLiteral("gj");
+    m_secondaryPlotPoints = ExtremeDatabase::instance().loadDailyClosesRange(from, to, secCode);
+    if (!m_secondaryPlotPoints.isEmpty()) {
+        std::sort(m_secondaryPlotPoints.begin(), m_secondaryPlotPoints.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+        m_lastCounterpartPrice = m_secondaryPlotPoints.last().second;
+    } else {
+        m_secondaryPlotPoints.clear();
+    }
 
     m_plotPoints = ExtremeDatabase::instance().loadDailyClosesRange(
         from, to, currentTypeCode());
