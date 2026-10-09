@@ -6,6 +6,7 @@
 #include <QString>
 #include <QDateTime>
 #include <QPointer>
+#include <QTimer>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
@@ -18,11 +19,26 @@ struct SentimentItem {
     /** bullish / bearish / neutral */
     QString bias;
     QString summary;
+    int score = 0;
+};
+
+/** 盘面消息面冲击综合研判 */
+struct SentimentImpact {
+    bool hasImpact = false;
+    QString bias; // "bullish" / "bearish" / "neutral"
+    int netScore = 0;
+    QString topTitle;
+    QString topSource;
+    QDateTime topTime;
+    QString summary;
 };
 
 /**
- * 黄金舆情监测：拉取公开 RSS（Google 新闻等），关键词偏向标注，供热点列表展示。
- * 说明：第三方站点 tool.moxuangenet.com 无法稳定对接时，用公开 RSS 实现同类「实时热点追踪」。
+ * 黄金舆情监测与快讯抓取服务：
+ * 1. 支持后台自动定时抓取（可配置间隔，默认10分钟，对接新浪财经7x24快讯与公开资讯源）；
+ * 2. 多维度关键词加权打分（重大利多/利空与常规多空）；
+ * 3. 输出 recentMarketImpact 供行情走势研判与推演引擎融合；
+ * 4. 驱动推演记录（高亮利多/利空消息驱动）。
  */
 class SentimentService : public QObject
 {
@@ -37,12 +53,23 @@ public:
     QString lastError() const { return m_lastError; }
     QDateTime lastSuccess() const { return m_lastSuccess; }
 
-    /** 简易文本偏向：利多 / 利空 / 中性 */
+    /** 简易文本偏向：bullish / bearish / neutral */
     static QString classifyBias(const QString& text);
+    /** 加权分值：正分利多，负分利空 */
+    static int scoreText(const QString& text);
+
+    /** 获取近期(默认6小时内)对盘面的关键消息面冲击 */
+    SentimentImpact recentMarketImpact(int maxAgeHours = 6) const;
+
+    void updateTimerConfig();
 
 signals:
     void updated();
     void failed(const QString& reason);
+
+private slots:
+    void onAutoRefreshTimeout();
+    void onSettingsChanged();
 
 private:
     explicit SentimentService(QObject* parent = nullptr);
@@ -51,6 +78,7 @@ private:
     void parseSinaJson(const QByteArray& data);
     void finishOk();
 
+    QTimer* m_timer = nullptr;
     QNetworkAccessManager* m_nam = nullptr;
     QPointer<QNetworkReply> m_reply;
     QVector<SentimentItem> m_items;

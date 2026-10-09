@@ -23,37 +23,157 @@ SentimentService::SentimentService(QObject* parent)
     : QObject(parent)
 {
     m_nam = new QNetworkAccessManager(this);
+    m_timer = new QTimer(this);
+    connect(m_timer, &QTimer::timeout, this, &SentimentService::onAutoRefreshTimeout);
+    connect(&AppSettings::instance(), &AppSettings::settingsChanged, this, &SentimentService::onSettingsChanged);
+    updateTimerConfig();
+    QTimer::singleShot(2500, this, [this]() {
+        if (AppSettings::instance().sentimentAutoRefresh()) {
+            refresh();
+        }
+    });
 }
 
-QString SentimentService::classifyBias(const QString& text)
+void SentimentService::updateTimerConfig()
+{
+    if (!m_timer)
+        return;
+    if (AppSettings::instance().sentimentAutoRefresh()) {
+        const int intervalMs = AppSettings::instance().sentimentIntervalMinutes() * 60 * 1000;
+        m_timer->start(qMax(60000, intervalMs));
+    } else {
+        m_timer->stop();
+    }
+}
+
+void SentimentService::onAutoRefreshTimeout()
+{
+    if (AppSettings::instance().sentimentAutoRefresh() && !m_loading) {
+        refresh();
+    }
+}
+
+void SentimentService::onSettingsChanged()
+{
+    updateTimerConfig();
+}
+
+int SentimentService::scoreText(const QString& text)
 {
     const QString t = text;
+    // 重大利多关键词 (+3)
+    static const QStringList heavyBull = {
+        QStringLiteral("暴涨"), QStringLiteral("大幅降息"), QStringLiteral("超预期降息"),
+        QStringLiteral("央行购金"), QStringLiteral("避险飙升"), QStringLiteral("地缘局势升级"),
+        QStringLiteral("地缘冲突"), QStringLiteral("中东局势紧张"), QStringLiteral("创历史新高"),
+        QStringLiteral("多头大爆发"), QStringLiteral("避险情绪升温"), QStringLiteral("避险买盘激增")
+    };
+    // 常规利多关键词 (+1)
     static const QStringList bull = {
         QStringLiteral("上涨"), QStringLiteral("走强"), QStringLiteral("突破"),
         QStringLiteral("新高"), QStringLiteral("利多"), QStringLiteral("避险买盘"),
         QStringLiteral("降息"), QStringLiteral("购金"), QStringLiteral("增持"),
         QStringLiteral("飙升"), QStringLiteral("大涨"), QStringLiteral("看涨"),
+        QStringLiteral("反弹"), QStringLiteral("多头"),
         QStringLiteral("rally"), QStringLiteral("surge"), QStringLiteral("bullish"),
     };
+    // 重大利空关键词 (-3)
+    static const QStringList heavyBear = {
+        QStringLiteral("暴跌"), QStringLiteral("大幅加息"), QStringLiteral("非农强劲"),
+        QStringLiteral("非农大超预期"), QStringLiteral("央行抛售"), QStringLiteral("地缘和解"),
+        QStringLiteral("停火"), QStringLiteral("美元指数暴涨"), QStringLiteral("重挫"),
+        QStringLiteral("高位跳水"), QStringLiteral("闪崩")
+    };
+    // 常规利空关键词 (-1)
     static const QStringList bear = {
         QStringLiteral("下跌"), QStringLiteral("走弱"), QStringLiteral("回落"),
         QStringLiteral("新低"), QStringLiteral("利空"), QStringLiteral("加息"),
         QStringLiteral("抛售"), QStringLiteral("减持"), QStringLiteral("大跌"),
         QStringLiteral("看跌"), QStringLiteral("承压"), QStringLiteral("跌破"),
+        QStringLiteral("空头"), QStringLiteral("跳水"),
         QStringLiteral("slump"), QStringLiteral("drop"), QStringLiteral("bearish"),
     };
-    int b = 0, s = 0;
-    for (const auto& w : bull)
-        if (t.contains(w, Qt::CaseInsensitive))
-            ++b;
-    for (const auto& w : bear)
-        if (t.contains(w, Qt::CaseInsensitive))
-            ++s;
-    if (b > s)
+
+    int score = 0;
+    for (const auto& w : heavyBull) {
+        if (t.contains(w, Qt::CaseInsensitive)) score += 3;
+    }
+    for (const auto& w : bull) {
+        if (t.contains(w, Qt::CaseInsensitive)) score += 1;
+    }
+    for (const auto& w : heavyBear) {
+        if (t.contains(w, Qt::CaseInsensitive)) score -= 3;
+    }
+    for (const auto& w : bear) {
+        if (t.contains(w, Qt::CaseInsensitive)) score -= 1;
+    }
+    return score;
+}
+
+QString SentimentService::classifyBias(const QString& text)
+{
+    const int s = scoreText(text);
+    if (s >= 1)
         return QStringLiteral("bullish");
-    if (s > b)
+    if (s <= -1)
         return QStringLiteral("bearish");
     return QStringLiteral("neutral");
+}
+
+SentimentImpact SentimentService::recentMarketImpact(int maxAgeHours) const
+{
+    SentimentImpact res;
+    if (m_items.isEmpty())
+        return res;
+
+    const QDateTime now = QDateTime::currentDateTime();
+    int netScore = 0;
+    int topAbsScore = 0;
+    SentimentItem topItem;
+
+    for (const auto& it : m_items) {
+        if (it.published.isValid() && it.published.secsTo(now) > maxAgeHours * 3600)
+            continue;
+        netScore += it.score;
+        if (qAbs(it.score) > topAbsScore) {
+            topAbsScore = qAbs(it.score);
+            topItem = it;
+        }
+    }
+
+    // 若按时间过滤为空，兜底取前3条
+    if (topAbsScore == 0 && !m_items.isEmpty()) {
+        const int checkCount = qMin(3, m_items.size());
+        for (int i = 0; i < checkCount; ++i) {
+            const auto& it = m_items.at(i);
+            netScore += it.score;
+            if (qAbs(it.score) > topAbsScore) {
+                topAbsScore = qAbs(it.score);
+                topItem = it;
+            }
+        }
+    }
+
+    res.netScore = netScore;
+    if (topAbsScore >= 2 || netScore >= 2) {
+        res.hasImpact = true;
+        res.bias = QStringLiteral("bullish");
+        res.topTitle = topItem.title.isEmpty() ? tr("多项消息面偏向利多") : topItem.title;
+        res.topSource = topItem.source;
+        res.topTime = topItem.published;
+        res.summary = QStringLiteral("【利多消息驱动】%1").arg(res.topTitle);
+    } else if (topAbsScore <= -2 || netScore <= -2) {
+        res.hasImpact = true;
+        res.bias = QStringLiteral("bearish");
+        res.topTitle = topItem.title.isEmpty() ? tr("多项消息面偏向利空") : topItem.title;
+        res.topSource = topItem.source;
+        res.topTime = topItem.published;
+        res.summary = QStringLiteral("【利空消息驱动】%1").arg(res.topTitle);
+    } else {
+        res.hasImpact = false;
+        res.bias = QStringLiteral("neutral");
+    }
+    return res;
 }
 
 void SentimentService::refresh()
@@ -172,6 +292,7 @@ void SentimentService::parseSinaJson(const QByteArray& data)
             item.published = QDateTime::currentDateTime();
 
         const QString blob = item.title + QStringLiteral(" ") + item.summary;
+        item.score = scoreText(blob);
         item.bias = classifyBias(blob);
         m_pending.append(item);
     }
@@ -226,6 +347,7 @@ void SentimentService::parseRss(const QByteArray& data, const QString& feedName)
                     && !blob.contains(QStringLiteral("XAU"), Qt::CaseInsensitive)
                     && !blob.contains(QStringLiteral("贵金属")))
                     continue;
+                cur.score = scoreText(blob);
                 cur.bias = classifyBias(blob);
                 m_pending.append(cur);
             }

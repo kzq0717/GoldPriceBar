@@ -1437,7 +1437,18 @@ void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString
     const QString normHTime = ForecastService::normalizeTo24HourTime(highTime);
     const QString normLTime = ForecastService::normalizeTo24HourTime(lowTime);
 
-    QString text = QStringLiteral("🕒 %1 [%2] 预高: %3 | 预低: %4\n极值时段: 高 %5 | 低 %6")
+    const bool isBullishNews = catalyst.contains(QStringLiteral("利多")) || brief.contains(QStringLiteral("利多"));
+    const bool isBearishNews = catalyst.contains(QStringLiteral("利空")) || brief.contains(QStringLiteral("利空"));
+
+    QString badgePrefix;
+    if (isBullishNews) {
+        badgePrefix = QStringLiteral("🟢【利多消息驱动】\n");
+    } else if (isBearishNews) {
+        badgePrefix = QStringLiteral("🔴【利空消息驱动】\n");
+    }
+
+    QString text = QStringLiteral("%1🕒 %2 [%3] 预高: %4 | 预低: %5\n极值时段: 高 %6 | 低 %7")
+                       .arg(badgePrefix)
                        .arg(timeStr)
                        .arg(mode)
                        .arg(ph, 0, 'f', 2)
@@ -1451,15 +1462,21 @@ void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString
         text += QStringLiteral("\n简评: %1").arg(brief.trimmed());
     }
 
+    QString newsEval = tr("技术面基准");
+    if (isBullishNews) newsEval = tr("🟢 突发利多消息催化");
+    else if (isBearishNews) newsEval = tr("🔴 突发利空消息承压");
+
     const QString tip = QStringLiteral(
         "【推演时间】%1\n"
         "【模型通道】%2\n"
-        "【预期最高】%3 (高点时段: %4)\n"
-        "【预期最低】%5 (低点时段: %6)\n"
-        "【核心催化】%7\n"
-        "【情景简述】%8")
+        "【消息研判】%3\n"
+        "【预期最高】%4 (高点时段: %5)\n"
+        "【预期最低】%6 (低点时段: %7)\n"
+        "【核心催化】%8\n"
+        "【情景简述】%9")
         .arg(when.isValid() ? when.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : timeStr)
         .arg(mode)
+        .arg(newsEval)
         .arg(ph, 0, 'f', 2)
         .arg(normHTime.isEmpty() ? QStringLiteral("未指定") : normHTime)
         .arg(pl, 0, 'f', 2)
@@ -1469,6 +1486,19 @@ void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString
 
     auto* item = new QListWidgetItem(text);
     item->setToolTip(tip);
+    if (isBullishNews) {
+        item->setBackground(QBrush(QColor(13, 40, 24)));      // 深翡翠绿高亮底色
+        item->setForeground(QBrush(QColor(149, 222, 100)));   // 浅翠绿加粗文字
+        QFont f = item->font();
+        f.setBold(true);
+        item->setFont(f);
+    } else if (isBearishNews) {
+        item->setBackground(QBrush(QColor(45, 19, 22)));      // 暗红宝石高亮底色
+        item->setForeground(QBrush(QColor(255, 120, 117)));   // 珊瑚红加粗文字
+        QFont f = item->font();
+        f.setBold(true);
+        item->setFont(f);
+    }
     m_sideForecastList->addItem(item);
     m_sideForecastList->scrollToItem(item, QAbstractItemView::PositionAtBottom);
     m_sideForecastList->setCurrentItem(item);

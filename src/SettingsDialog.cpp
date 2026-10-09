@@ -142,6 +142,16 @@ void SettingsDialog::setupUi()
                 emit requestOpenSentiment();
             }
         });
+
+        m_sentimentAutoRefreshCheck = new QCheckBox(tr("后台自动抓取快讯资讯（驱动行情推演与走势研判）"), this);
+        form->addRow("", m_sentimentAutoRefreshCheck);
+
+        m_sentimentIntervalCombo = new QComboBox(this);
+        m_sentimentIntervalCombo->addItem(tr("5 分钟 (高频追踪)"), 5);
+        m_sentimentIntervalCombo->addItem(tr("10 分钟 (推荐·均衡)"), 10);
+        m_sentimentIntervalCombo->addItem(tr("15 分钟 (常规监控)"), 15);
+        m_sentimentIntervalCombo->addItem(tr("30 分钟 (低频节能)"), 30);
+        form->addRow(tr("抓取间隔："), m_sentimentIntervalCombo);
         auto* srcHint = new QLabel(
             tr("主源同公开聚合接口 type=码；招商失败时可走招行官方 Au99.99。"
                "历史分时仍依赖本地采样/chart，脚本不提供历史查询。"), this);
@@ -507,6 +517,13 @@ void SettingsDialog::loadFromSettings()
     m_sourceCombo->setCurrentIndex(index);
     if (m_sentimentCheck)
         m_sentimentCheck->setChecked(settings.sentimentEnabled());
+    if (m_sentimentAutoRefreshCheck)
+        m_sentimentAutoRefreshCheck->setChecked(settings.sentimentAutoRefresh());
+    if (m_sentimentIntervalCombo) {
+        int sIdx = m_sentimentIntervalCombo->findData(settings.sentimentIntervalMinutes());
+        if (sIdx < 0) sIdx = 1;
+        m_sentimentIntervalCombo->setCurrentIndex(sIdx);
+    }
 
     const int opacityPercent = static_cast<int>(settings.opacity() * 100);
     m_opacitySlider->setValue(opacityPercent);
@@ -605,6 +622,10 @@ void SettingsDialog::onAccept()
     settings.setDataSource(m_sourceCombo->currentData().toString());
     if (m_sentimentCheck)
         settings.setSentimentEnabled(m_sentimentCheck->isChecked());
+    if (m_sentimentAutoRefreshCheck)
+        settings.setSentimentAutoRefresh(m_sentimentAutoRefreshCheck->isChecked());
+    if (m_sentimentIntervalCombo)
+        settings.setSentimentIntervalMinutes(m_sentimentIntervalCombo->currentData().toInt());
     settings.setOpacity(m_opacitySlider->value() / 100.0);
     settings.setAutoStart(m_autoStartCheck->isChecked());
     settings.setForecastOnline(m_forecastSlider->value() >= 1);

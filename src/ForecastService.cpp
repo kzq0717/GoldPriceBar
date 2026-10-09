@@ -24,6 +24,11 @@ ForecastService& ForecastService::instance() {
 
 ForecastService::ForecastService(QObject* parent) : QObject(parent) {
     m_nam = new QNetworkAccessManager(this);
+    connect(&SentimentService::instance(), &SentimentService::updated, this, [this]() {
+        if (!m_currentSource.isEmpty()) {
+            requestForecast(m_currentSource, false);
+        }
+    });
 }
 
 ForecastService::~ForecastService() {
@@ -636,6 +641,21 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
     m_lastResult.modeTag = (m_provider == QStringLiteral("gemini") ? tr("Gemini大模型") : tr("Grok大模型"));
     m_lastResult.timestamp = QDateTime::currentDateTime();
 
+    const auto impact = SentimentService::instance().recentMarketImpact(6);
+    if (impact.hasImpact) {
+        if (impact.bias == QStringLiteral("bullish") && !m_lastResult.keyCatalyst.contains(QStringLiteral("利多"))) {
+            m_lastResult.keyCatalyst = QStringLiteral("🟢【利多消息驱动】%1 (%2) | %3")
+                                           .arg(impact.topTitle,
+                                                impact.topTime.isValid() ? impact.topTime.toString(QStringLiteral("HH:mm")) : QStringLiteral("近期"),
+                                                m_lastResult.keyCatalyst);
+        } else if (impact.bias == QStringLiteral("bearish") && !m_lastResult.keyCatalyst.contains(QStringLiteral("利空"))) {
+            m_lastResult.keyCatalyst = QStringLiteral("🔴【利空消息驱动】%1 (%2) | %3")
+                                           .arg(impact.topTitle,
+                                                impact.topTime.isValid() ? impact.topTime.toString(QStringLiteral("HH:mm")) : QStringLiteral("近期"),
+                                                m_lastResult.keyCatalyst);
+        }
+    }
+
     // 存库与统计
     ExtremeDatabase::instance().insertForecastLog(
         m_lastResult.timestamp, m_currentSource, m_lastResult.modeTag,
@@ -744,6 +764,26 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     m_lastResult.bias = allowLong
                             ? ((fr.predHigh - actH > actL - fr.predLow) ? tr("偏多") : tr("震荡"))
                             : tr("偏空");
+
+    const auto impact = SentimentService::instance().recentMarketImpact(6);
+    if (impact.hasImpact) {
+        if (impact.bias == QStringLiteral("bullish")) {
+            m_lastResult.keyCatalyst = QStringLiteral("🟢【利多消息驱动】%1 (%2)")
+                                           .arg(impact.topTitle,
+                                                impact.topTime.isValid() ? impact.topTime.toString(QStringLiteral("HH:mm")) : QStringLiteral("近期"));
+            m_lastResult.scenario = tr("利多消息驱动·注意阻力位突破；%1").arg(m_lastResult.scenario);
+            m_lastResult.bias = tr("偏多(利多驱动)");
+            m_lastResult.remainingUpside = qMax(m_lastResult.remainingUpside, 1.2);
+        } else if (impact.bias == QStringLiteral("bearish")) {
+            m_lastResult.keyCatalyst = QStringLiteral("🔴【利空消息驱动】%1 (%2)")
+                                           .arg(impact.topTitle,
+                                                impact.topTime.isValid() ? impact.topTime.toString(QStringLiteral("HH:mm")) : QStringLiteral("近期"));
+            m_lastResult.scenario = tr("利空消息承压·注意防守回落；%1").arg(m_lastResult.scenario);
+            m_lastResult.bias = tr("偏空(利空承压)");
+            m_lastResult.highAlreadyInProb = qMax(m_lastResult.highAlreadyInProb, 0.70);
+        }
+    }
+
     m_lastResult.brief = m_lastResult.scenario;
     m_lastResult.confidence = fr.confidence > 0.0 ? fr.confidence : 0.65;
     m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;

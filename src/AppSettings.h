@@ -26,6 +26,10 @@ class AppSettings : public QObject {
     bool forecastOnline() const;
     bool sentimentEnabled() const;
     void setSentimentEnabled(bool on);
+    bool sentimentAutoRefresh() const;
+    void setSentimentAutoRefresh(bool enable);
+    int sentimentIntervalMinutes() const;
+    void setSentimentIntervalMinutes(int min);
     void setForecastOnline(bool online);
     /** 大模型请求最小间隔（秒），默认 60，改后立即生效 */
     int forecastIntervalSec() const;
@@ -179,6 +183,8 @@ class AppSettings : public QObject {
     bool m_autoStart = false;
     bool m_forecastOnline = false;
     bool m_sentimentEnabled = false;
+    bool m_sentimentAutoRefresh = true;
+    int m_sentimentIntervalMinutes = 10;
     int m_forecastIntervalSec = 60;
     QString m_xaiApiKey;
     QString m_xaiModel = "grok-4.6";

@@ -53,6 +53,8 @@ private:
     QComboBox* m_intervalCombo = nullptr;
     QComboBox* m_sourceCombo;
     QCheckBox* m_sentimentCheck = nullptr;
+    QCheckBox* m_sentimentAutoRefreshCheck = nullptr;
+    QComboBox* m_sentimentIntervalCombo = nullptr;
     QSlider* m_opacitySlider = nullptr;
     QLabel* m_opacityValueLabel = nullptr;
     QCheckBox* m_autoStartCheck = nullptr;
