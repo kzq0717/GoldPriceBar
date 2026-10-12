@@ -359,6 +359,10 @@ void PriceBarWindow::onChartClicked() {
     m_chartWindow->show();
     m_chartWindow->raise();
     m_chartWindow->activateWindow();
+    if (m_secondaryTimer && !m_secondaryTimer->isActive()) {
+        m_secondaryTimer->start();
+        onSecondaryTimer();
+    }
     Logger::info(QStringLiteral("ChartWindow shown"));
 }
 
@@ -657,7 +661,8 @@ void PriceBarWindow::ensureSecondaryNam() {
 void PriceBarWindow::onSecondaryTimer() {
     ensureSecondaryNam();
 
-    if (!AppSettings::instance().showSecondaryPrice())
+    const bool chartActive = (m_chartWindow && m_chartWindow->isVisible());
+    if (!AppSettings::instance().showSecondaryPrice() && !chartActive)
         return;
     if (m_secondaryReply)
         return;

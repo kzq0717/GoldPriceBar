@@ -108,10 +108,12 @@ private:
     void zoomX(double factor, qreal centerMs = -1);
     void panX(qreal deltaPx);
     void applyFitDataRange();
+    void applyIntradaySpanRange();
     void resetZoomRange();
     void autoFitYForVisibleRange();
 
     QComboBox* m_periodCombo = nullptr;
+    QComboBox* m_spanCombo = nullptr;
     QDateEdit* m_dateFromEdit = nullptr;
     QDateEdit* m_dateToEdit = nullptr;
     QPushButton* m_queryPeriodBtn = nullptr;
@@ -136,6 +138,8 @@ private:
     QDateTime m_defaultMinX;
     QDateTime m_defaultMaxX;
     bool m_isCompactView = false;
+    int m_intradaySpanHours = 4;
+    bool m_userZoomedX = false;
 
     QChartView* m_chartView = nullptr;
     QChart* m_chart = nullptr;

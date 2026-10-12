@@ -358,6 +358,26 @@ void ChartWindow::setupChart() {
   connect(m_periodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ChartWindow::onPeriodChanged);
 
+  m_spanCombo = new QComboBox(m_toolbar);
+  m_spanCombo->setFixedWidth(94);
+  m_spanCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+  m_spanCombo->addItem(tr("近 2 小时"), 2);
+  m_spanCombo->addItem(tr("近 4 小时"), 4);
+  m_spanCombo->addItem(tr("近 6 小时"), 6);
+  m_spanCombo->addItem(tr("近 12 小时"), 12);
+  m_spanCombo->addItem(tr("今日全量"), 0);
+  m_spanCombo->setCurrentIndex(1); // 默认近 4 小时，舒展平滑不陡峭
+  m_spanCombo->setToolTip(tr("切换分时横轴时间跨度（缩短跨度可避免全天数据水平挤压导致曲线过于陡峭；支持滚轮缩放与左键拖拽平移）"));
+  connect(m_spanCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int) {
+            if (!m_spanCombo) return;
+            m_intradaySpanHours = m_spanCombo->currentData().toInt();
+            m_userZoomedX = false;
+            if (isIntradayMode() && !m_plotPoints.isEmpty()) {
+              applyIntradaySpanRange();
+            }
+          });
+
   m_dateFromEdit = new QDateEdit(QDate::currentDate(), m_toolbar);
   m_dateToEdit = new QDateEdit(QDate::currentDate(), m_toolbar);
   for (QDateEdit* de : {m_dateFromEdit, m_dateToEdit}) {
@@ -426,6 +446,7 @@ void ChartWindow::setupChart() {
 
   tb->addWidget(periodHint);
   tb->addWidget(m_periodCombo);
+  tb->addWidget(m_spanCombo);
   tb->addWidget(m_dateFromEdit);
   auto *dash = new QLabel(QStringLiteral("—"), m_toolbar);
   dash->setObjectName(QStringLiteral("tbHint"));
@@ -870,12 +891,19 @@ void ChartWindow::onNewPrice(double price, double, const QString &) {
 
     if (m_axisX && m_axisY) {
       const QDateTime xt = QDateTime::fromMSecsSinceEpoch(x);
-      if (xt > m_axisX->max())
-        m_axisX->setMax(xt.addSecs(3600));
-      if (y > m_axisY->max())
-        m_axisY->setMax(y + (y - m_axisY->min()) * 0.05 + 0.5);
-      if (y < m_axisY->min())
-        m_axisY->setMin(y - (m_axisY->max() - y) * 0.05 - 0.5);
+      if (xt > m_axisX->max().addSecs(-60)) {
+        const qint64 curSpanSec = qMax(600LL, m_axisX->min().secsTo(m_axisX->max()));
+        const qint64 padSec = qBound(180LL, static_cast<qint64>(curSpanSec * 0.08), 900LL);
+        const QDateTime newMax = xt.addSecs(padSec);
+        if (!m_userZoomedX && m_intradaySpanHours > 0) {
+          m_axisX->setRange(newMax.addSecs(-curSpanSec), newMax);
+        } else {
+          m_axisX->setMax(newMax);
+        }
+      }
+      if (y > m_axisY->max() || y < m_axisY->min()) {
+        autoFitYForVisibleRange();
+      }
     }
   }
 
@@ -1066,6 +1094,7 @@ bool ChartWindow::eventFilter(QObject *watched, QEvent *event) {
         m_leftButtonPressed = false;
         if (m_isPanning) {
           m_isPanning = false;
+          m_userZoomedX = true;
           m_chartView->unsetCursor();
           autoFitYForVisibleRange();
           updateCrosshair(pos);
@@ -1112,6 +1141,7 @@ void ChartWindow::zoomX(double factor, qreal centerMs)
     const qint64 newMin = center - static_cast<qint64>(newSpan * ratio);
     const qint64 newMax = newMin + newSpan;
 
+    m_userZoomedX = true;
     m_axisX->setRange(QDateTime::fromMSecsSinceEpoch(newMin),
                       QDateTime::fromMSecsSinceEpoch(newMax));
     autoFitYForVisibleRange();
@@ -1128,6 +1158,7 @@ void ChartWindow::panX(qreal deltaPx)
     const qint64 curMax = m_axisX->max().toMSecsSinceEpoch();
     const qint64 spanMs = curMax - curMin;
     const qint64 dtMs = static_cast<qint64>(deltaPx * (static_cast<double>(spanMs) / plotW));
+    m_userZoomedX = true;
     m_axisX->setRange(QDateTime::fromMSecsSinceEpoch(curMin - dtMs),
                       QDateTime::fromMSecsSinceEpoch(curMax - dtMs));
     autoFitYForVisibleRange();
@@ -1149,18 +1180,58 @@ void ChartWindow::applyFitDataRange()
     autoFitYForVisibleRange();
 }
 
+void ChartWindow::applyIntradaySpanRange()
+{
+    if (!m_axisX || m_plotPoints.isEmpty())
+        return;
+
+    const QDateTime tFirst = m_plotPoints.first().first;
+    const QDateTime lastPt = m_plotPoints.last().first;
+    const QDateTime now = QDateTime::currentDateTime();
+    const QDateTime latestTime = (now > lastPt && now.date() == lastPt.date()) ? now : lastPt;
+
+    QDateTime minTime;
+    QDateTime maxTime;
+
+    if (m_intradaySpanHours > 0) {
+        const qint64 spanSec = static_cast<qint64>(m_intradaySpanHours) * 3600LL;
+        minTime = latestTime.addSecs(-spanSec);
+        if (minTime < tFirst) {
+            minTime = tFirst.addSecs(-180);
+        }
+        const qint64 rightPadSec = qBound(240LL, static_cast<qint64>(spanSec * 0.08), 1500LL);
+        maxTime = latestTime.addSecs(rightPadSec);
+    } else {
+        const qint64 actualSpanSec = qMax(1800LL, tFirst.secsTo(latestTime));
+        const qint64 leftPadSec = qBound(120LL, static_cast<qint64>(actualSpanSec * 0.02), 600LL);
+        const qint64 rightPadSec = qBound(300LL, static_cast<qint64>(actualSpanSec * 0.06), 1800LL);
+        minTime = tFirst.addSecs(-leftPadSec);
+        maxTime = latestTime.addSecs(rightPadSec);
+    }
+
+    m_axisX->setRange(minTime, maxTime);
+    m_defaultMinX = minTime;
+    m_defaultMaxX = maxTime;
+    autoFitYForVisibleRange();
+}
+
 void ChartWindow::resetZoomRange()
 {
     if (!m_axisX)
         return;
 
+    m_userZoomedX = false;
+    m_isCompactView = false;
+    if (isIntradayMode() && !m_plotPoints.isEmpty()) {
+        applyIntradaySpanRange();
+        return;
+    }
     if (m_defaultMinX.isValid() && m_defaultMaxX.isValid()) {
         m_axisX->setRange(m_defaultMinX, m_defaultMaxX);
     } else if (isIntradayMode()) {
         const QDateTime dayStart = QDateTime(QDate::currentDate(), QTime(0, 0, 0));
         m_axisX->setRange(dayStart, dayStart.addDays(1));
     }
-    m_isCompactView = false;
     autoFitYForVisibleRange();
 }
 
@@ -1184,15 +1255,26 @@ void ChartWindow::autoFitYForVisibleRange()
     }
 
     if (count > 0 && vMax >= vMin) {
+        const double actualSpan = vMax - vMin;
         if (m_hasPredict) {
-            if (m_lastPredictLow > 0 && m_lastPredictLow < vMin && (vMin - m_lastPredictLow) < (vMax - vMin) * 2.0)
+            const double allowPad = qMax(actualSpan * 1.5, ((vMin + vMax) * 0.5) * 0.008);
+            if (m_lastPredictLow > 0 && m_lastPredictLow < vMin && (vMin - m_lastPredictLow) <= allowPad)
                 vMin = m_lastPredictLow;
-            if (m_lastPredictHigh > 0 && m_lastPredictHigh > vMax && (m_lastPredictHigh - vMax) < (vMax - vMin) * 2.0)
+            if (m_lastPredictHigh > 0 && m_lastPredictHigh > vMax && (m_lastPredictHigh - vMax) <= allowPad)
                 vMax = m_lastPredictHigh;
         }
 
-        const double span = qMax(0.5, vMax - vMin);
-        const double margin = qMax(0.3, span * 0.12);
+        const double midPrice = (vMin + vMax) * 0.5;
+        // 最小视觉量程保底：至少为中位价的 0.45%（防止窄幅波动被纵向拉满全屏显得极度陡峭）
+        const double minVisualSpan = qMax(1.2, midPrice * 0.0045);
+        if ((vMax - vMin) < minVisualSpan) {
+            const double half = minVisualSpan * 0.5;
+            vMin = midPrice - half;
+            vMax = midPrice + half;
+        }
+
+        const double span = qMax(1.0, vMax - vMin);
+        const double margin = qMax(0.4, span * 0.20);
         m_axisY->setRange(vMin - margin, vMax + margin);
     }
 }
@@ -2520,42 +2602,12 @@ void ChartWindow::updateSeries() {
       maxPrice = qMax(maxPrice, static_cast<qreal>(m_lastPredictHigh));
   }
 
-  // 横轴：左端尽量从当日 00:00 起；右端留足到当前之后 1 小时
-  const QDateTime now = QDateTime::currentDateTime();
-  const QDateTime dayStart = QDateTime(QDate::currentDate(), QTime(0, 0, 0));
-  const QDateTime lastPt = m_plotPoints.last().first;
-
-  QDateTime minTime = dayStart;
-  // 若首点晚于 00:00，仍从 00:00 起，便于对照全日；数据极少时略留左边距
-  if (m_plotPoints.size() < 5) {
-    minTime = lastPt.addSecs(-600);
-    if (minTime < dayStart)
-      minTime = dayStart;
-  }
-
-  // 右端：取「最后数据点 / 当前时刻」较晚者，再加 1 小时，
-  // 避免仅多出 2 分钟时预测段被挤在最右侧、几乎看不见。
-  QDateTime maxTime = lastPt;
-  if (now > maxTime)
-    maxTime = now;
-  maxTime = maxTime.addSecs(3600); // +1 小时
-
-  // 不超过次日 00:00 + 1 小时
-  const QDateTime nextMidnight = dayStart.addDays(1);
-  if (maxTime > nextMidnight.addSecs(3600))
-    maxTime = nextMidnight.addSecs(3600);
-
-  m_axisX->setRange(minTime, maxTime);
-  m_defaultMinX = minTime;
-  m_defaultMaxX = maxTime;
-  if (m_isCompactView)
+  m_userZoomedX = false;
+  if (m_isCompactView) {
     applyFitDataRange();
-
-  qreal margin = qMax(0.3, (maxPrice - minPrice) * 0.12);
-  if (qFuzzyCompare(minPrice, maxPrice))
-    margin = qMax(0.5, minPrice * 0.002);
-  margin = qMax(margin, (maxPrice - minPrice) * 0.08 + 0.2);
-  m_axisY->setRange(minPrice - margin, maxPrice + margin);
+  } else {
+    applyIntradaySpanRange();
+  }
 
   double high = 0.0, low = 0.0;
   HistoryCache::instance().todayHigh(high);
@@ -2648,6 +2700,8 @@ void ChartWindow::onPeriodChanged(int)
         m_dateToEdit->setEnabled(custom);
     if (m_queryPeriodBtn)
         m_queryPeriodBtn->setEnabled(custom);
+    if (m_spanCombo)
+        m_spanCombo->setEnabled(isIntradayMode());
 
     if (!custom) {
         if (m_dateFromEdit)
@@ -2672,6 +2726,8 @@ void ChartWindow::applyPeriodSelection()
         return;
     if (to < from)
         qSwap(from, to);
+    if (m_spanCombo)
+        m_spanCombo->setEnabled(from == to);
     // 最小 1 天（同一天）
     if (from == to) {
         setForecastVisible(from == QDate::currentDate());

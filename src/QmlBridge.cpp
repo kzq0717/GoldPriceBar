@@ -359,6 +359,10 @@ void QmlBridge::openChartWindow() {
     m_chartWindow->show();
     m_chartWindow->raise();
     m_chartWindow->activateWindow();
+    if (m_secondaryTimer && !m_secondaryTimer->isActive()) {
+        m_secondaryTimer->start();
+        onSecondaryTimer();
+    }
     if (m_secondaryPrice > 0.0) {
         m_chartWindow->onSecondaryPriceUpdated(m_secondaryPrice);
     }
@@ -800,7 +804,8 @@ void QmlBridge::ensureSecondaryNam() {
 void QmlBridge::onSecondaryTimer() {
     ensureSecondaryNam();
 
-    if (!AppSettings::instance().showSecondaryPrice()) {
+    const bool chartActive = (m_chartWindow && m_chartWindow->isVisible());
+    if (!AppSettings::instance().showSecondaryPrice() && !chartActive) {
         if (!m_secondaryPriceText.isEmpty()) {
             m_secondaryPriceText.clear();
             emit secondaryPriceChanged();
