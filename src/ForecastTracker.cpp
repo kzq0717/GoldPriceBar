@@ -80,6 +80,15 @@ void ForecastTracker::evaluateDayRange(double actualHigh, double actualLow,
         }
         m_absErrorSum += qAbs(actualHigh - p.predHigh) + qAbs(actualLow - p.predLow);
         m_errCount += 2;
+        const double tolH = qMax(0.30, p.predHigh * 0.0005);
+        const double tolL = qMax(0.30, p.predLow * 0.0005);
+        if (actualHigh <= p.predHigh + tolH && actualLow >= p.predLow - tolL)
+            ++m_intervalCovered;
+        ++m_intervalTotal;
+        const double width = qMax(0.0, p.predHigh - p.predLow);
+        const double missPenalty = 10.0 * (qMax(0.0, p.predLow - actualLow) + qMax(0.0, actualHigh - p.predHigh));
+        m_winklerSum += width + missPenalty;
+
         if (isHit(p.predHigh, actualHigh))
             ++m_highHits;
         else
@@ -127,6 +136,9 @@ void ForecastTracker::resetStats()
     m_highHits = m_highMisses = m_lowHits = m_lowMisses = 0;
     m_absErrorSum = 0.0;
     m_errCount = 0;
+    m_intervalCovered = 0;
+    m_intervalTotal = 0;
+    m_winklerSum = 0.0;
 }
 
 void ForecastTracker::loadFromDatabase(const QString& source)
@@ -138,6 +150,15 @@ void ForecastTracker::loadFromDatabase(const QString& source)
             continue;
         m_absErrorSum += qAbs(e.actualHigh - e.predHigh) + qAbs(e.actualLow - e.predLow);
         m_errCount += 2;
+        const double tolH = qMax(0.30, e.predHigh * 0.0005);
+        const double tolL = qMax(0.30, e.predLow * 0.0005);
+        if (e.actualHigh <= e.predHigh + tolH && e.actualLow >= e.predLow - tolL)
+            ++m_intervalCovered;
+        ++m_intervalTotal;
+        const double width = qMax(0.0, e.predHigh - e.predLow);
+        const double missPenalty = 10.0 * (qMax(0.0, e.predLow - e.actualLow) + qMax(0.0, e.actualHigh - e.predHigh));
+        m_winklerSum += width + missPenalty;
+
         if (isHit(e.predHigh, e.actualHigh))
             ++m_highHits;
         else
@@ -147,4 +168,19 @@ void ForecastTracker::loadFromDatabase(const QString& source)
         else
             ++m_lowMisses;
     }
+}
+
+
+double ForecastTracker::coverageRatePercent() const
+{
+    if (m_intervalTotal <= 0)
+        return 0.0;
+    return 100.0 * static_cast<double>(m_intervalCovered) / static_cast<double>(m_intervalTotal);
+}
+
+double ForecastTracker::meanWinklerScore() const
+{
+    if (m_intervalTotal <= 0)
+        return 0.0;
+    return m_winklerSum / static_cast<double>(m_intervalTotal);
 }

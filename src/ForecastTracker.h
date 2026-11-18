@@ -52,6 +52,10 @@ public:
     double highHitRatePercent() const;
     double lowHitRatePercent() const;
     double meanAbsError() const;
+    /** 区间覆盖率 PICP (%)：实际高低区间落在 [predLow-tol, predHigh+tol] 内的占比 */
+    double coverageRatePercent() const;
+    /** Winkler 区间评分（越低越好）：同时惩罚未覆盖区间与过宽区间 */
+    double meanWinklerScore() const;
     /** 从 forecast_logs 已结算记录重建命中统计（与 py 日线无关） */
     void loadFromDatabase(const QString& source = QString());
     void resetStats();
@@ -69,6 +73,9 @@ private:
     int m_lowMisses = 0;
     double m_absErrorSum = 0.0;
     int m_errCount = 0;
+    int m_intervalCovered = 0;
+    int m_intervalTotal = 0;
+    double m_winklerSum = 0.0;
 };
 
 #endif // FORECASTTRACKER_H

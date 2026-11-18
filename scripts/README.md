@@ -23,3 +23,12 @@ Stooq 常需 apikey（2026+）：`--prefer both --stooq-apikey KEY`
 ## deploy_deps.bat
 
 调用仓库根目录 `deploy.bat`，向 exe 旁部署 Qt DLL。
+
+## backtest_and_train.py
+
+读取 `gold_extremes.db` 执行 Walk-Forward 回测、HAR-RV + 在线共形分位数校准审计、48 桶分时波动率曲线分析与 `forecast_logs` 实盘命中率/PICP/Winkler 评分审计：
+
+```bat
+python scripts\backtest_and_train.py --source zs
+python scripts\backtest_and_train.py --source gj --fee-rate 0.0 --train-lgbm
+```

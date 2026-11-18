@@ -12,6 +12,9 @@
 #include <QMutexLocker>
 #include <QVariant>
 #include <QMap>
+#include "goldsdk/forecast.hpp"
+#include <algorithm>
+#include <cmath>
 
 ExtremeDatabase& ExtremeDatabase::instance()
 {
@@ -598,39 +601,234 @@ double ExtremeDatabase::computeAtr(int days, const QString& source) const
 {
     if (!m_open || days <= 0)
         return 0.0;
+    const auto bars = loadRecentDailyBars(days * 3, source);
+    if (bars.size() < 2)
+        return 0.0;
+
+    // Wilder 平滑 ATR（旧→新递推，对节假日跳空单日异常 TR 有天然衰减抗噪性）
+    std::vector<double> trs;
+    trs.reserve(bars.size());
+    for (size_t i = 0; i < bars.size(); ++i) {
+        const auto& b = bars[i];
+        double tr = std::max(0.0, b.high - b.low);
+        if (i > 0 && bars[i - 1].close > 0.0) {
+            const double prevC = bars[i - 1].close;
+            tr = std::max({tr, std::abs(b.high - prevC), std::abs(b.low - prevC)});
+        }
+        trs.push_back(tr);
+    }
+    if (trs.empty())
+        return 0.0;
+
+    const int initLen = std::min(days, static_cast<int>(trs.size()));
+    double atr = 0.0;
+    for (int i = 0; i < initLen; ++i)
+        atr += trs[static_cast<size_t>(i)];
+    atr /= static_cast<double>(initLen);
+
+    for (size_t i = static_cast<size_t>(initLen); i < trs.size(); ++i) {
+        atr = (atr * static_cast<double>(initLen - 1) + trs[i]) / static_cast<double>(initLen);
+    }
+    return atr;
+}
+
+std::vector<goldsdk::DailyBar> ExtremeDatabase::loadRecentDailyBars(int maxDays, const QString& source) const
+{
+    std::vector<goldsdk::DailyBar> out;
+    if (!m_open || maxDays <= 0)
+        return out;
     const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
     QSqlQuery q(db);
-    // 取历史 N+2 天 high, low, close，不包含今日
     q.prepare(QStringLiteral(
-        "SELECT trade_date, high_price, low_price, close_price FROM daily_bars "
+        "SELECT trade_date, open_price, high_price, low_price, close_price FROM daily_bars "
         "WHERE source=? AND trade_date < ? AND high_price > 0 AND low_price > 0 AND close_price > 0 "
         "ORDER BY trade_date DESC LIMIT ?"));
     q.addBindValue(src);
     q.addBindValue(QDate::currentDate().toString(Qt::ISODate));
-    q.addBindValue(days + 2);
+    q.addBindValue(maxDays);
+    if (!q.exec())
+        return out;
+
+    while (q.next()) {
+        goldsdk::DailyBar b;
+        b.tradeDate = q.value(0).toString().toStdString();
+        b.source = src.toStdString();
+        b.open = q.value(1).toDouble();
+        b.high = q.value(2).toDouble();
+        b.low = q.value(3).toDouble();
+        b.close = q.value(4).toDouble();
+        if (b.open <= 0.0) b.open = b.close;
+        out.push_back(b);
+    }
+    std::reverse(out.begin(), out.end()); // 旧 → 新
+    return out;
+}
+
+std::vector<int> ExtremeDatabase::loadHistoricalPeakBucketCounts(int lookbackDays, const QString& source) const
+{
+    std::vector<int> counts(48, 0);
+    if (!m_open || lookbackDays <= 0)
+        return counts;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QDate fromDate = QDate::currentDate().addDays(-lookbackDays);
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT high_time FROM daily_extremes "
+        "WHERE source=? AND trade_date>=? AND trade_date<?"));
+    q.addBindValue(src);
+    q.addBindValue(fromDate.toString(Qt::ISODate));
+    q.addBindValue(QDate::currentDate().toString(Qt::ISODate));
+    if (!q.exec())
+        return counts;
+
+    while (q.next()) {
+        const QString ts = q.value(0).toString();
+        QDateTime dt = QDateTime::fromString(ts, Qt::ISODateWithMs);
+        if (!dt.isValid()) dt = QDateTime::fromString(ts, Qt::ISODate);
+        if (!dt.isValid()) continue;
+        const QTime t = dt.time();
+        const int mins = t.hour() * 60 + t.minute();
+        const int bucket = std::clamp(mins / 30, 0, 47);
+        counts[static_cast<size_t>(bucket)] += 1;
+    }
+    return counts;
+}
+
+std::vector<double> ExtremeDatabase::loadHistoricalBucketVarWeights(int lookbackDays, const QString& source) const
+{
+    std::vector<double> varSum(48, 0.0);
+    if (!m_open || lookbackDays <= 0)
+        return varSum;
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QDate fromDate = QDate::currentDate().addDays(-lookbackDays);
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT trade_date, minute_key, price FROM intraday_samples "
+        "WHERE source=? AND trade_date>=? AND trade_date<? AND price>0 "
+        "ORDER BY trade_date ASC, minute_key ASC"));
+    q.addBindValue(src);
+    q.addBindValue(fromDate.toString(Qt::ISODate));
+    q.addBindValue(QDate::currentDate().toString(Qt::ISODate));
+    if (!q.exec())
+        return varSum;
+
+    QString prevDay;
+    double prevPx = 0.0;
+    int prevMins = -1;
+    std::vector<int> bucketSamples(48, 0);
+
+    while (q.next()) {
+        const QString day = q.value(0).toString();
+        const QString mKey = q.value(1).toString();
+        const double px = q.value(2).toDouble();
+        const QTime t = QTime::fromString(mKey, QStringLiteral("HH:mm"));
+        if (!t.isValid() || px <= 0.0)
+            continue;
+        const int mins = t.hour() * 60 + t.minute();
+        const int bucket = std::clamp(mins / 30, 0, 47);
+
+        if (day == prevDay && prevPx > 0.0 && prevMins >= 0) {
+            const int dt = mins - prevMins;
+            if (dt > 0 && dt <= 15) {
+                const double r = (px - prevPx) / prevPx;
+                // 按采样时间间隔归一为每分钟方差贡献
+                const double r2 = (r * r) / static_cast<double>(dt);
+                varSum[static_cast<size_t>(bucket)] += r2;
+                bucketSamples[static_cast<size_t>(bucket)] += 1;
+            }
+        }
+        prevDay = day;
+        prevPx = px;
+        prevMins = mins;
+    }
+
+    std::vector<double> meanVar(48, 0.0);
+    double total = 0.0;
+    for (int i = 0; i < 48; ++i) {
+        if (bucketSamples[static_cast<size_t>(i)] > 0) {
+            meanVar[static_cast<size_t>(i)] = varSum[static_cast<size_t>(i)] / static_cast<double>(bucketSamples[static_cast<size_t>(i)]);
+            total += meanVar[static_cast<size_t>(i)];
+        }
+    }
+    if (total > 1e-18) {
+        for (double& v : meanVar) v /= total;
+    } else {
+        std::fill(meanVar.begin(), meanVar.end(), 0.0);
+    }
+    return meanVar;
+}
+
+double ExtremeDatabase::computeCrossMarketLeadSignal(const QString& primarySource) const
+{
+    if (!m_open)
+        return 0.0;
+    const QString src = primarySource.isEmpty() ? QStringLiteral("zs") : primarySource;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    // 取近 60 条主/对照比值序列，检测当前内外盘相对强弱偏离
+    q.prepare(QStringLiteral(
+        "SELECT ratio, secondary_source FROM secondary_quotes "
+        "WHERE primary_source=? AND ratio > 0 "
+        "ORDER BY id DESC LIMIT 60"));
+    q.addBindValue(src);
     if (!q.exec())
         return 0.0;
 
-    struct Bar { double h; double l; double c; };
-    QVector<Bar> bars;
+    std::vector<double> ratios;
+    QString secSrc;
     while (q.next()) {
-        bars.append({q.value(1).toDouble(), q.value(2).toDouble(), q.value(3).toDouble()});
+        const double r = q.value(0).toDouble();
+        if (r > 0.0) {
+            ratios.push_back(r);
+            if (secSrc.isEmpty()) secSrc = q.value(1).toString();
+        }
     }
-    if (bars.size() < 2)
+    if (ratios.size() < 12)
         return 0.0;
 
-    double trSum = 0.0;
-    int count = 0;
-    for (int i = 0; i < bars.size() - 1 && count < days; ++i) {
-        const double h = bars[i].h;
-        const double l = bars[i].l;
-        const double prevC = bars[i + 1].c;
-        const double tr = qMax(h - l, qMax(qAbs(h - prevC), qAbs(l - prevC)));
-        trSum += tr;
-        ++count;
+    const double latest = ratios.front();
+    double sum = 0.0;
+    for (size_t i = 1; i < ratios.size(); ++i) sum += ratios[i];
+    const double mean = sum / static_cast<double>(ratios.size() - 1);
+    double var = 0.0;
+    for (size_t i = 1; i < ratios.size(); ++i) {
+        const double d = ratios[i] - mean;
+        var += d * d;
     }
-    return count > 0 ? (trSum / count) : 0.0;
+    const double sd = std::sqrt(var / static_cast<double>(std::max<size_t>(1, ratios.size() - 2)));
+    if (sd <= 1e-8)
+        return 0.0;
+
+    const double z = (latest - mean) / sd;
+    // 当主源为国内积存金(zs/ms)且对照源为国际伦敦金(gj/xau)时：ratio = 国内/外盘。
+    // 若外盘率先拉升导致 ratio 低于均值 (z < 0)，说明国内盘存在向上补涨领先信号 (>0)。
+    const bool isDomesticVsLondon = (src != QStringLiteral("gj") && src != QStringLiteral("xau"))
+                                    && (secSrc == QStringLiteral("gj") || secSrc == QStringLiteral("xau"));
+    const double lead = isDomesticVsLondon ? -z : z;
+    return std::clamp(lead, -3.0, 3.0);
+}
+
+double ExtremeDatabase::computeAdaptiveConformalScale(const QString& source, int limit) const
+{
+    const auto rows = loadSettledForecasts(limit, source);
+    if (rows.size() < 5)
+        return 1.0;
+
+    std::vector<double> ph, pl, ah, al;
+    ph.reserve(static_cast<size_t>(rows.size()));
+    pl.reserve(static_cast<size_t>(rows.size()));
+    ah.reserve(static_cast<size_t>(rows.size()));
+    al.reserve(static_cast<size_t>(rows.size()));
+    for (const auto& r : rows) {
+        ph.push_back(r.predHigh);
+        pl.push_back(r.predLow);
+        ah.push_back(r.actualHigh);
+        al.push_back(r.actualLow);
+    }
+    return goldsdk::ForecastEngine::computeConformalScale(ph, pl, ah, al, 0.80);
 }
 
 double ExtremeDatabase::previousClose(const QString& source) const
@@ -794,10 +992,11 @@ qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString
                                           const QString& mode, double predHigh, double predLow,
                                           double basePrice, const QString& brief,
                                           const QString& predHighTime, const QString& predLowTime,
-                                          const QString& catalyst)
+                                          const QString& catalyst, int horizonSec)
 {
     if (!m_open || predHigh <= 0.0 || predLow <= 0.0)
         return 0;
+    const int effHorizon = std::max(1800, horizonSec);
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
     QSqlQuery q(db);
     q.prepare(QStringLiteral(
@@ -806,7 +1005,7 @@ qint64 ExtremeDatabase::insertForecastLog(const QDateTime& madeAt, const QString
         " pred_high_time, pred_low_time, catalyst, settled) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"));
     q.addBindValue(madeAt.toString(Qt::ISODate));
-    q.addBindValue(madeAt.addSecs(3600).toString(Qt::ISODate));
+    q.addBindValue(madeAt.addSecs(effHorizon).toString(Qt::ISODate));
     q.addBindValue(source);
     q.addBindValue(mode);
     q.addBindValue(predHigh);

@@ -1186,6 +1186,10 @@ void PriceBarWindow::evaluateStrategyAlerts(double price) {
         pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
         pcfg.predHigh = lastFc.predHigh;
         pcfg.predLow = lastFc.predLow;
+        pcfg.multiDayBias = lastFc.multiDayBias == QStringLiteral("强多") ? goldsdk::TrendBias::StrongBull :
+                            lastFc.multiDayBias == QStringLiteral("偏多") ? goldsdk::TrendBias::MildBull :
+                            lastFc.multiDayBias == QStringLiteral("偏空") ? goldsdk::TrendBias::MildBear :
+                            lastFc.multiDayBias == QStringLiteral("强空") ? goldsdk::TrendBias::StrongBear : goldsdk::TrendBias::Range;
     }
     const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     if (!pat.valid)

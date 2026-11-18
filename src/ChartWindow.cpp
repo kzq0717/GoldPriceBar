@@ -9,6 +9,17 @@
 #include "TradingSession.h"
 #include "EventCalendar.h"
 #include "ForecastService.h"
+#include "SentimentService.h"
+
+namespace {
+goldsdk::TrendBias parseBiasStr(const QString& label) {
+    if (label == QStringLiteral("强多")) return goldsdk::TrendBias::StrongBull;
+    if (label == QStringLiteral("偏多")) return goldsdk::TrendBias::MildBull;
+    if (label == QStringLiteral("偏空")) return goldsdk::TrendBias::MildBear;
+    if (label == QStringLiteral("强空")) return goldsdk::TrendBias::StrongBear;
+    return goldsdk::TrendBias::Range;
+}
+} // namespace
 #include "PriceService.h"
 
 
@@ -1764,9 +1775,24 @@ bool ChartWindow::computeDayRangeForecast(double& outPredHigh, double& outPredLo
                 dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
         }
     }
-    const double atr = ExtremeDatabase::instance().computeAtr(10, currentTypeCode());
-    const double prevClose = ExtremeDatabase::instance().previousClose(currentTypeCode());
-    const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac, atr, prevClose);
+    const QString code = currentTypeCode();
+    auto& db = ExtremeDatabase::instance();
+    goldsdk::ForecastContext fctx;
+    fctx.actHigh = actHigh;
+    fctx.actLow = actLow;
+    fctx.dayFraction = dayFrac;
+    fctx.atr = db.computeAtr(10, code);
+    fctx.prevClose = db.previousClose(code);
+    fctx.dailyBars = db.loadRecentDailyBars(45, code);
+    if (fctx.dailyBars.size() >= 10) {
+        fctx.multiDayTrend = goldsdk::ForecastEngine::multiDayTrendFromBars(fctx.dailyBars);
+    }
+    fctx.historicalPeakBucketCounts = db.loadHistoricalPeakBucketCounts(60, code);
+    fctx.historicalBucketVarWeights = db.loadHistoricalBucketVarWeights(20, code);
+    fctx.crossMarketLeadSignal = db.computeCrossMarketLeadSignal(code);
+    fctx.sentimentScore = SentimentService::instance().recentMarketImpact(6).decayedScore;
+    fctx.conformalScale = db.computeAdaptiveConformalScale(code, 30);
+    const auto fr = goldsdk::ForecastEngine::dayRangeWithContext(pts, fctx);
     if (!fr.valid)
         return false;
     outPredHigh = fr.predHigh;
@@ -1961,6 +1987,7 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
       pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
       pcfg.predHigh = lastFc.predHigh;
       pcfg.predLow = lastFc.predLow;
+      pcfg.multiDayBias = parseBiasStr(lastFc.multiDayBias);
     }
     const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     applyFibonacciLines(pat.fib50, pat.fib618);
@@ -2141,6 +2168,7 @@ void ChartWindow::updateFeeDisplay(double currentPrice)
         pcfg.lowAlreadyInProb = lastFc.lowAlreadyInProb;
         pcfg.predHigh = lastFc.predHigh;
         pcfg.predLow = lastFc.predLow;
+        pcfg.multiDayBias = parseBiasStr(lastFc.multiDayBias);
       }
       pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
     }
@@ -4193,26 +4221,38 @@ void ChartWindow::updateClockAndAdvice()
     if (!m_plotPoints.isEmpty())
         price = m_plotPoints.last().second;
 
-    // 趋势徽章
+    // 趋势徽章（TWAP 时间加权均价 + 二维卡尔曼即时速度滤波）
     if (m_sideTrendLabel) {
         QString trend = tr("—");
         QString color = QStringLiteral("#e8eaed");
         if (m_plotPoints.size() >= 8 && price > 0.0) {
-            double sum = 0.0;
-            for (const auto& p : m_plotPoints)
-                sum += p.second;
-            const double vwap = sum / m_plotPoints.size();
-            const double band = qMax(0.15, vwap * 0.0008);
-            const int n = m_plotPoints.size();
-            const int take = qMin(12, n);
-            double recent = 0.0;
-            for (int i = n - take; i < n; ++i)
-                recent += m_plotPoints.at(i).second;
-            recent /= take;
-            if (price > vwap + band && recent >= vwap) {
+            double wSum = 0.0;
+            double wTotal = 0.0;
+            std::vector<goldsdk::IntradayPoint> kpts;
+            kpts.reserve(static_cast<size_t>(m_plotPoints.size()));
+            for (int i = 0; i < m_plotPoints.size(); ++i) {
+                const auto& p = m_plotPoints.at(i);
+                const qint64 ms = p.first.toMSecsSinceEpoch();
+                kpts.push_back({ms, p.second});
+                double dtSec = 10.0;
+                if (i + 1 < m_plotPoints.size()) {
+                    dtSec = qBound(1.0, (m_plotPoints.at(i + 1).first.toMSecsSinceEpoch() - ms) / 1000.0, 300.0);
+                }
+                wSum += p.second * dtSec;
+                wTotal += dtSec;
+            }
+            const double twap = (wTotal > 0.0) ? (wSum / wTotal) : price;
+            const double atr = ExtremeDatabase::instance().computeAtr(10, src);
+            const auto kf = goldsdk::ForecastEngine::kalmanTrend(kpts, atr);
+            const double band = qMax(0.15, twap * 0.0008);
+            const double velZ = kf.valid ? kf.velocityZ : 0.0;
+            const double filtPx = kf.valid ? kf.filteredPrice : price;
+            if ((kf.valid && velZ >= 0.45 && filtPx >= twap - band * 0.25) ||
+                (price > twap + band && velZ >= 0.0)) {
                 trend = tr("偏强");
                 color = QStringLiteral("#7fd99a");
-            } else if (price < vwap - band && recent <= vwap) {
+            } else if ((kf.valid && velZ <= -0.45 && filtPx <= twap + band * 0.25) ||
+                       (price < twap - band && velZ <= 0.0)) {
                 trend = tr("偏弱");
                 color = QStringLiteral("#f07178");
             } else {
@@ -4220,7 +4260,11 @@ void ChartWindow::updateClockAndAdvice()
                 color = QStringLiteral("#e8c547");
             }
             m_sideTrendLabel->setToolTip(
-                tr("现价 %1 · 分时均价 %2").arg(price, 0, 'f', 2).arg(vwap, 0, 'f', 2));
+                tr("现价 %1 · TWAP均价 %2 · 卡尔曼平滑 %3 (速度Z %4)")
+                    .arg(price, 0, 'f', 2)
+                    .arg(twap, 0, 'f', 2)
+                    .arg(filtPx, 0, 'f', 2)
+                    .arg(velZ, 0, 'f', 2));
         }
         m_sideTrendLabel->setText(trend);
         m_sideTrendLabel->setStyleSheet(
@@ -4236,10 +4280,14 @@ void ChartWindow::updateClockAndAdvice()
                     .arg(ft.totalEvaluated() / 2));
             m_sideHitRateLabel->setToolTip(
                 tr("来自已结算预测日志（非日线导入）\n"
-                   "高命中 %1% / 低命中 %2% / 待结算 %3")
+                   "高命中 %1% / 低命中 %2% / 待结算 %3\n"
+                   "区间覆盖率(PICP) %4% · Winkler评分 %5 · MAE %6")
                     .arg(ft.highHitRatePercent(), 0, 'f', 0)
                     .arg(ft.lowHitRatePercent(), 0, 'f', 0)
-                    .arg(ft.pendingCount()));
+                    .arg(ft.pendingCount())
+                    .arg(ft.coverageRatePercent(), 0, 'f', 0)
+                    .arg(ft.meanWinklerScore(), 0, 'f', 2)
+                    .arg(ft.meanAbsError(), 0, 'f', 2));
         } else if (ft.pendingCount() > 0) {
             m_sideHitRateLabel->setText(tr("待结算%1").arg(ft.pendingCount()));
             m_sideHitRateLabel->setToolTip(

@@ -1542,9 +1542,23 @@ void QmlBridge::evaluateDecision(double price) {
         ? tr("%1%").arg(res.confidence * 100.0, 0, 'f', 0)
         : tr("—");
     } else {
-        const double atr = ExtremeDatabase::instance().computeAtr(10, src);
-        const double prevClose = ExtremeDatabase::instance().previousClose(src);
-        const auto fr = goldsdk::ForecastEngine::dayRange(pts, actHigh, actLow, dayFrac, atr, prevClose);
+        auto& db = ExtremeDatabase::instance();
+        goldsdk::ForecastContext fctx;
+        fctx.actHigh = actHigh;
+        fctx.actLow = actLow;
+        fctx.dayFraction = dayFrac;
+        fctx.atr = db.computeAtr(10, src);
+        fctx.prevClose = db.previousClose(src);
+        fctx.dailyBars = db.loadRecentDailyBars(45, src);
+        if (fctx.dailyBars.size() >= 10) {
+            fctx.multiDayTrend = goldsdk::ForecastEngine::multiDayTrendFromBars(fctx.dailyBars);
+        }
+        fctx.historicalPeakBucketCounts = db.loadHistoricalPeakBucketCounts(60, src);
+        fctx.historicalBucketVarWeights = db.loadHistoricalBucketVarWeights(20, src);
+        fctx.crossMarketLeadSignal = db.computeCrossMarketLeadSignal(src);
+        fctx.sentimentScore = SentimentService::instance().recentMarketImpact(6).decayedScore;
+        fctx.conformalScale = db.computeAdaptiveConformalScale(src, 30);
+        const auto fr = goldsdk::ForecastEngine::dayRangeWithContext(pts, fctx);
         if (fr.valid && fr.predHigh > fr.predLow) {
             predHigh = fr.predHigh;
             predLow = fr.predLow;
@@ -1558,6 +1572,9 @@ void QmlBridge::evaluateDecision(double price) {
                 ? tr("%1%").arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0) : tr("—");
             m_remainingUpsideText = fr.remainingUpside > 0
                 ? QString::number(fr.remainingUpside, 'f', 2) : tr("—");
+            if (fctx.multiDayTrend.valid) {
+                m_multiDayBiasText = QString::fromUtf8(fctx.multiDayTrend.label());
+            }
             m_forecastConfidenceText = fr.confidence > 0
                 ? tr("%1%").arg(fr.confidence * 100.0, 0, 'f', 0) : tr("—");
         } else {
@@ -1609,6 +1626,8 @@ void QmlBridge::evaluateDecision(double price) {
         }
     }
 
+    // 多因子共振决策评估（趋势 + 时段突破 + TWAP均值回归 + 形态 + 0.4%费率安全边际）
+    goldsdk::ConfluenceDecision confluence;
     // 预测高低区间与经典形态决策融合
     if (EventCalendar::isEventBlackoutWindow()) {
         level = 4;
@@ -1914,6 +1933,67 @@ void QmlBridge::evaluateDecision(double price) {
                 }
             }
         }
+
+        // 多因子共振与 0.4% 费率安全边际校验
+        {
+            auto& db = ExtremeDatabase::instance();
+            goldsdk::DecisionConfig dcfg;
+            dcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+            dcfg.currentPrice = price;
+            dcfg.atr = db.computeAtr(10, src);
+            dcfg.predHigh = predHigh;
+            dcfg.predLow = predLow;
+            dcfg.hasForecast = (predHigh > predLow);
+            if (fcRes.valid) {
+                dcfg.highAlreadyInProb = fcRes.highAlreadyInProb;
+                dcfg.lowAlreadyInProb = fcRes.lowAlreadyInProb;
+            }
+            const auto dailyBars = db.loadRecentDailyBars(35, src);
+            if (dailyBars.size() >= 10) {
+                dcfg.multiDayTrend = goldsdk::ForecastEngine::multiDayTrendFromBars(dailyBars);
+            }
+            dcfg.pattern = realPat;
+            dcfg.crossMarketLeadSignal = db.computeCrossMarketLeadSignal(src);
+            dcfg.sentimentScore = SentimentService::instance().recentMarketImpact(6).decayedScore;
+            confluence = goldsdk::ForecastEngine::evaluateDecision(pts, dcfg);
+
+            if (confluence.valid) {
+                // 费损安全边际拦截：有卖出手续费且共振引擎判定净空间/盈亏比未达门槛时，拦截低赔率买单
+                if (level == 3 && dcfg.feeRate > 0.0 && !confluence.feeEdgeSatisfied && confluence.score < 68) {
+                    level = 2;
+                    tag = tr("⏳ 盈亏比不足·观望过滤");
+                    color = QStringLiteral("#FAAD14");
+                    bg = QStringLiteral("#352814");
+                    advice = tr("多因子共振 %1/100 [%2]，当前扣费(0.4%)后净空间 %3 元 / RRR %4:1 未达安全边际（要求净利≥1.2且RRR≥1.4），避免微幅震荡反复损耗手续费。")
+                                 .arg(confluence.score)
+                                 .arg(QString::fromUtf8(goldsdk::MultiDayTrend::regimeLabel(confluence.regime)))
+                                 .arg(confluence.netReward, 0, 'f', 2)
+                                 .arg(confluence.rrr, 0, 'f', 2);
+                } else if (level == 1 &&
+                           (confluence.action == goldsdk::DecisionAction::StrongBuy ||
+                            confluence.action == goldsdk::DecisionAction::BuyOnDips) &&
+                           confluence.feeEdgeSatisfied && confluence.score >= 70) {
+                    level = 3;
+                    tag = tr("🟢 多因子共振布局 (%1分)").arg(confluence.score);
+                    color = QStringLiteral("#52C41A");
+                    bg = QStringLiteral("#163219");
+                    advice = tr("%1 | 稳健买点 %2 | 止盈目标 %3 | 防守止损 %4 (扣费RRR %5:1)")
+                                 .arg(QString::fromStdString(confluence.summary))
+                                 .arg(confluence.conservativeBuy, 0, 'f', 2)
+                                 .arg(confluence.takeProfit1, 0, 'f', 2)
+                                 .arg(confluence.stopLoss, 0, 'f', 2)
+                                 .arg(confluence.rrr, 0, 'f', 2);
+                } else if (level == 1 &&
+                           confluence.action == goldsdk::DecisionAction::StrongSell &&
+                           confluence.score <= 25) {
+                    level = 4;
+                    tag = tr("⚠️ 多因子共振防守 (%1分)").arg(confluence.score);
+                    color = QStringLiteral("#FF7875");
+                    bg = QStringLiteral("#3E1C1F");
+                    advice = QString::fromStdString(confluence.summary);
+                }
+            }
+        }
     }
 
     const QString upcomingWarn = EventCalendar::currentEventWarning();
@@ -1963,6 +2043,11 @@ void QmlBridge::evaluateDecision(double price) {
     m_decisionMetricsText = tr("MA5日 %1 · 近20日分位 %2%")
                                 .arg(ma5 > 0 ? QString::number(ma5, 'f', 2) : tr("--"))
                                 .arg(pct20, 0, 'f', 0);
+    if (confluence.valid) {
+        m_decisionMetricsText += tr(" · 共振 %1分[%2]")
+                                     .arg(confluence.score)
+                                     .arg(QString::fromUtf8(goldsdk::MultiDayTrend::regimeLabel(confluence.regime)));
+    }
     m_decisionSessionText = TradingSession::statusText(src, QDateTime::currentDateTime());
 
     QString feeLine;
@@ -1980,6 +2065,13 @@ void QmlBridge::evaluateDecision(double price) {
                           .arg(fee, 0, 'f', 2)
                           .arg(net, 0, 'f', 2);
         }
+    }
+    if (confluence.valid && confluence.conservativeBuy > 0.0 && confluence.takeProfit1 > 0.0) {
+        feeLine += tr("\n• 共振参考: 买 %1 / 盈 %2 / 损 %3 (RRR %4:1)")
+                       .arg(confluence.conservativeBuy, 0, 'f', 2)
+                       .arg(confluence.takeProfit1, 0, 'f', 2)
+                       .arg(confluence.stopLoss, 0, 'f', 2)
+                       .arg(confluence.rrr, 0, 'f', 2);
     }
 
     m_decisionTooltip = tr("【💡 实时趋势与交易决策参考】\n"

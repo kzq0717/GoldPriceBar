@@ -27,6 +27,7 @@ struct SentimentImpact {
     bool hasImpact = false;
     QString bias; // "bullish" / "bearish" / "neutral"
     int netScore = 0;
+    double decayedScore = 0.0;
     QString topTitle;
     QString topSource;
     QDateTime topTime;

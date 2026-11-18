@@ -21,6 +21,15 @@ const char* MultiDayTrend::biasLabel(TrendBias b)
     }
 }
 
+const char* MultiDayTrend::regimeLabel(MarketRegime r)
+{
+    switch (r) {
+    case MarketRegime::Trending:      return "趋势推进";
+    case MarketRegime::HighVolCrisis: return "高波冲击";
+    default:                          return "低波震荡";
+    }
+}
+
 namespace {
 
 int minuteOfDayFromEpochMs(std::int64_t epochMs)
@@ -60,27 +69,39 @@ std::vector<double> priorPeakWeights()
 {
     std::vector<double> w(48, 0.5);
     // 48个半小时桶（按北京时间 CST 分布）：
-    // 00:00 - 02:30 (桶 0..4): 美盘后半程
-    for (int i = 0; i < 5; ++i) w[static_cast<size_t>(i)] = 1.0;
-    // 02:30 - 09:00 (桶 5..17): 隔夜清淡与休市
-    for (int i = 5; i < 18; ++i) w[static_cast<size_t>(i)] = 0.35;
-    // 09:00 - 10:30 (桶 18..20): 国内盘开盘定价期（脉冲极值高发期）
-    for (int i = 18; i < 21; ++i) w[static_cast<size_t>(i)] = 1.8;
-    // 10:30 - 14:00 (桶 21..27): 亚盘午间收敛
-    for (int i = 21; i < 28; ++i) w[static_cast<size_t>(i)] = 0.55;
-    // 14:00 - 15:30 (桶 28..30): 亚盘尾盘与欧盘初动
-    for (int i = 28; i < 31; ++i) w[static_cast<size_t>(i)] = 0.9;
-    // 15:30 - 19:30 (桶 31..38): 欧盘主交易段（国内积存金日间休市）
-    for (int i = 31; i < 39; ++i) w[static_cast<size_t>(i)] = 1.2;
-    // 19:30 - 20:30 (桶 39..40): 国内夜盘开盘前夕与初开
-    for (int i = 39; i < 41; ++i) w[static_cast<size_t>(i)] = 1.4;
-    // 20:30 - 23:00 (桶 41..45): 美盘核心博弈与重磅数据发布（全球最大波动）
-    for (int i = 41; i < 46; ++i) w[static_cast<size_t>(i)] = 2.2;
-    // 23:00 - 24:00 (桶 46..47): 美盘主浪延续
-    for (int i = 46; i < 48; ++i) w[static_cast<size_t>(i)] = 1.3;
+    for (int i = 0; i < 5; ++i) w[static_cast<size_t>(i)] = 1.0;   // 00:00 - 02:30 美盘后半程
+    for (int i = 5; i < 18; ++i) w[static_cast<size_t>(i)] = 0.35; // 02:30 - 09:00 隔夜清淡与休市
+    for (int i = 18; i < 21; ++i) w[static_cast<size_t>(i)] = 1.8; // 09:00 - 10:30 国内早盘定价脉冲
+    for (int i = 21; i < 28; ++i) w[static_cast<size_t>(i)] = 0.55;// 10:30 - 14:00 亚盘午间收敛
+    for (int i = 28; i < 31; ++i) w[static_cast<size_t>(i)] = 0.9; // 14:00 - 15:30 亚尾/欧盘初动
+    for (int i = 31; i < 39; ++i) w[static_cast<size_t>(i)] = 1.2; // 15:30 - 19:30 欧盘主交易段
+    for (int i = 39; i < 41; ++i) w[static_cast<size_t>(i)] = 1.4; // 19:30 - 20:30 国内夜盘开盘
+    for (int i = 41; i < 46; ++i) w[static_cast<size_t>(i)] = 2.2; // 20:30 - 23:00 美盘核心博弈
+    for (int i = 46; i < 48; ++i) w[static_cast<size_t>(i)] = 1.3; // 23:00 - 24:00 美盘主浪延续
 
     double s = std::accumulate(w.begin(), w.end(), 0.0);
-    if (s > 0) {
+    if (s > 0.0) {
+        for (double& v : w) v /= s;
+    }
+    return w;
+}
+
+std::vector<double> priorVarianceWeights()
+{
+    // 分时段方差先验分布（按黄金日内波动率聚类规律：09:00-10:30 与 20:30-23:00 占显著更高方差）
+    std::vector<double> w(48, 0.5);
+    for (int i = 0; i < 5; ++i)   w[static_cast<size_t>(i)] = 1.1;  // 00:00 - 02:30
+    for (int i = 5; i < 18; ++i)  w[static_cast<size_t>(i)] = 0.25; // 02:30 - 09:00
+    for (int i = 18; i < 21; ++i) w[static_cast<size_t>(i)] = 1.9;  // 09:00 - 10:30
+    for (int i = 21; i < 28; ++i) w[static_cast<size_t>(i)] = 0.45; // 10:30 - 14:00
+    for (int i = 28; i < 31; ++i) w[static_cast<size_t>(i)] = 0.95; // 14:00 - 15:30
+    for (int i = 31; i < 39; ++i) w[static_cast<size_t>(i)] = 1.25; // 15:30 - 19:30
+    for (int i = 39; i < 41; ++i) w[static_cast<size_t>(i)] = 1.5;  // 19:30 - 20:30
+    for (int i = 41; i < 46; ++i) w[static_cast<size_t>(i)] = 2.6;  // 20:30 - 23:00
+    for (int i = 46; i < 48; ++i) w[static_cast<size_t>(i)] = 1.4;  // 23:00 - 24:00
+
+    double s = std::accumulate(w.begin(), w.end(), 0.0);
+    if (s > 0.0) {
         for (double& v : w) v /= s;
     }
     return w;
@@ -93,21 +114,48 @@ std::vector<double> blendPeakProbs(const std::vector<int>& histCounts)
         return prior;
     int N = 0;
     for (int c : histCounts) N += std::max(0, c);
-    const double alpha = std::min(1.0, N / 60.0);
+    if (N <= 0)
+        return prior;
+    const double alpha = std::min(0.85, static_cast<double>(N) / 60.0);
     std::vector<double> hist(48, 0.0);
-    if (N > 0) {
-        for (int i = 0; i < 48; ++i)
-            hist[static_cast<size_t>(i)] =
-                static_cast<double>(std::max(0, histCounts[static_cast<size_t>(i)])) / N;
-    } else {
-        hist = prior;
+    for (int i = 0; i < 48; ++i) {
+        hist[static_cast<size_t>(i)] =
+            static_cast<double>(std::max(0, histCounts[static_cast<size_t>(i)])) / static_cast<double>(N);
     }
     std::vector<double> out(48);
-    for (int i = 0; i < 48; ++i)
+    for (int i = 0; i < 48; ++i) {
         out[static_cast<size_t>(i)] =
             alpha * hist[static_cast<size_t>(i)] + (1.0 - alpha) * prior[static_cast<size_t>(i)];
+    }
     double s = std::accumulate(out.begin(), out.end(), 0.0);
-    if (s > 0) {
+    if (s > 0.0) {
+        for (double& v : out) v /= s;
+    }
+    return out;
+}
+
+std::vector<double> blendVarianceWeights(const std::vector<double>& histVarWeights)
+{
+    auto prior = priorVarianceWeights();
+    if (histVarWeights.size() != 48)
+        return prior;
+    double sumW = 0.0;
+    for (double v : histVarWeights) {
+        if (std::isfinite(v) && v > 0.0)
+            sumW += v;
+    }
+    if (sumW <= 1e-12)
+        return prior;
+
+    std::vector<double> out(48, 0.0);
+    for (int i = 0; i < 48; ++i) {
+        const double hv = (std::isfinite(histVarWeights[static_cast<size_t>(i)]) && histVarWeights[static_cast<size_t>(i)] > 0.0)
+                              ? (histVarWeights[static_cast<size_t>(i)] / sumW)
+                              : 0.0;
+        out[static_cast<size_t>(i)] = 0.65 * hv + 0.35 * prior[static_cast<size_t>(i)];
+    }
+    const double s = std::accumulate(out.begin(), out.end(), 0.0);
+    if (s > 0.0) {
         for (double& v : out) v /= s;
     }
     return out;
@@ -130,36 +178,447 @@ void redistributePastBuckets(std::vector<double>& p, int currentBucket, bool hig
     double remain = 0.0;
     for (int i = currentBucket; i < 48; ++i)
         remain += p[static_cast<size_t>(i)];
-    if (remain > 1e-12 && mass > 0) {
+    if (remain > 1e-12 && mass > 0.0) {
         for (int i = currentBucket; i < 48; ++i)
             p[static_cast<size_t>(i)] += mass * (p[static_cast<size_t>(i)] / remain);
-    } else if (mass > 0) {
+    } else if (mass > 0.0) {
         p[47] += mass;
     }
     double s = std::accumulate(p.begin(), p.end(), 0.0);
-    if (s > 0) {
+    if (s > 0.0) {
         for (double& v : p) v /= s;
     }
 }
 
+// 标准 Wilder 平滑 RSI(14)：首段使用前 period 个涨跌均值，后续按 (prev*(P-1)+cur)/P 递推
 double rsiWilder(const std::vector<double>& closes, int period)
 {
-    if (static_cast<int>(closes.size()) < period + 1)
-        return 50.0;
-    double gain = 0, loss = 0;
     const int n = static_cast<int>(closes.size());
-    for (int i = n - period; i < n; ++i) {
+    if (n < 3 || period <= 0)
+        return 50.0;
+
+    const int effPeriod = std::min(period, n - 1);
+    double avgGain = 0.0;
+    double avgLoss = 0.0;
+    for (int i = 1; i <= effPeriod; ++i) {
         const double d = closes[static_cast<size_t>(i)] - closes[static_cast<size_t>(i - 1)];
-        if (d >= 0) gain += d;
-        else loss -= d;
+        if (d >= 0.0) avgGain += d;
+        else avgLoss -= d;
     }
-    if (loss < 1e-12)
-        return 100.0;
-    const double rs = gain / loss;
+    avgGain /= static_cast<double>(effPeriod);
+    avgLoss /= static_cast<double>(effPeriod);
+
+    for (int i = effPeriod + 1; i < n; ++i) {
+        const double d = closes[static_cast<size_t>(i)] - closes[static_cast<size_t>(i - 1)];
+        const double g = (d >= 0.0) ? d : 0.0;
+        const double l = (d < 0.0) ? -d : 0.0;
+        avgGain = (avgGain * static_cast<double>(effPeriod - 1) + g) / static_cast<double>(effPeriod);
+        avgLoss = (avgLoss * static_cast<double>(effPeriod - 1) + l) / static_cast<double>(effPeriod);
+    }
+
+    if (avgLoss < 1e-12) {
+        return (avgGain < 1e-12) ? 50.0 : 100.0;
+    }
+    const double rs = avgGain / avgLoss;
     return 100.0 - (100.0 / (1.0 + rs));
 }
 
+double computeEma(const std::vector<double>& values, int period)
+{
+    if (values.empty() || period <= 0)
+        return 0.0;
+    const double k = 2.0 / (static_cast<double>(period) + 1.0);
+    double ema = values.front();
+    for (size_t i = 1; i < values.size(); ++i) {
+        ema = values[i] * k + ema * (1.0 - k);
+    }
+    return ema;
+}
+
+double computeWilderAtrFromBars(const std::vector<DailyBar>& bars, int period)
+{
+    const int n = static_cast<int>(bars.size());
+    if (n < 2 || period <= 0)
+        return 0.0;
+
+    std::vector<double> trs;
+    trs.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const auto& b = bars[static_cast<size_t>(i)];
+        if (b.high <= 0.0 || b.low <= 0.0)
+            continue;
+        double tr = std::max(0.0, b.high - b.low);
+        if (i > 0 && bars[static_cast<size_t>(i - 1)].close > 0.0) {
+            const double prevC = bars[static_cast<size_t>(i - 1)].close;
+            tr = std::max({tr, std::abs(b.high - prevC), std::abs(b.low - prevC)});
+        }
+        trs.push_back(tr);
+    }
+    if (trs.empty())
+        return 0.0;
+
+    const int m = static_cast<int>(trs.size());
+    const int initLen = std::min(period, m);
+    double atr = 0.0;
+    for (int i = 0; i < initLen; ++i) atr += trs[static_cast<size_t>(i)];
+    atr /= static_cast<double>(initLen);
+
+    for (int i = initLen; i < m; ++i) {
+        atr = (atr * static_cast<double>(initLen - 1) + trs[static_cast<size_t>(i)]) / static_cast<double>(initLen);
+    }
+    return atr;
+}
+
+double computeTwap(const std::vector<IntradayPoint>& points)
+{
+    if (points.empty())
+        return 0.0;
+    if (points.size() == 1)
+        return points.front().price;
+
+    double weightedSum = 0.0;
+    double totalWeight = 0.0;
+    for (size_t i = 0; i < points.size(); ++i) {
+        if (points[i].price <= 0.0)
+            continue;
+        double dtMin = 1.0;
+        if (i + 1 < points.size() && points[i + 1].epochMs > points[i].epochMs) {
+            dtMin = static_cast<double>(points[i + 1].epochMs - points[i].epochMs) / 60000.0;
+        } else if (i > 0 && points[i].epochMs > points[i - 1].epochMs) {
+            dtMin = static_cast<double>(points[i].epochMs - points[i - 1].epochMs) / 60000.0;
+        }
+        // 截断跨休市断层权重（最多计 10 分钟），避免停盘时段垄断均价
+        const double w = std::clamp(dtMin, 0.1, 10.0);
+        weightedSum += points[i].price * w;
+        totalWeight += w;
+    }
+    if (totalWeight <= 1e-9) {
+        double s = 0.0;
+        int c = 0;
+        for (const auto& p : points) {
+            if (p.price > 0.0) { s += p.price; ++c; }
+        }
+        return c > 0 ? (s / c) : 0.0;
+    }
+    return weightedSum / totalWeight;
+}
+
+struct RegressionLine {
+    double slope = 0.0;
+    double intercept = 0.0;
+    double r2 = 0.0;
+    bool valid = false;
+};
+
+template <typename SwingT>
+RegressionLine fitSwingRegression(const std::vector<SwingT>& swings, size_t maxCount)
+{
+    RegressionLine out;
+    if (swings.size() < 2)
+        return out;
+    const size_t cnt = std::min(maxCount, swings.size());
+    const size_t start = swings.size() - cnt;
+
+    double sx = 0.0, sy = 0.0;
+    for (size_t i = start; i < swings.size(); ++i) {
+        sx += static_cast<double>(swings[i].index);
+        sy += swings[i].price;
+    }
+    const double mx = sx / static_cast<double>(cnt);
+    const double my = sy / static_cast<double>(cnt);
+
+    double sxx = 0.0, sxy = 0.0, syy = 0.0;
+    for (size_t i = start; i < swings.size(); ++i) {
+        const double dx = static_cast<double>(swings[i].index) - mx;
+        const double dy = swings[i].price - my;
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    if (sxx <= 1e-12)
+        return out;
+
+    out.slope = sxy / sxx;
+    out.intercept = my - out.slope * mx;
+    if (syy > 1e-12) {
+        out.r2 = std::clamp((sxy * sxy) / (sxx * syy), 0.0, 1.0);
+    } else {
+        out.r2 = 1.0;
+    }
+    out.valid = true;
+    return out;
+}
+
 } // namespace
+
+KalmanTrendState ForecastEngine::kalmanTrend(const std::vector<IntradayPoint>& points, double atr)
+{
+    KalmanTrendState st;
+    if (points.size() < 2) {
+        if (!points.empty() && points.back().price > 0.0) {
+            st.filteredPrice = points.back().price;
+            st.valid = true;
+        }
+        return st;
+    }
+
+    // 寻找首有效价格
+    size_t firstValid = 0;
+    while (firstValid < points.size() && points[firstValid].price <= 0.0)
+        ++firstValid;
+    if (firstValid >= points.size())
+        return st;
+
+    const double refPx = points.back().price > 0.0 ? points.back().price : points[firstValid].price;
+    const double effAtr = (atr > 0.05) ? atr : (refPx > 1000.0 ? refPx * 0.011 : refPx * 0.008);
+
+    // 测量噪声 R 与过程噪声基准 Q（按 ATR 自适应缩放，兼顾人民币克价与美元盎司）
+    const double sigmaMeas = std::max(0.03, effAtr * 0.030);
+    const double rMeas = sigmaMeas * sigmaMeas;
+    const double qPosBase = std::pow(std::max(0.008, effAtr * 0.012), 2);
+    const double qVelBase = std::pow(std::max(0.001, effAtr * 0.0035), 2);
+
+    double x0 = points[firstValid].price;
+    double x1 = 0.0; // velocity (price per minute)
+    double p00 = rMeas * 2.0, p01 = 0.0;
+    double p10 = 0.0, p11 = std::pow(std::max(0.01, effAtr * 0.02), 2);
+    int64_t prevEpoch = points[firstValid].epochMs;
+
+    for (size_t i = firstValid + 1; i < points.size(); ++i) {
+        const double z = points[i].price;
+        if (z <= 0.0)
+            continue;
+
+        double rawDtMin = 1.0;
+        if (points[i].epochMs > prevEpoch && prevEpoch > 0) {
+            rawDtMin = static_cast<double>(points[i].epochMs - prevEpoch) / 60000.0;
+        }
+        prevEpoch = points[i].epochMs;
+
+        // 遇休市/断线长间隔 (>25分钟) 时，阻尼历史速度并放大状态不确定度，防止跳空制造虚假斜率
+        if (rawDtMin > 25.0) {
+            x1 *= 0.20;
+            p00 += rMeas * 4.0;
+            p11 += qVelBase * 12.0;
+        }
+        const double dt = std::clamp(rawDtMin, 0.05, 15.0);
+
+        // Predict: F = [[1, dt], [0, 0.985^dt]]
+        const double decay = std::pow(0.985, dt);
+        const double px0 = x0 + x1 * dt;
+        const double px1 = x1 * decay;
+
+        const double fp00 = p00 + dt * (p10 + p01) + dt * dt * p11 + qPosBase * dt;
+        const double fp01 = (p01 + dt * p11) * decay;
+        const double fp10 = (p10 + dt * p11) * decay;
+        const double fp11 = p11 * decay * decay + qVelBase * dt;
+
+        // Update with measurement z = [1, 0] * x
+        const double innov = z - px0;
+        const double s = fp00 + rMeas;
+        if (s <= 1e-12)
+            continue;
+        const double k0 = fp00 / s;
+        const double k1 = fp10 / s;
+
+        x0 = px0 + k0 * innov;
+        x1 = px1 + k1 * innov;
+
+        p00 = std::max(1e-9, (1.0 - k0) * fp00);
+        p01 = (1.0 - k0) * fp01;
+        p10 = fp10 - k1 * fp00;
+        p11 = std::max(1e-10, fp11 - k1 * fp01);
+    }
+
+    st.filteredPrice = x0;
+    st.velocityPerMin = x1;
+    st.stateStd = std::sqrt(std::max(0.0, p00));
+    const double velScale = std::max(1e-4, std::sqrt(std::max(0.0, p11)) + effAtr * 0.0025);
+    st.velocityZ = std::clamp(x1 / velScale, -5.0, 5.0);
+    st.valid = true;
+    return st;
+}
+
+VolatilityEstimate ForecastEngine::estimateVolatility(
+    const std::vector<DailyBar>& bars,
+    const std::vector<IntradayPoint>& intradayPoints,
+    double fallbackAtr)
+{
+    VolatilityEstimate est;
+
+    // 1) 基于日线 OHLC 计算 Garman-Klass 波动率与真实波幅序列，用于 HAR-RV 建模
+    std::vector<double> dailyRanges;
+    std::vector<double> gkVols;
+    dailyRanges.reserve(bars.size());
+    gkVols.reserve(bars.size());
+
+    double lastPrice = 0.0;
+    for (size_t i = 0; i < bars.size(); ++i) {
+        const auto& b = bars[i];
+        if (b.close > 0.0)
+            lastPrice = b.close;
+        if (b.high <= 0.0 || b.low <= 0.0 || b.high < b.low)
+            continue;
+
+        const double o = (b.open > 0.0) ? b.open : b.close;
+        const double c = (b.close > 0.0) ? b.close : (0.5 * (b.high + b.low));
+        double tr = b.high - b.low;
+        double overnightJumpVar = 0.0;
+        if (i > 0 && bars[i - 1].close > 0.0) {
+            const double prevC = bars[i - 1].close;
+            tr = std::max({tr, std::abs(b.high - prevC), std::abs(b.low - prevC)});
+            if (o > 0.0) {
+                const double logGap = std::log(o / prevC);
+                overnightJumpVar = logGap * logGap;
+            }
+        }
+
+        double gkVar = 0.0;
+        if (b.high > b.low && o > 0.0 && c > 0.0) {
+            const double hl = std::log(b.high / b.low);
+            const double co = std::log(c / o);
+            // Garman-Klass (1980) 极值方差估计量
+            gkVar = std::max(0.0, 0.5 * hl * hl - (2.0 * std::log(2.0) - 1.0) * co * co);
+        }
+        const double totalLogVar = gkVar + 0.5 * overnightJumpVar;
+        // 几何布朗运动 E[(H-L)/P] ≈ sqrt(8/pi) * sigma ≈ 1.5958 * sigma
+        const double gkPriceRange = (c > 0.0) ? (1.5958 * c * std::sqrt(totalLogVar)) : tr;
+        const double blendedRange = (tr > 0.0 && gkPriceRange > 0.0)
+                                        ? (0.55 * tr + 0.45 * gkPriceRange)
+                                        : std::max(tr, gkPriceRange);
+        dailyRanges.push_back(blendedRange);
+        gkVols.push_back(gkPriceRange);
+    }
+
+    if (!intradayPoints.empty() && intradayPoints.back().price > 0.0) {
+        lastPrice = intradayPoints.back().price;
+    }
+
+    auto meanTail = [](const std::vector<double>& v, size_t k) -> double {
+        if (v.empty()) return 0.0;
+        const size_t n = std::min(k, v.size());
+        double s = 0.0;
+        for (size_t i = v.size() - n; i < v.size(); ++i) s += v[i];
+        return s / static_cast<double>(n);
+    };
+
+    if (!dailyRanges.empty()) {
+        const double rv1 = dailyRanges.back();
+        const double rv5 = meanTail(dailyRanges, 5);
+        const double rv22 = meanTail(dailyRanges, 22);
+        // Corsi (2009) HAR-RV 凸组合：同时刻画短期脉冲、周度聚集与月度长记忆
+        est.harRvRange = 0.25 * rv1 + 0.45 * rv5 + 0.30 * rv22;
+        est.garmanKlassVol = gkVols.empty() ? est.harRvRange : meanTail(gkVols, 10);
+        est.regimeVolRatio = (rv22 > 1e-9) ? std::clamp(rv5 / rv22, 0.5, 2.5) : 1.0;
+        est.effectiveAtr = (fallbackAtr > 0.0) ? (0.35 * fallbackAtr + 0.65 * est.harRvRange) : est.harRvRange;
+        est.valid = est.harRvRange > 0.0;
+    } else if (fallbackAtr > 0.0) {
+        est.harRvRange = fallbackAtr;
+        est.garmanKlassVol = fallbackAtr;
+        est.effectiveAtr = fallbackAtr;
+        est.valid = true;
+    }
+
+    // 2) 日内已实现波动率微调：若当日已有 >= 20 个有效分钟级变化，用已实现方差率补充实时波动感知
+    if (intradayPoints.size() >= 20 && lastPrice > 0.0) {
+        double sumSqDiff = 0.0;
+        double spanMins = 0.0;
+        for (size_t i = 1; i < intradayPoints.size(); ++i) {
+            const double p0 = intradayPoints[i - 1].price;
+            const double p1 = intradayPoints[i].price;
+            if (p0 <= 0.0 || p1 <= 0.0) continue;
+            const double dtMin = (intradayPoints[i].epochMs > intradayPoints[i - 1].epochMs)
+                                     ? static_cast<double>(intradayPoints[i].epochMs - intradayPoints[i - 1].epochMs) / 60000.0
+                                     : 1.0;
+            if (dtMin > 25.0) continue; // 忽略停盘跨段跳变
+            const double d = p1 - p0;
+            sumSqDiff += d * d;
+            spanMins += std::clamp(dtMin, 0.05, 10.0);
+        }
+        if (spanMins >= 20.0 && sumSqDiff > 0.0) {
+            // 国内积存金活跃交易约 870 分钟 (09:00-23:30)，按扩散缩放推算全日波动率
+            const double fullDayMins = (lastPrice > 1000.0) ? 1380.0 : 870.0;
+            const double sigmaIntradayDay = std::sqrt(sumSqDiff * (fullDayMins / spanMins));
+            // 日内极大极小差约 1.60 * 日内标准差（高频率下比值略高于日线，保守取 1.45）
+            est.intradayRv = sigmaIntradayDay * 1.45;
+            if (est.harRvRange > 0.0) {
+                const double wIntraday = std::clamp(spanMins / 360.0, 0.05, 0.25);
+                est.harRvRange = (1.0 - wIntraday) * est.harRvRange + wIntraday * std::clamp(est.intradayRv, est.harRvRange * 0.45, est.harRvRange * 2.0);
+            } else {
+                est.harRvRange = est.intradayRv;
+                est.effectiveAtr = est.intradayRv;
+                est.valid = est.harRvRange > 0.0;
+            }
+        }
+    }
+
+    return est;
+}
+
+double ForecastEngine::computeConformalScale(
+    const std::vector<double>& recentPredHighs,
+    const std::vector<double>& recentPredLows,
+    const std::vector<double>& recentActHighs,
+    const std::vector<double>& recentActLows,
+    double targetCoverage)
+{
+    const size_t n = std::min({recentPredHighs.size(), recentPredLows.size(),
+                               recentActHighs.size(), recentActLows.size()});
+    if (n < 5)
+        return 1.0;
+
+    std::vector<double> ratios;
+    ratios.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        const double ph = recentPredHighs[i];
+        const double pl = recentPredLows[i];
+        const double ah = recentActHighs[i];
+        const double al = recentActLows[i];
+        if (ph <= pl || ah < al || ph <= 0.0 || pl <= 0.0 || ah <= 0.0 || al <= 0.0)
+            continue;
+        const double predHalf = std::max(0.10, 0.5 * (ph - pl));
+        const double mid = 0.5 * (ph + pl);
+        const double reqHalf = std::max(ah - mid, mid - al);
+        ratios.push_back(std::clamp(reqHalf / predHalf, 0.5, 2.2));
+    }
+    if (ratios.size() < 5)
+        return 1.0;
+
+    std::sort(ratios.begin(), ratios.end());
+    const double q = std::clamp(targetCoverage, 0.50, 0.95);
+    const size_t idx = std::min(ratios.size() - 1,
+                                static_cast<size_t>(std::ceil(q * static_cast<double>(ratios.size()))) - 1);
+    const double empiricalQuantile = ratios[idx];
+    // 样本量小时向 1.0 收缩，避免少数异常样本过度放大区间
+    const double alpha = std::min(1.0, static_cast<double>(ratios.size()) / 20.0);
+    return std::clamp(1.0 + alpha * (empiricalQuantile - 1.0), 0.78, 1.45);
+}
+
+std::vector<IntradayPoint> ForecastEngine::resamplePoints(const std::vector<IntradayPoint>& points, int intervalMinutes)
+{
+    if (points.size() < 4 || intervalMinutes <= 0)
+        return points;
+
+    const int64_t bucketMs = static_cast<int64_t>(intervalMinutes) * 60000LL;
+    std::vector<IntradayPoint> out;
+    out.reserve(points.size());
+
+    int64_t curBucket = -1;
+    for (const auto& pt : points) {
+        if (pt.price <= 0.0)
+            continue;
+        const int64_t b = (pt.epochMs > 0) ? (pt.epochMs / bucketMs) : static_cast<int64_t>(out.size());
+        if (b != curBucket || out.empty()) {
+            out.push_back(pt);
+            curBucket = b;
+        } else {
+            // 保留同一时间桶内的最新采样价，同时若出现剧烈极值尖峰则保留桶内代表极值，避免失真
+            out.back().epochMs = pt.epochMs;
+            out.back().price = pt.price;
+        }
+    }
+    return (out.size() >= 12) ? out : points;
+}
 
 DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& points,
                                           double actHigh,
@@ -169,25 +628,43 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
                                           double prevClose,
                                           const std::vector<int>& historicalPeakBucketCounts)
 {
+    ForecastContext ctx;
+    ctx.actHigh = actHigh;
+    ctx.actLow = actLow;
+    ctx.dayFraction = dayFraction;
+    ctx.atr = atr;
+    ctx.prevClose = prevClose;
+    ctx.historicalPeakBucketCounts = historicalPeakBucketCounts;
+    return dayRangeWithContext(points, ctx);
+}
+
+DayRangeForecast ForecastEngine::dayRangeWithContext(const std::vector<IntradayPoint>& points,
+                                                     const ForecastContext& ctx)
+{
     DayRangeForecast out;
     if (points.size() < 3)
         return out;
 
-    double lastPrice = points.back().price;
+    const double lastPrice = points.back().price;
     if (lastPrice <= 0.0)
         return out;
 
+    double actHigh = ctx.actHigh;
+    double actLow = ctx.actLow;
     if (actHigh <= 0.0 || actLow <= 0.0) {
         actHigh = actLow = points.front().price;
         for (const auto& p : points) {
-            actHigh = std::max(actHigh, p.price);
-            actLow = std::min(actLow, p.price);
+            if (p.price > 0.0) {
+                actHigh = std::max(actHigh, p.price);
+                actLow = std::min(actLow, p.price);
+            }
         }
     }
+    if (actHigh < actLow)
+        std::swap(actHigh, actLow);
 
     const int n = static_cast<int>(points.size());
     const int w = std::min(60, n);
-
     double mean = 0.0;
     for (int i = n - w; i < n; ++i)
         mean += points[static_cast<size_t>(i)].price;
@@ -200,47 +677,64 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     const double stdev = std::sqrt(var / static_cast<double>(std::max(1, w - 1)));
     const double rangeSoFar = std::max(0.01, actHigh - actLow);
 
-    dayFraction = std::clamp(dayFraction, 0.0, 1.0);
-    const double remain = std::clamp(1.0 - dayFraction, 0.05, 1.0);
-    const double timeScale = std::sqrt(remain);
+    // 1) 波动率估计（HAR-RV + Garman-Klass + 日内 RV）与分时段方差曲线
+    const auto volEst = estimateVolatility(ctx.dailyBars, points, ctx.atr);
+    const double effAtrVal = (volEst.valid && volEst.effectiveAtr > 0.0)
+                                 ? volEst.effectiveAtr
+                                 : ((ctx.atr > 0.0) ? ctx.atr : (lastPrice > 1000.0 ? 25.0 : 4.0));
 
-    const double pctFloor = lastPrice * 0.005;
-    const double pctCeil = lastPrice * 0.025;
+    // 市场状态判定
+    MarketRegime regime = ctx.multiDayTrend.valid ? ctx.multiDayTrend.regime : MarketRegime::LowVolRange;
+    if (volEst.regimeVolRatio >= 1.35) {
+        regime = MarketRegime::HighVolCrisis;
+    } else if (ctx.multiDayTrend.valid && ctx.multiDayTrend.efficiencyRatio >= 0.42 && regime == MarketRegime::LowVolRange) {
+        regime = MarketRegime::Trending;
+    }
+    out.regime = regime;
+
+    const double dayFraction = std::clamp(ctx.dayFraction, 0.0, 1.0);
+    const int curMin = minuteOfDayFromEpochMs(points.back().epochMs);
+    const int curBucket = std::clamp(curMin / 30, 0, 47);
+
+    // 使用 48 桶时段方差曲线计算剩余未释放波动率比例（替代粗糙的 sqrt(1 - dayFraction)）
+    const auto varWeights = blendVarianceWeights(ctx.historicalBucketVarWeights);
+    double remainVarFrac = 0.0;
+    {
+        const double minIntoBucket = static_cast<double>(curMin % 30) / 30.0;
+        remainVarFrac += varWeights[static_cast<size_t>(curBucket)] * std::clamp(1.0 - minIntoBucket, 0.05, 1.0);
+        for (int b = curBucket + 1; b < 48; ++b) {
+            remainVarFrac += varWeights[static_cast<size_t>(b)];
+        }
+    }
+    // 针对 09:00-23:30 积存金交易时钟若出现次日 00:00-02:30 样本的边界保护
+    if (dayFraction >= 0.90) {
+        remainVarFrac = std::min(remainVarFrac, std::max(0.03, 1.0 - dayFraction));
+    }
+    const double remain = std::clamp(remainVarFrac, 0.03, 1.0);
+    const double timeScale = std::sqrt(remain);
+    out.remainVolRatio = timeScale;
+
+    // 2) 全日预期振幅（状态自适应上限 + 共形区间校准）
+    const double pctFloor = lastPrice * (regime == MarketRegime::LowVolRange ? 0.0040 : 0.0055);
+    const double pctCeil = lastPrice * (regime == MarketRegime::HighVolCrisis ? 0.0420 : (regime == MarketRegime::Trending ? 0.0300 : 0.0220));
+
     double expectedFullRange = 0.0;
-    if (atr > 0.0) {
-        expectedFullRange = std::clamp(atr * (0.85 + 0.35 * (1.0 - timeScale)), pctFloor, pctCeil);
+    if (volEst.valid && volEst.harRvRange > 0.0) {
+        expectedFullRange = std::clamp(volEst.harRvRange * (0.90 + 0.25 * (1.0 - timeScale)), pctFloor, pctCeil);
+    } else if (ctx.atr > 0.0) {
+        expectedFullRange = std::clamp(ctx.atr * (0.85 + 0.35 * (1.0 - timeScale)), pctFloor, pctCeil);
     } else {
         expectedFullRange = std::max({rangeSoFar * 1.25, stdev * 4.2, pctFloor});
         expectedFullRange = std::min(expectedFullRange, pctCeil);
     }
+    const double conformalMult = std::clamp(ctx.conformalScale, 0.78, 1.45);
+    expectedFullRange = std::clamp(expectedFullRange * conformalMult, pctFloor, pctCeil);
+    out.harExpectedRange = expectedFullRange;
 
-    // 保留合理的长尾趋势扩展空间，避免日内波幅接近 ATR 时预算骤减为 0 导致预测线紧贴现价变成移动靶
-    const double tailExpansion = std::max(0.15, (atr > 0.0 ? atr * 0.18 : rangeSoFar * 0.12) * timeScale);
-    double remainingBudget = std::max(tailExpansion, expectedFullRange - rangeSoFar);
-    remainingBudget *= (0.35 + 0.65 * timeScale);
-
-    double up = remainingBudget * 0.5;
-    double down = remainingBudget * 0.5;
-    if (actHigh > actLow) {
-        const double pos = (lastPrice - actLow) / (actHigh - actLow);
-        if (pos > 0.72) {
-            up *= 0.75;
-            down *= 1.15;
-        } else if (pos < 0.28) {
-            up *= 1.15;
-            down *= 0.75;
-        }
-    }
-    if (prevClose > 0.0) {
-        const double gap = (lastPrice - prevClose) / prevClose;
-        if (gap > 0.004) {
-            up *= 1.08;
-            down *= 0.95;
-        } else if (gap < -0.004) {
-            up *= 0.95;
-            down *= 1.08;
-        }
-    }
+    // 3) 2D 卡尔曼滤波：提取无毛刺瞬时价格与速度
+    const auto kf = kalmanTrend(points, effAtrVal);
+    out.kalmanSlopePerMin = kf.valid ? kf.velocityPerMin : 0.0;
+    out.kalmanVelocityZ = kf.valid ? kf.velocityZ : 0.0;
 
     // 峰值与谷值特征分析（按 CST 时间桶）
     int peakMin = minuteOfDayFromEpochMs(points.front().epochMs);
@@ -264,26 +758,22 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
         }
     }
 
-    const int curMin = minuteOfDayFromEpochMs(points.back().epochMs);
-    const int curBucket = std::clamp(curMin / 30, 0, 47);
     const int peakBucket = std::clamp(peakMin / 30, 0, 47);
     const int troughBucket = std::clamp(troughMin / 30, 0, 47);
     const bool highInPast = peakBucket < curBucket;
     const bool lowInPast = troughBucket < curBucket;
 
-    // 峰值衰减特征（多长时间未破高？从今高回落了多少？）
     const int64_t timeSincePeakMs = points.back().epochMs - points[static_cast<size_t>(peakIndex)].epochMs;
     const double timeSincePeakMins = std::max(0.0, static_cast<double>(timeSincePeakMs) / 60000.0);
     const double pullback = std::max(0.0, peakPx - lastPrice);
-    const double pullbackAtrRatio = (atr > 0.0) ? (pullback / atr) : (pullback / std::max(0.1, peakPx * 0.005));
+    const double pullbackAtrRatio = pullback / std::max(0.1, effAtrVal);
 
-    // 谷值反弹特征（多长时间未破低？从今低反弹了多少？）
     const int64_t timeSinceTroughMs = points.back().epochMs - points[static_cast<size_t>(troughIndex)].epochMs;
     const double timeSinceTroughMins = std::max(0.0, static_cast<double>(timeSinceTroughMs) / 60000.0);
     const double rebound = std::max(0.0, lastPrice - troughPx);
-    const double reboundAtrRatio = (atr > 0.0) ? (rebound / atr) : (rebound / std::max(0.1, troughPx * 0.005));
+    const double reboundAtrRatio = rebound / std::max(0.1, effAtrVal);
 
-    // 短期微观动量判定（回溯最近15~30分钟数据）
+    // 短线微观动量融合：卡尔曼速度 Z-score + 20分钟窗口净位移
     double shortSlope = 0.0;
     if (points.size() >= 2) {
         const int64_t targetLookbackMs = 20 * 60 * 1000;
@@ -297,6 +787,11 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
         }
         shortSlope = points.back().price - points[lookbackIdx].price;
     }
+    const double rawNormSlope = shortSlope / std::max(0.1, effAtrVal);
+    // 卡尔曼瞬时速度与 20 分钟位移融合动量，既抗单 Tick 跳变又不滞后
+    const double normSlope = kf.valid
+                                 ? (0.60 * std::clamp(kf.velocityZ * 0.08, -0.4, 0.4) + 0.40 * rawNormSlope)
+                                 : rawNormSlope;
 
     const double pos = (rangeSoFar > 0.001) ? std::clamp((lastPrice - actLow) / rangeSoFar, 0.0, 1.0) : 0.5;
     const bool isOvernightPeak = (peakMin < 3 * 60) && (curMin >= 9 * 60);
@@ -305,102 +800,83 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
     const bool isOvernightTrough = (troughMin < 3 * 60) && (curMin >= 9 * 60);
     const double effectiveTimeSinceTrough = isOvernightTrough ? std::max(0.0, static_cast<double>(curMin - 9 * 60)) : timeSinceTroughMins;
 
-    // 动态评估高点是否已确立（以实战盈利防追高为主）：
-    // 若欧/美主盘冲高后较长时间无法突破，且价格从高位回撤显著，高点确立概率急剧上升；
-    // 反之若处于日内上行反弹浪中，严禁误报高点已现
-    double hip = 0.10 + dayFraction * 0.30;
+    // 4) 高点已确立概率（结合剩余时段方差占比 1 - remain，越接近尾盘/主力方差已释放完，确立概率越高）
+    const double varianceSpent = 1.0 - remain;
+    double hip = 0.08 + varianceSpent * 0.34;
     if (highInPast && !isOvernightPeak) {
         hip += 0.10;
         if (effectiveTimeSincePeak >= 45.0) hip += 0.06;
         if (effectiveTimeSincePeak >= 90.0) hip += 0.08;
         if (effectiveTimeSincePeak >= 180.0) hip += 0.10;
 
-        if ((pullback / rangeSoFar >= 0.30) || (pullbackAtrRatio >= 0.12)) hip += 0.08;
-        if ((pullback / rangeSoFar >= 0.50) || (pullbackAtrRatio >= 0.25)) hip += 0.12;
+        if ((pullback / rangeSoFar >= 0.30) || (pullbackAtrRatio >= 0.15)) hip += 0.08;
+        if ((pullback / rangeSoFar >= 0.50) || (pullbackAtrRatio >= 0.30)) hip += 0.12;
     } else if (isOvernightPeak) {
-        // 隔夜高点在日间交易中被视作上方常规阻力，而非日内已确立封顶；
-        // 仅当日间已进入欧美盘且日间走势极度弱势时才考虑可能为全日最高点
-        if (curMin >= 15 * 60 && (pullback / rangeSoFar >= 0.60) && shortSlope <= 0.0) {
+        if (curMin >= 15 * 60 && (pullback / rangeSoFar >= 0.60) && normSlope <= 0.0) {
             hip += 0.15;
         } else {
             hip = std::min(hip, 0.25);
         }
     } else {
-        // 当前正贴近或处于日内最高点，正在冲高
         hip = std::min(hip, 0.20);
     }
 
-    // 动量与趋势抑制因子（采用归一化 ATR 动量，杜绝0.02元微小噪点跳变）：
-    const double effAtrVal = (atr > 0.0) ? atr : (lastPrice > 1000.0 ? 25.0 : 4.0);
-    const double normSlope = shortSlope / effAtrVal;
     if (normSlope > 0.06 || pos >= 0.70 || (rebound > pullback * 1.3 && pos >= 0.55)) {
-        // 上行进攻或强反弹途中：高点确立概率绝不能超过 0.30
         hip = std::min(hip, 0.30);
     } else if (normSlope > -0.03 && pos >= 0.50) {
-        // 偏强震荡运行中
         hip = std::min(hip, 0.42);
     }
 
-    // 交易时段硬约束（欧美盘主浪未开前，绝不大言不惭判定全日高点已现）
     if (curMin < 15 * 60) {
-        // 亚盘交易时段：欧盘与美盘主浪均未开启，高点确立概率最高不超过 0.35
         hip = std::min(hip, 0.35);
     } else if (curMin < 20 * 60 + 30) {
-        // 欧盘时段：美盘主力博弈段未开启，除非极其深幅回撤且持续走低，否则高点确立概率不超过 0.55
-        if (pullback / rangeSoFar < 0.60 || shortSlope > 0.0) {
+        if (pullback / rangeSoFar < 0.60 || normSlope > 0.0)
             hip = std::min(hip, 0.50);
-        } else {
+        else
             hip = std::min(hip, 0.60);
-        }
     }
     out.highAlreadyInProb = std::clamp(hip, 0.05, 0.95);
 
-    // 动态评估低点是否已确立（顺势防守与支撑验证）：
-    double lip = 0.10 + dayFraction * 0.30;
+    // 低点已确立概率
+    double lip = 0.08 + varianceSpent * 0.34;
     if (lowInPast && !isOvernightTrough) {
         lip += 0.10;
         if (effectiveTimeSinceTrough >= 45.0) lip += 0.06;
         if (effectiveTimeSinceTrough >= 90.0) lip += 0.08;
         if (effectiveTimeSinceTrough >= 180.0) lip += 0.10;
 
-        if ((rebound / rangeSoFar >= 0.30) || (reboundAtrRatio >= 0.12)) lip += 0.08;
-        if ((rebound / rangeSoFar >= 0.50) || (reboundAtrRatio >= 0.25)) lip += 0.12;
+        if ((rebound / rangeSoFar >= 0.30) || (reboundAtrRatio >= 0.15)) lip += 0.08;
+        if ((rebound / rangeSoFar >= 0.50) || (reboundAtrRatio >= 0.30)) lip += 0.12;
     } else if (isOvernightTrough) {
-        if (curMin >= 15 * 60 && (rebound / rangeSoFar >= 0.60) && shortSlope >= 0.0) {
+        if (curMin >= 15 * 60 && (rebound / rangeSoFar >= 0.60) && normSlope >= 0.0) {
             lip += 0.15;
         } else {
             lip = std::min(lip, 0.25);
         }
     } else {
-        // 当前正贴近或处于日内最低点，正在探底下杀
         lip = std::min(lip, 0.20);
     }
 
-    // 动量与趋势抑制因子（采用归一化 ATR 动量）：
     if (normSlope < -0.06 || pos <= 0.30 || (pullback > rebound * 1.3 && pos <= 0.45)) {
-        // 杀跌寻底途中：低点确立概率绝不能超过 0.30，严防诱多接飞刀
         lip = std::min(lip, 0.30);
     } else if (normSlope < 0.03 && pos <= 0.50) {
         lip = std::min(lip, 0.42);
     }
 
-    // 交易时段硬约束
     if (curMin < 15 * 60) {
         lip = std::min(lip, 0.35);
     } else if (curMin < 20 * 60 + 30) {
-        if (rebound / rangeSoFar < 0.60 || shortSlope < 0.0) {
+        if (rebound / rangeSoFar < 0.60 || normSlope < 0.0)
             lip = std::min(lip, 0.50);
-        } else {
+        else
             lip = std::min(lip, 0.60);
-        }
     }
     out.lowAlreadyInProb = std::clamp(lip, 0.05, 0.95);
 
-    // 贝叶斯混合时间概率与归一化
-    auto probs = blendPeakProbs(historicalPeakBucketCounts);
+    // 5) 贝叶斯混合时间概率与归一化
+    auto probs = blendPeakProbs(ctx.historicalPeakBucketCounts);
     redistributePastBuckets(probs, curBucket, highInPast);
 
-    // 寻找未来的最高概率时间窗口（从当前时间桶往后推演，避免预测命中已过去的时段）
     int bestFutureBucket = -1;
     double bestFutureProb = -1.0;
     for (int i = curBucket; i < 48; ++i) {
@@ -427,20 +903,15 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
               [](const PeakBucket& a, const PeakBucket& b) { return a.probability > b.probability; });
     out.peakBuckets.assign(buckets.begin(), buckets.begin() + std::min<size_t>(6, buckets.size()));
 
-    // 高低点时间窗口输出（严格 24 小时制）
     if (out.highAlreadyInProb >= 0.65) {
         out.predHighTimeWindow = formatWindow((peakMin / 30) * 30,
                                               ((peakMin / 30) + 1) * 30,
                                               "高点大概率已现");
     } else if (bestFutureBucket >= 0) {
         std::string tag = "高点高概率";
-        if (bestFutureBucket >= 41 && bestFutureBucket <= 45) {
-            tag = "美盘主浪高峰";
-        } else if (bestFutureBucket >= 31 && bestFutureBucket <= 38) {
-            tag = "欧盘脉冲高峰";
-        } else if (bestFutureBucket >= 18 && bestFutureBucket <= 21) {
-            tag = "亚盘早段高点";
-        }
+        if (bestFutureBucket >= 41 && bestFutureBucket <= 45)      tag = "美盘主浪高峰";
+        else if (bestFutureBucket >= 31 && bestFutureBucket <= 38) tag = "欧盘脉冲高峰";
+        else if (bestFutureBucket >= 18 && bestFutureBucket <= 21) tag = "亚盘早段高点";
         out.predHighTimeWindow = formatWindow(bestFutureBucket * 30,
                                               (bestFutureBucket + 1) * 30,
                                               tag.c_str());
@@ -457,82 +928,92 @@ DayRangeForecast ForecastEngine::dayRange(const std::vector<IntradayPoint>& poin
                                              ((troughMin / 30) + 1) * 30,
                                              "已探底确立");
     } else {
-        if (curBucket < 28) {
-            out.predLowTimeWindow = "15:00 - 16:30 (欧盘初探底)";
-        } else if (curBucket < 40) {
-            out.predLowTimeWindow = "20:30 - 21:30 (美盘洗盘探底)";
-        } else {
-            out.predLowTimeWindow = "22:30 - 24:00 (美盘后程支撑)";
-        }
+        if (curBucket < 28)      out.predLowTimeWindow = "15:00 - 16:30 (欧盘初探底)";
+        else if (curBucket < 40) out.predLowTimeWindow = "20:30 - 21:30 (美盘洗盘探底)";
+        else                     out.predLowTimeWindow = "22:30 - 24:00 (美盘后程支撑)";
     }
 
-    // 锚定基准全日高低区间预测（彻底解决随动态价格频繁波动问题）：
-    // 全日极值属于宏观日线级别锚点，基于基准价与波动率分布形成坚实锚定，严禁随1分钟微波拉风箱
+    // 6) 多因子非对称漂移 + 剩余预算融合区间预测（彻底修复原 up/down 死代码）
     const double minGap = std::max(lastPrice * 0.0008, 0.15);
-    const double basePrice = (prevClose > 0.0) ? prevClose : points.front().price;
+    const double basePrice = (ctx.prevClose > 0.0) ? ctx.prevClose : points.front().price;
 
-    double upRatio = 0.52;
-    double downRatio = 0.48;
-    if (prevClose > 0.0) {
-        const double gap = (basePrice - prevClose) / prevClose;
-        if (gap > 0.003) { upRatio = 0.58; downRatio = 0.42; }
-        else if (gap < -0.003) { upRatio = 0.42; downRatio = 0.58; }
+    double driftBias = 0.0;
+    if (ctx.multiDayTrend.valid) {
+        driftBias += ctx.multiDayTrend.score * 0.10; // ±0.10
+    }
+    if (ctx.prevClose > 0.0) {
+        const double gap = (lastPrice - ctx.prevClose) / ctx.prevClose;
+        driftBias += std::clamp(gap * 8.0, -0.06, 0.06);
+    }
+    if (kf.valid) {
+        driftBias += std::clamp(kf.velocityZ * 0.02, -0.05, 0.05);
+    }
+    if (std::abs(ctx.crossMarketLeadSignal) > 0.1) {
+        driftBias += std::clamp(ctx.crossMarketLeadSignal * 0.025, -0.05, 0.05);
+    }
+    if (std::abs(ctx.sentimentScore) > 0.1) {
+        driftBias += std::clamp(ctx.sentimentScore * 0.012, -0.05, 0.05);
     }
 
-    const double fullBudget = std::max(expectedFullRange, rangeSoFar + effAtrVal * 0.25);
+    const double upRatio = std::clamp(0.50 + driftBias, 0.30, 0.70);
+    const double downRatio = 1.0 - upRatio;
+
+    const double tailExpansion = std::max(minGap * 1.5, effAtrVal * 0.16 * timeScale);
+    const double fullBudget = std::max(expectedFullRange, rangeSoFar + tailExpansion);
     const double anchorHigh = basePrice + fullBudget * upRatio;
     const double anchorLow  = basePrice - fullBudget * downRatio;
 
-    // predHigh 必然 >= actHigh（绝不低于日内已出现最高，亦不低于现价），具有单调性：
-    // 未突破 anchorHigh 时平稳锚定于 anchorHigh；日内实际冲高突破后，顺势抬升上移，绝不因短线回调而反向缩水
-    double predHigh = std::max(actHigh + minGap * 0.5, anchorHigh);
+    // 布朗运动反射原理分位数投影：由当前现价出发，结合剩余方差比例与共形校准因子构建 80% 联合覆盖极值带
+    const double dailySigmaEst = std::max(minGap * 2.0, (expectedFullRange / std::max(0.75, conformalMult)) / 1.52);
+    const double sigmaRem = dailySigmaEst * timeScale;
+    const double qZ = 1.48 * conformalMult;
+    const double upMult = std::clamp(1.0 + driftBias * 1.35, 0.62, 1.45);
+    const double downMult = std::clamp(1.0 - driftBias * 1.35, 0.62, 1.45);
+
+    const double reflHigh = lastPrice + qZ * sigmaRem * upMult;
+    const double reflLow  = lastPrice - qZ * sigmaRem * downMult;
+
+    // 日初适当参考前收中轴锚点，随着日内进展由现价反射分位数主导
+    const double wAnchor = std::clamp(0.28 * (1.0 - dayFraction), 0.05, 0.28);
+    const double projHigh = (1.0 - wAnchor) * reflHigh + wAnchor * anchorHigh;
+    const double projLow  = (1.0 - wAnchor) * reflLow  + wAnchor * anchorLow;
+
+    double predHigh = std::max(actHigh + minGap * 0.5, projHigh);
     if (out.highAlreadyInProb >= 0.85 && dayFraction >= 0.80) {
-        // 仅在尾盘且极高确立概率时才理性收敛贴近今高阻力
         predHigh = actHigh + minGap * 0.5;
-    } else if (actHigh > anchorHigh) {
-        const double extend = std::max(minGap * 2.0, effAtrVal * 0.20 * timeScale);
-        predHigh = actHigh + extend;
-    }
-    if (lastPrice >= predHigh) {
-        predHigh = lastPrice + std::max(minGap * 2.0, effAtrVal * 0.15);
+    } else if (lastPrice >= predHigh) {
+        predHigh = lastPrice + std::max(minGap * 2.0, sigmaRem * 0.35);
     }
     out.remainingUpside = std::max(0.0, predHigh - lastPrice);
 
-    // predLow 必然 <= actLow（绝不高于日内已出现最低，亦不高于现价），具有单调性：
-    // 未跌破 anchorLow 时平稳锚定于 anchorLow；日内实际击穿后，顺势下延，绝不因短线反弹而反向推高
-    double predLow = std::min(actLow - minGap * 0.5, anchorLow);
+    double predLow = std::min(actLow - minGap * 0.5, projLow);
     if (out.lowAlreadyInProb >= 0.85 && dayFraction >= 0.80) {
         predLow = actLow - minGap * 0.5;
-    } else if (actLow < anchorLow) {
-        const double extend = std::max(minGap * 2.0, effAtrVal * 0.20 * timeScale);
-        predLow = actLow - extend;
-    }
-    if (lastPrice <= predLow) {
-        predLow = lastPrice - std::max(minGap * 2.0, effAtrVal * 0.15);
+    } else if (lastPrice <= predLow) {
+        predLow = lastPrice - std::max(minGap * 2.0, sigmaRem * 0.35);
     }
 
     const bool isUptrendSoFar = (normSlope > 0.04) || (pos >= 0.65 && normSlope >= 0.0);
     const bool isDowntrendSoFar = (normSlope < -0.04) || (pos <= 0.35 && normSlope <= 0.0);
 
-    // 情景与催化剂演变（以盈利与防守指引为主）
     if (out.highAlreadyInProb >= 0.65) {
         out.scenario = "日内高点大概率已在前期确立，反弹动能衰退，严禁追高，建议逢高止盈或防守保护多头利润";
         out.keyCatalyst = "脉冲见顶 + 动量衰竭";
         out.confidence = out.highAlreadyInProb;
     } else if (isUptrendSoFar && out.highAlreadyInProb <= 0.35) {
-        out.scenario = "短线处于多头反弹与上行推进中，动能充沛，重点关注上方阻力位突破及欧美盘高点窗口";
-        out.keyCatalyst = "多头推进 + 阻力突破";
-        out.confidence = std::min(0.85, 0.50 + (remain * 0.3));
+        out.scenario = "短线处于多头推进通道（卡尔曼斜率向上），动能充沛，关注上方阻力突破与欧美盘窗口";
+        out.keyCatalyst = "卡尔曼多头推进 + 阻力测试";
+        out.confidence = std::min(0.88, 0.50 + remain * 0.25 + (kf.valid ? std::min(0.10, std::abs(kf.velocityZ) * 0.03) : 0.0));
     } else if (isDowntrendSoFar && out.lowAlreadyInProb <= 0.35) {
-        out.scenario = "短线处于弱势下探寻底中，切勿急于盲目抄底接飞刀，耐心等待支撑企稳";
+        out.scenario = "短线处于弱势下探寻底中（卡尔曼斜率向下），切勿急于盲目抄底接飞刀，耐心等待支撑企稳";
         out.keyCatalyst = "空头下探 + 支撑测试";
-        out.confidence = std::min(0.85, 0.50 + (remain * 0.3));
+        out.confidence = std::min(0.88, 0.50 + remain * 0.25 + (kf.valid ? std::min(0.10, std::abs(kf.velocityZ) * 0.03) : 0.0));
     } else if (out.lowAlreadyInProb >= 0.75 && dayFraction < 0.80) {
         out.scenario = "日内探底企稳，关键支撑有效，可顺多头趋势逢低关注低吸";
         out.keyCatalyst = "探底回升 + 支撑确认";
         out.confidence = out.lowAlreadyInProb;
     } else if (out.peakWindowProb >= 0.10 && dayFraction < 0.85) {
-        out.scenario = "仍处潜在冲高窗口，若放量突破今高可顺势关注高概率时段";
+        out.scenario = "仍处潜在冲高窗口，若突破今高可顺势关注高概率时段";
         out.keyCatalyst = "欧美盘交叠资金 + 宏观数据";
         out.confidence = std::min(0.85, 0.35 + out.peakWindowProb + remain * 0.25);
     } else if (dayFraction >= 0.85) {
@@ -560,56 +1041,127 @@ MultiDayTrend ForecastEngine::multiDayTrend(const std::vector<double>& closes)
     const int n = static_cast<int>(closes.size());
     auto sma = [&](int period) {
         period = std::min(period, n);
-        double s = 0;
+        double s = 0.0;
         for (int i = n - period; i < n; ++i)
             s += closes[static_cast<size_t>(i)];
-        return s / period;
+        return s / static_cast<double>(period);
     };
     t.ma5 = sma(5);
     t.ma10 = sma(std::min(10, n));
     t.ma20 = sma(std::min(20, n));
+    t.ema5 = computeEma(closes, 5);
+    t.ema10 = computeEma(closes, std::min(10, n));
+    t.ema20 = computeEma(closes, std::min(20, n));
     t.rsi14 = rsiWilder(closes, 14);
     const double last = closes.back();
 
+    // Kaufman 效率比 (ER)：衡量价格净位移 vs 总路径长度，用于区分“有效趋势”与“宽幅震荡”
+    const int erWin = std::min(14, n - 1);
+    double pathSum = 0.0;
+    for (int i = n - erWin; i < n; ++i) {
+        pathSum += std::abs(closes[static_cast<size_t>(i)] - closes[static_cast<size_t>(i - 1)]);
+    }
+    const double netDisp = std::abs(last - closes[static_cast<size_t>(n - 1 - erWin)]);
+    t.efficiencyRatio = (pathSum > 1e-12) ? std::clamp(netDisp / pathSum, 0.0, 1.0) : 0.0;
+
+    // 均线 + EMA + Wilder RSI + 动量打分
     double score = 0.0;
-    if (t.ma5 > t.ma10) score += 0.25;
-    else score -= 0.25;
-    if (t.ma10 > t.ma20) score += 0.25;
-    else score -= 0.25;
-    if (last > t.ma5) score += 0.2;
-    else score -= 0.2;
-    if (last > t.ma20) score += 0.15;
-    else score -= 0.15;
-    if (t.rsi14 > 55) score += 0.1;
-    else if (t.rsi14 < 45) score -= 0.1;
+    score += (t.ema5 > t.ema10) ? 0.22 : -0.22;
+    score += (t.ema10 > t.ema20) ? 0.22 : -0.22;
+    score += (t.ma5 > t.ma20) ? 0.12 : -0.12;
+    score += (last > t.ema5) ? 0.16 : -0.16;
+    score += (last > t.ema20) ? 0.14 : -0.14;
+    if (t.rsi14 > 55.0) score += 0.10;
+    else if (t.rsi14 < 45.0) score -= 0.10;
     if (n >= 6 && closes[static_cast<size_t>(n - 6)] > 0.0) {
         const double r = (last / closes[static_cast<size_t>(n - 6)]) - 1.0;
-        score += std::clamp(r * 8.0, -0.2, 0.2);
+        score += std::clamp(r * 8.0, -0.20, 0.20);
     }
-    t.score = std::clamp(score, -1.0, 1.0);
-    if (t.score >= 0.55)
-        t.bias = TrendBias::StrongBull;
-    else if (t.score >= 0.20)
-        t.bias = TrendBias::MildBull;
-    else if (t.score <= -0.55)
-        t.bias = TrendBias::StrongBear;
-    else if (t.score <= -0.20)
-        t.bias = TrendBias::MildBear;
-    else
-        t.bias = TrendBias::Range;
+
+    // 在低效率比（震荡市）下按 ER 连续衰减趋势分，避免无趋势横盘被均线微差误判为单边趋势
+    const double erScale = (t.efficiencyRatio < 0.35)
+                               ? std::clamp(t.efficiencyRatio / 0.35, 0.30, 1.0)
+                               : 1.0;
+    t.score = std::clamp(score * erScale, -1.0, 1.0);
+
+    // 估测收盘波动率用于判断高波状态
+    if (n >= 22) {
+        double var5 = 0.0, var22 = 0.0;
+        for (int i = n - 5; i < n; ++i) {
+            if (closes[static_cast<size_t>(i - 1)] > 0.0) {
+                const double r = (closes[static_cast<size_t>(i)] / closes[static_cast<size_t>(i - 1)]) - 1.0;
+                var5 += r * r;
+            }
+        }
+        for (int i = n - 21; i < n; ++i) {
+            if (closes[static_cast<size_t>(i - 1)] > 0.0) {
+                const double r = (closes[static_cast<size_t>(i)] / closes[static_cast<size_t>(i - 1)]) - 1.0;
+                var22 += r * r;
+            }
+        }
+        const double vol5 = std::sqrt(var5 / 5.0);
+        const double vol22 = std::sqrt(var22 / 21.0);
+        if (vol22 > 1e-9 && (vol5 / vol22) >= 1.38) {
+            t.regime = MarketRegime::HighVolCrisis;
+        } else if (t.efficiencyRatio >= 0.38 || (t.efficiencyRatio >= 0.25 && std::abs(t.score) >= 0.55)) {
+            t.regime = MarketRegime::Trending;
+        } else {
+            t.regime = MarketRegime::LowVolRange;
+        }
+    } else {
+        t.regime = (t.efficiencyRatio >= 0.40 || (t.efficiencyRatio >= 0.25 && std::abs(t.score) >= 0.55))
+                       ? MarketRegime::Trending
+                       : MarketRegime::LowVolRange;
+    }
+
+    if (t.score >= 0.55)       t.bias = TrendBias::StrongBull;
+    else if (t.score >= 0.20)  t.bias = TrendBias::MildBull;
+    else if (t.score <= -0.55) t.bias = TrendBias::StrongBear;
+    else if (t.score <= -0.20) t.bias = TrendBias::MildBear;
+    else                       t.bias = TrendBias::Range;
     t.valid = true;
     return t;
 }
 
-PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& points,
+MultiDayTrend ForecastEngine::multiDayTrendFromBars(const std::vector<DailyBar>& bars)
+{
+    std::vector<double> closes;
+    closes.reserve(bars.size());
+    for (const auto& b : bars) {
+        if (b.close > 0.0)
+            closes.push_back(b.close);
+    }
+    auto t = multiDayTrend(closes);
+    if (!t.valid)
+        return t;
+
+    t.atr14 = computeWilderAtrFromBars(bars, 14);
+    const auto vol = estimateVolatility(bars, {}, t.atr14);
+    if (vol.valid && vol.regimeVolRatio >= 1.35) {
+        t.regime = MarketRegime::HighVolCrisis;
+    }
+    return t;
+}
+
+PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& rawPoints,
                                              const PatternConfig& cfg)
 {
     PatternResult res;
-    if (points.size() < 12)
+    if (rawPoints.size() < 12)
         return res;
 
+    // 1) 时间桶重采样（1分钟基准）：消除因轮询速率/断线重连造成的采样点密度差异，使几何形态具备时间尺度不变性
+    std::vector<IntradayPoint> points = resamplePoints(rawPoints, 1);
+    if (points.size() < 12)
+        points = rawPoints;
+
     const int n = static_cast<int>(points.size());
-    const int span = std::clamp(n / 25, 3, 8);
+    const double curPx = points.back().price;
+    if (curPx <= 0.0)
+        return res;
+
+    const double effAtr = (cfg.atr > 0.05) ? cfg.atr : (curPx > 1000.0 ? curPx * 0.011 : curPx * 0.008);
+    const double breakBuffer = std::clamp(curPx * 0.0003, 0.08, 0.25);
 
     struct SwingPoint {
         int index = 0;
@@ -619,44 +1171,97 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     std::vector<SwingPoint> peaks;
     std::vector<SwingPoint> troughs;
 
-    for (int i = span; i < n - span; ++i) {
-        bool isPeak = true;
-        bool isTrough = true;
-        const double p = points[static_cast<size_t>(i)].price;
-        for (int j = i - span; j <= i + span; ++j) {
-            if (j == i) continue;
-            const double pj = points[static_cast<size_t>(j)].price;
-            if (pj >= p) isPeak = false;
-            if (pj <= p) isTrough = false;
-        }
-        if (isPeak) {
-            peaks.push_back({i, points[static_cast<size_t>(i)].epochMs, p});
-        }
-        if (isTrough) {
-            troughs.push_back({i, points[static_cast<size_t>(i)].epochMs, p});
+    // 2) ATR 自适应 ZigZag 拐点识别 + 局部窗口极值补充
+    const double zigzagThresh = std::max(curPx * 0.0011, effAtr * 0.16);
+    {
+        int dir = 0; // +1=向上找峰, -1=向下找谷
+        int extremeIdx = 0;
+        double extremePx = points.front().price;
+        int initMinIdx = 0, initMaxIdx = 0;
+        double initMinPx = points.front().price, initMaxPx = points.front().price;
+        for (int i = 1; i < n; ++i) {
+            const double p = points[static_cast<size_t>(i)].price;
+            if (p <= 0.0) continue;
+            if (dir == 0) {
+                if (p < initMinPx) {
+                    initMinPx = p;
+                    initMinIdx = i;
+                }
+                if (p > initMaxPx) {
+                    initMaxPx = p;
+                    initMaxIdx = i;
+                }
+                if (p - initMinPx >= zigzagThresh) {
+                    troughs.push_back({initMinIdx, points[static_cast<size_t>(initMinIdx)].epochMs, initMinPx});
+                    dir = 1;
+                    extremeIdx = i;
+                    extremePx = p;
+                } else if (initMaxPx - p >= zigzagThresh) {
+                    peaks.push_back({initMaxIdx, points[static_cast<size_t>(initMaxIdx)].epochMs, initMaxPx});
+                    dir = -1;
+                    extremeIdx = i;
+                    extremePx = p;
+                }
+            } else if (dir == 1) {
+                if (p >= extremePx) {
+                    extremeIdx = i;
+                    extremePx = p;
+                } else if (extremePx - p >= zigzagThresh) {
+                    peaks.push_back({extremeIdx, points[static_cast<size_t>(extremeIdx)].epochMs, extremePx});
+                    dir = -1;
+                    extremeIdx = i;
+                    extremePx = p;
+                }
+            } else {
+                if (p <= extremePx) {
+                    extremeIdx = i;
+                    extremePx = p;
+                } else if (p - extremePx >= zigzagThresh) {
+                    troughs.push_back({extremeIdx, points[static_cast<size_t>(extremeIdx)].epochMs, extremePx});
+                    dir = 1;
+                    extremeIdx = i;
+                    extremePx = p;
+                }
+            }
         }
     }
 
-    const double curPx = points.back().price;
-    const double breakBuffer = std::clamp(curPx * 0.0003, 0.08, 0.25); // 施密特迟滞防抖缓冲区 (0.08~0.25元)
+    // 若 ZigZag 拐点太少（例如极窄幅震荡日），退回时间自适应窗口极值提取
+    if (peaks.size() < 2 || troughs.size() < 2) {
+        peaks.clear();
+        troughs.clear();
+        const int span = std::clamp(n / 25, 3, 8);
+        for (int i = span; i < n - span; ++i) {
+            bool isPeak = true;
+            bool isTrough = true;
+            const double p = points[static_cast<size_t>(i)].price;
+            for (int j = i - span; j <= i + span; ++j) {
+                if (j == i) continue;
+                const double pj = points[static_cast<size_t>(j)].price;
+                if (pj >= p) isPeak = false;
+                if (pj <= p) isTrough = false;
+            }
+            if (isPeak) peaks.push_back({i, points[static_cast<size_t>(i)].epochMs, p});
+            if (isTrough) troughs.push_back({i, points[static_cast<size_t>(i)].epochMs, p});
+        }
+    }
 
-    // 动态波幅门槛：确保回踩企稳反弹至前高的利润空间能够有效覆盖卖出手续费摩擦成本（积存金买0卖0.4%）并保有安全边际
     const double minAmpRatio = (cfg.feeRate > 0.0005) ? std::max(cfg.feeRate * 1.5, 0.0055) : 0.0030;
-    const double minAmpAbs = (curPx > 1000.0) ? 5.0 : 2.0; // 伦敦金(USD) vs 积存金(CNY)
+    const double minAmpAbs = (curPx > 1000.0) ? 5.0 : 2.0;
     const double requiredAmp = std::max(curPx * minAmpRatio, minAmpAbs);
 
     auto enrichResult = [&](PatternResult& r) {
         if (!r.valid) return;
         const double fee = cfg.feeRate;
-        const double zoneTol = std::clamp((cfg.atr > 0.0 ? cfg.atr : 4.0) * 0.12, 0.05, curPx * 0.003);
+        const double zoneTol = std::clamp(effAtr * 0.12, 0.05, curPx * 0.003);
 
         if (r.bias == "看多突破" || r.bias == "强烈看多") {
-            // 只有当价格触及推演高点阻力且已经显现滞涨遇阻/回落时，才提示防诱多；若动能强劲突破，保留看多突破
             const bool nearPredHigh = (cfg.predHigh > 0.0 && curPx >= cfg.predHigh - zoneTol);
             double recentHigh = curPx;
-            const int scanN = std::min(15, (int)points.size());
-            for (int i = (int)points.size() - scanN; i < (int)points.size(); ++i) {
-                if (i >= 0 && points[i].price > recentHigh) recentHigh = points[i].price;
+            const int scanN = std::min(15, n);
+            for (int i = n - scanN; i < n; ++i) {
+                if (i >= 0 && points[static_cast<size_t>(i)].price > recentHigh)
+                    recentHigh = points[static_cast<size_t>(i)].price;
             }
             const bool stalledAtHigh = (recentHigh - curPx >= std::max(0.08, zoneTol * 0.8));
 
@@ -670,28 +1275,28 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
 
             const double target = (r.breakoutTarget > curPx) ? r.breakoutTarget : ((r.resistance > curPx) ? r.resistance : curPx * 1.015);
             const double stopLoss = (r.support > 0.0 && r.support < curPx) ? r.support : curPx * 0.99;
-            const double buyCost = curPx; // 浙商积存金当前买入手续费为 0
+            const double buyCost = curPx;
             const double sellProceeds = (fee > 0.0) ? (target * (1.0 - fee)) : target;
             const double stopProceeds = (fee > 0.0) ? (stopLoss * (1.0 - fee)) : stopLoss;
             r.netReward = std::max(0.0, sellProceeds - buyCost);
             r.netRisk = std::max(0.05, buyCost - stopProceeds);
             r.rrr = (r.netRisk > 0.05) ? std::max(0.0, r.netReward / r.netRisk) : 0.0;
-            const double atrDist = (cfg.atr > 0.0) ? (cfg.atr * (curPx > 1000.0 ? 1.8 : 1.5)) : (curPx * 0.005);
+            const double atrDist = effAtr * (curPx > 1000.0 ? 1.8 : 1.5);
             r.atrTrailingStop = std::max(stopLoss, curPx - atrDist);
 
-            // 严格实战正收益过滤：扣除卖出手续费(0.4%)后的净收益必须保有安全边际，盈亏比 >= 1.4:1
             const double minProfitReq = (fee > 0.0) ? std::max(1.2, curPx * fee * 0.45) : 1.0;
             if (r.netReward < minProfitReq || (r.rrr > 0.0 && r.rrr < 1.4)) {
                 r.bias = "多头蓄势";
-                r.strategy += " 【注意：扣除卖出手续费(0.4%)后净盈亏比仅 " + fmtPrice(r.rrr) + ":1 (预期净利 " + fmtPrice(r.netReward) + "元/g)，空间微薄不足以稳妥覆盖成本，建议观望等待更优回踩。】";
+                r.strategy += " 【注意：扣除卖出手续费后净盈亏比仅 " + fmtPrice(r.rrr) + ":1 (预期净利 " + fmtPrice(r.netReward) + ")，空间不足以稳妥覆盖成本，建议观望等待更优回踩。】";
                 r.atrTrailingStop = 0.0;
             }
         } else if (r.bias == "看空破位" || r.bias == "强烈看空") {
             const bool nearPredLow = (cfg.predLow > 0.0 && curPx <= cfg.predLow + zoneTol);
             double recentLow = curPx;
-            const int scanN = std::min(15, (int)points.size());
-            for (int i = (int)points.size() - scanN; i < (int)points.size(); ++i) {
-                if (i >= 0 && points[i].price < recentLow) recentLow = points[i].price;
+            const int scanN = std::min(15, n);
+            for (int i = n - scanN; i < n; ++i) {
+                if (i >= 0 && points[static_cast<size_t>(i)].price < recentLow)
+                    recentLow = points[static_cast<size_t>(i)].price;
             }
             const bool bouncedAtLow = (curPx - recentLow >= std::max(0.08, zoneTol * 0.8));
 
@@ -708,23 +1313,21 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             r.netReward = (fee > 0.0) ? (curPx * (1.0 - fee) - target) : (curPx - target);
             r.netRisk = (fee > 0.0) ? (stopLoss - curPx * (1.0 - fee)) : (stopLoss - curPx);
             r.rrr = (r.netRisk > 0.05) ? std::max(0.0, r.netReward / r.netRisk) : 0.0;
-            const double atrDist = (cfg.atr > 0.0) ? (cfg.atr * (curPx > 1000.0 ? 1.8 : 1.5)) : (curPx * 0.005);
+            const double atrDist = effAtr * (curPx > 1000.0 ? 1.8 : 1.5);
             r.atrTrailingStop = curPx + atrDist;
         } else {
-            // 震荡/蓄势状态下不设紧贴现价的单边多头追踪止损，避免误触发
             r.atrTrailingStop = 0.0;
         }
 
-        // 若具体形态未指定拐点，自动根据形态多空偏向在近期窗口提取局部极值拐点
         if (r.pivotEpochMs <= 0 && !points.empty()) {
             const bool isBull = (r.bias == "看多突破" || r.bias == "强烈看多"
                                  || r.bias == "多头蓄势" || r.bias == "震荡向上"
                                  || r.bias == "低位企稳" || r.bias.find("多") != std::string::npos);
-            const int lookback = std::min(static_cast<int>(points.size()), 60);
-            const int startIdx = static_cast<int>(points.size()) - lookback;
-            int bestIdx = static_cast<int>(points.size()) - 1;
+            const int lookback = std::min(n, 60);
+            const int startIdx = n - lookback;
+            int bestIdx = n - 1;
             double bestVal = points[static_cast<size_t>(bestIdx)].price;
-            for (int k = startIdx; k < static_cast<int>(points.size()); ++k) {
+            for (int k = startIdx; k < n; ++k) {
                 const double p = points[static_cast<size_t>(k)].price;
                 if (isBull) {
                     if (p < bestVal) { bestVal = p; bestIdx = k; }
@@ -749,9 +1352,8 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     int bestBullLowIdx = -1, bestBullHighIdx = -1;
     double bestBullLowPx = 0.0, bestBullHighPx = 0.0;
 
-    // A. 从 troughs 与 peaks 中寻找主升浪
     for (const auto& pk : peaks) {
-        if (pk.index > n - 2) continue; // 必须留有回踩空间
+        if (pk.index > n - 2) continue;
         for (const auto& tr : troughs) {
             if (tr.index < pk.index && (pk.index - tr.index) >= 3) {
                 const double amp = pk.price - tr.price;
@@ -766,11 +1368,11 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
-    // B. 从近期窗口 [n - fibLookback, n - 1] 扫描全局主升浪
     const int fibLookback = std::min(n, 300);
     int scanMaxIdx = -1;
     double scanMaxPx = -1e9;
     for (int i = n - fibLookback + 4; i <= n - 2; ++i) {
+        if (i < 0) continue;
         const double p = points[static_cast<size_t>(i)].price;
         if (p > scanMaxPx) {
             scanMaxPx = p;
@@ -798,6 +1400,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             }
         }
     }
+    (void)bestBullLowIdx;
 
     if (bestBullAmp >= requiredAmp) {
         res.fib50 = bestBullHighPx - 0.500 * bestBullAmp;
@@ -809,7 +1412,6 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     PatternResult fibCandidate;
     bool hasFibCandidate = false;
 
-    // 判定多头黄金口袋回踩 (Kirito 经典战法：健康回踩 0.50~0.618 黄金口袋逢低买入)
     if (bestBullAmp >= requiredAmp) {
         double pbMin = bestBullHighPx;
         for (int i = bestBullHighIdx; i < n; ++i) {
@@ -819,9 +1421,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         const double fib618 = res.fib618;
         const double fib382 = bestBullHighPx - 0.382 * bestBullAmp;
 
-        // 回踩触及或深入 0.50~0.618 黄金口袋核心区间
         if (pbMin <= fib50 + breakBuffer && pbMin >= fib618 - breakBuffer * 2.0) {
-            // 情况 A：黄金口袋企稳反弹（有效从低点回弹并站稳 0.618 关键位上方，且留足防抖裕量）
             if (curPx >= pbMin + breakBuffer * 0.8 && curPx >= fib618 + breakBuffer * 0.3 && curPx <= fib382 + breakBuffer) {
                 fibCandidate.type = PatternType::FibonacciGoldenPocket;
                 fibCandidate.fib50 = fib50;
@@ -832,23 +1432,20 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 fibCandidate.resistance = bestBullHighPx;
                 fibCandidate.breakoutTarget = bestBullHighPx + bestBullAmp * 0.382;
 
-                // 核心趋势与日内高点切合度核验：
                 if (cfg.highAlreadyInProb >= 0.65 || cfg.multiDayBias == TrendBias::StrongBear) {
                     fibCandidate.name = "斐波那契黄金口袋 (顺势偏空·弱反抽观察)";
                     fibCandidate.bias = "弱势蓄势";
-                    fibCandidate.strategy = "现价回踩斐波那契 0.50~0.618 黄金口袋关键支撑区并微幅反弹，但受多日空头排列/日内高点已确立压制，反抽动能有限，切勿盲目追涨做多，注意逢高防守。";
+                    fibCandidate.strategy = "现价回踩斐波那契 0.50~0.618 黄金口袋关键支撑区并微幅反弹，但受多日空头排列/日内高点已确立压制，反抽动能有限，切勿盲目追涨做多。";
                 } else {
                     fibCandidate.name = "斐波那契黄金口袋 (0.5~0.618回踩企稳🚀)";
                     fibCandidate.bias = "强烈看多";
-                    fibCandidate.strategy = "主升浪上涨后健康回踩斐波那契 0.50~0.618 黄金口袋关键支撑区并企稳反弹！顺势逢低布局，防守位设在 0.618 支撑 "
-                                           + fmtPrice(fib618) + "，第一止盈目标看前高 " + fmtPrice(bestBullHighPx)
-                                           + "，突破后理论扩展目标看 " + fmtPrice(fibCandidate.breakoutTarget) + "。";
+                    fibCandidate.strategy = "主升浪上涨后健康回踩斐波那契 0.50~0.618 黄金口袋支撑区并企稳反弹！防守位设在 0.618 支撑 "
+                                           + fmtPrice(fib618) + "，第一目标看前高 " + fmtPrice(bestBullHighPx)
+                                           + "，扩展目标 " + fmtPrice(fibCandidate.breakoutTarget) + "。";
                 }
                 fibCandidate.valid = true;
                 hasFibCandidate = true;
-            }
-            // 情况 B：正在黄金口袋支撑区回踩测试蓄势（未达到确立突破/反弹前，保持多头蓄势观察，杜绝秒级多空翻转）
-            else if (curPx >= fib618 - breakBuffer * 1.5 && curPx <= fib50 + breakBuffer) {
+            } else if (curPx >= fib618 - breakBuffer * 1.5 && curPx <= fib50 + breakBuffer) {
                 fibCandidate.type = PatternType::FibonacciGoldenPocket;
                 fibCandidate.fib50 = fib50;
                 fibCandidate.fib618 = fib618;
@@ -859,14 +1456,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 fibCandidate.support = fib618;
                 fibCandidate.resistance = fib50;
                 fibCandidate.breakoutTarget = bestBullHighPx;
-                fibCandidate.strategy = "现价回踩进入斐波那契 0.50~0.618 黄金口袋核心支撑区间 ("
+                fibCandidate.strategy = "现价回踩进入斐波那契 0.50~0.618 黄金口袋支撑区间 ("
                                        + fmtPrice(fib618) + " ~ " + fmtPrice(fib50)
-                                       + ")，正在测试多头承接力，切忌恐慌杀跌，密切观察止跌企稳低吸机会。";
+                                       + ")，正在测试多头承接力，密切观察止跌企稳机会。";
                 fibCandidate.valid = true;
                 hasFibCandidate = true;
             }
         }
-        // 情况 C：明确跌破 0.618 黄金口袋最后防守位（必须有充足迟滞裕量，杜绝临界点2-3秒多空反复翻转）
         if (!hasFibCandidate && pbMin < fib618 - breakBuffer * 1.5 && curPx < fib618 - breakBuffer * 1.5 && curPx >= bestBullLowPx - breakBuffer) {
             fibCandidate.type = PatternType::FibonacciGoldenPocket;
             fibCandidate.fib50 = fib50;
@@ -878,18 +1474,17 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             fibCandidate.resistance = fib618;
             fibCandidate.support = bestBullLowPx;
             fibCandidate.breakoutTarget = bestBullLowPx;
-            fibCandidate.strategy = "价格有效跌破斐波那契 0.618 黄金口袋关键防守支撑 ("
-                                   + fmtPrice(fib618) + ")，回调已演变为深度破位，原支撑转为强阻力，需防范进一步回探起涨点 "
-                                   + fmtPrice(bestBullLowPx) + "，注意防守减仓。";
+            fibCandidate.strategy = "价格有效跌破斐波那契 0.618 黄金口袋防守支撑 ("
+                                   + fmtPrice(fib618) + ")，原支撑转为阻力，防范回探起涨点 "
+                                   + fmtPrice(bestBullLowPx) + "。";
             fibCandidate.valid = true;
             hasFibCandidate = true;
         }
     }
 
-    // 判定空头黄金口袋反弹受阻 (Bearish Golden Pocket)
     if (!hasFibCandidate) {
         double bestBearAmp = 0.0;
-        int bestBearHighIdx = -1, bestBearLowIdx = -1;
+        int bestBearLowIdx = -1;
         double bestBearHighPx = 0.0, bestBearLowPx = 0.0;
         for (const auto& tr : troughs) {
             if (tr.index > n - 2) continue;
@@ -898,7 +1493,6 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     const double amp = pk.price - tr.price;
                     if (amp >= requiredAmp && amp > bestBearAmp) {
                         bestBearAmp = amp;
-                        bestBearHighIdx = pk.index;
                         bestBearLowIdx = tr.index;
                         bestBearHighPx = pk.price;
                         bestBearLowPx = tr.price;
@@ -928,11 +1522,11 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     if (cfg.lowAlreadyInProb >= 0.65 || cfg.multiDayBias == TrendBias::StrongBull) {
                         fibCandidate.name = "斐波那契黄金口袋 (顺势偏多·回调休整)";
                         fibCandidate.bias = "中性蓄势";
-                        fibCandidate.strategy = "急跌后反弹测试 0.50~0.618 黄金口袋压制，但大周期多头趋势强劲且日内低点已确立，回调属于良性洗盘，切勿盲目杀跌，耐心等待多头重聚。";
+                        fibCandidate.strategy = "急跌后反弹测试 0.50~0.618 压制，但大周期偏多且日内低点趋稳，切勿盲目杀跌。";
                     } else {
                         fibCandidate.name = "斐波那契黄金口袋 (0.5~0.618反弹受阻⚠️)";
                         fibCandidate.bias = "强烈看空";
-                        fibCandidate.strategy = "急跌后弱势反弹至斐波那契 0.50~0.618 黄金口袋强压区受阻回落！反抽动能衰竭，建议逢高减仓防守，谨防二次探底 "
+                        fibCandidate.strategy = "急跌后弱势反弹至斐波那契 0.50~0.618 压制区受阻回落！建议逢高减仓防守，谨防二次探底 "
                                                + fmtPrice(bestBearLowPx) + "。";
                     }
                     fibCandidate.valid = true;
@@ -965,9 +1559,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     const double priceRange = std::max(0.1, p2.price - t2.price);
     const double slopeThreshold = priceRange * 0.003;
 
-    // =========================================================================
-    // 1) 脉冲 V 型反转 / 倒 V 冲高跳水 (黄金数据公布/情绪急杀剧烈洗盘)
-    // =========================================================================
+    // 1) 脉冲 V 型反转 / 倒 V 冲高跳水
     if (n >= 25) {
         const int lookback = std::min(70, n);
         int minIdx = n - lookback, maxIdx = n - lookback;
@@ -978,7 +1570,6 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             if (p < minPx) { minPx = p; minIdx = i; }
             if (p > maxPx) { maxPx = p; maxIdx = i; }
         }
-        // V型急跌反转：最低点在区间中段，且自最低点强力拉升收复跌幅 >= 85%
         if (minIdx >= n - lookback + 4 && minIdx <= n - 3) {
             double preHigh = points[static_cast<size_t>(n - lookback)].price;
             for (int i = n - lookback; i < minIdx; ++i)
@@ -993,19 +1584,18 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看多突破";
                     res.support = preHigh;
                     res.resistance = res.breakoutTarget;
-                    res.strategy = "短线急跌洗盘被多头强势深V收复并放量突破起跌点！诱空失败，多头全面反攻，回踩原起跌点为买入支撑。";
+                    res.strategy = "短线急跌洗盘被多头强势深V收复并突破起跌点！诱空失败，回踩原起跌点为买入支撑。";
                 } else {
                     res.name = "V型急跌反转 (深V蓄势中)";
                     res.bias = "多头蓄势";
                     res.support = minPx;
                     res.resistance = preHigh;
-                    res.strategy = "急速探底后快速强力抽升，多头承接盘强劲，现价正冲击起跌阻力位，等待放量突破确认。";
+                    res.strategy = "急速探底后快速抽升，多头承接盘强劲，现价正冲击起跌阻力位。";
                 }
                 res.valid = true;
                 return returnRes(res);
             }
         }
-        // 倒V冲高跳水：最高点在区间中段，自最高点快速跳水回吐涨幅 >= 85%
         if (maxIdx >= n - lookback + 4 && maxIdx <= n - 3) {
             double preLow = points[static_cast<size_t>(n - lookback)].price;
             for (int i = n - lookback; i < maxIdx; ++i)
@@ -1020,13 +1610,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看空破位";
                     res.resistance = preLow;
                     res.support = res.breakoutTarget;
-                    res.strategy = "多头脉冲急拉冲高受阻，跳水回落全额吞没涨幅并跌破起涨支撑，形成倒V见顶破位，谨防加速下行，注意防守止盈。";
+                    res.strategy = "脉冲急拉冲高受阻，回落吞没涨幅并跌破起涨支撑，形成倒V见顶破位，注意防守止盈。";
                 } else {
                     res.name = "倒V冲高跳水 (冲高承压中)";
                     res.bias = "空头蓄势";
                     res.resistance = maxPx;
                     res.support = preLow;
-                    res.strategy = "脉冲拉升后遭遇沉重抛压大幅回落，上方形成假突破套牢盘，正在测试起涨支撑。";
+                    res.strategy = "脉冲拉升后遭遇沉重抛压大幅回落，正在测试起涨支撑。";
                 }
                 res.valid = true;
                 return returnRes(res);
@@ -1034,13 +1624,11 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
-    // =========================================================================
-    // 2) 头肩底 (倒头肩) & 头肩顶 (大级别反转之王)
-    // =========================================================================
+    // 2) 头肩底 / 头肩顶
     if (troughs.size() >= 3) {
-        const auto& lt1 = troughs[troughs.size() - 3]; // 左肩
-        const auto& lt2 = troughs[troughs.size() - 2]; // 头部 (最深谷底)
-        const auto& lt3 = troughs.back();             // 右肩
+        const auto& lt1 = troughs[troughs.size() - 3];
+        const auto& lt2 = troughs[troughs.size() - 2];
+        const auto& lt3 = troughs.back();
         if (lt1.price > 0 && lt2.price > 0 && lt3.price > 0 &&
             lt2.price < lt1.price - priceRange * 0.20 && lt2.price < lt3.price - priceRange * 0.20 &&
             std::abs(lt1.price - lt3.price) / lt1.price <= 0.0030) {
@@ -1056,14 +1644,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看多突破";
                     res.support = neckline;
                     res.resistance = target;
-                    res.strategy = "现价已强势突破头肩底颈线！经典大级别反转确立，颈线转为强支撑，上看目标位 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "现价已突破头肩底颈线！颈线转为强支撑，上看目标位 " + fmtPrice(target) + "。";
                 } else {
                     res.name = "头肩底形态 (倒头肩蓄势)";
                     res.bias = "多头蓄势";
                     res.support = std::min(lt1.price, lt3.price);
                     res.resistance = neckline;
-                    res.strategy = "右肩构筑企稳，倒头肩形态蓄势冲击颈线阻力，放量突破将开启大级别主升浪。";
+                    res.strategy = "右肩构筑企稳，倒头肩形态蓄势冲击颈线阻力。";
                 }
                 res.valid = true;
                 return returnRes(res);
@@ -1072,9 +1659,9 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
     }
 
     if (peaks.size() >= 3) {
-        const auto& lp1 = peaks[peaks.size() - 3]; // 左肩
-        const auto& lp2 = peaks[peaks.size() - 2]; // 头部 (最高峰)
-        const auto& lp3 = peaks.back();            // 右肩
+        const auto& lp1 = peaks[peaks.size() - 3];
+        const auto& lp2 = peaks[peaks.size() - 2];
+        const auto& lp3 = peaks.back();
         if (lp1.price > 0 && lp2.price > 0 && lp3.price > 0 &&
             lp2.price > lp1.price + priceRange * 0.20 && lp2.price > lp3.price + priceRange * 0.20 &&
             std::abs(lp1.price - lp3.price) / lp1.price <= 0.0030) {
@@ -1090,14 +1677,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看空破位";
                     res.resistance = neckline;
                     res.support = target;
-                    res.strategy = "现价已跌破头肩顶颈线支撑！大级别顶部确认，原颈线转为强压，防范回落目标 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "现价已跌破头肩顶颈线支撑！防范回落目标 " + fmtPrice(target) + "。";
                 } else {
                     res.name = "头肩顶形态 (高位受阻)";
                     res.bias = "空头蓄势";
                     res.resistance = lp2.price;
                     res.support = neckline;
-                    res.strategy = "右肩冲高乏力，头肩顶形成，当前测试颈线支撑，若跌破颈线将引发加速下挫。";
+                    res.strategy = "右肩冲高乏力，头肩顶形成，当前测试颈线支撑。";
                 }
                 res.valid = true;
                 return returnRes(res);
@@ -1105,9 +1691,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
-    // =========================================================================
-    // 3) 三重底 / 三重顶 识别 (三次坚决确认)
-    // =========================================================================
+    // 3) 三重底 / 三重顶
     if (troughs.size() >= 3) {
         const auto& tr1 = troughs[troughs.size() - 3];
         const auto& tr2 = troughs[troughs.size() - 2];
@@ -1127,14 +1711,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看多突破";
                     res.support = neckline;
                     res.resistance = target;
-                    res.strategy = "三次回踩底部均获强力支撑，现价强势放量突破颈线，三重筑底确立，后市上看 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "三次踩底企稳并突破颈线，后市上看 " + fmtPrice(target) + "。";
                 } else {
                     res.name = "三重底形态 (三重筑底)";
                     res.bias = "多头蓄势";
                     res.support = mnT;
                     res.resistance = neckline;
-                    res.strategy = "关键支撑经过三次严苛测试依然有效，多头底部扎实，等待放量突破颈线确认。";
+                    res.strategy = "关键支撑三次测试有效，等待突破颈线确认。";
                 }
                 res.valid = true;
                 return returnRes(res);
@@ -1161,14 +1744,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看空破位";
                     res.resistance = neckline;
                     res.support = target;
-                    res.strategy = "三次冲高同一阻力位均严重受阻，现价跌破颈线支撑，多头放弃抵抗，下方目标 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "三次冲高受阻并跌破颈线，下方目标 " + fmtPrice(target) + "。";
                 } else {
                     res.name = "三重顶形态 (三重承压)";
                     res.bias = "空头蓄势";
                     res.resistance = mxP;
                     res.support = neckline;
-                    res.strategy = "上方水平阻力位三次冲高无法突破，抛压沉重，当前测试颈线，破位需坚决防守。";
+                    res.strategy = "上方水平阻力三次受阻，当前测试颈线支撑。";
                 }
                 res.valid = true;
                 return returnRes(res);
@@ -1176,9 +1758,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
-    // =========================================================================
-    // 4) 顺势旗形中继 (Bull Flag / Bear Flag 单边趋势主升浪)
-    // =========================================================================
+    // 4) 顺势旗形中继 (时间长度固定：旗面 10-25 分钟，旗杆 8-30 分钟)
     if (n >= 35) {
         const int flagLen = std::clamp(n / 5, 10, 25);
         const int poleLen = std::clamp((n - flagLen) / 2, 8, 30);
@@ -1186,7 +1766,6 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         const double poleEnd = points[static_cast<size_t>(n - flagLen)].price;
         const double poleHeight = poleEnd - poleStart;
 
-        // 看涨旗形：旗杆急拉 >= 0.35%，随后微幅回踩旗面整理，波幅 <= 旗杆 45%
         if (poleHeight >= curPx * 0.0035) {
             double flagHigh = poleEnd, flagLow = poleEnd;
             for (int i = n - flagLen; i < n; ++i) {
@@ -1200,12 +1779,10 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 if (curPx >= flagHigh + breakBuffer) {
                     if (hasFibCandidate && (fibCandidate.bias == "强烈看多" || fibCandidate.bias == "多头蓄势")) {
                         res.name = "看涨旗形 + 黄金口袋共振 (顺势主升浪🚀)";
-                        res.strategy = "放量向上突破看涨旗面，且旗面回踩完美契合斐波那契 0.50~0.618 黄金口袋关键支撑！顺势双重共振，第一目标位上看 "
-                                       + fmtPrice(target) + "。";
+                        res.strategy = "突破看涨旗面且契合黄金口袋支撑！第一目标上看 " + fmtPrice(target) + "。";
                     } else {
                         res.name = "看涨旗形 (顺势主升浪🚀)";
-                        res.strategy = "放量向上突破看涨旗面！主升浪中继形态确立，顺势看多，第一目标上看 "
-                                       + fmtPrice(target) + "。";
+                        res.strategy = "向上突破看涨旗面，主升浪中继确立，第一目标上看 " + fmtPrice(target) + "。";
                     }
                     res.bias = "看多突破";
                     res.support = flagHigh;
@@ -1215,13 +1792,12 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "多头蓄势";
                     res.resistance = flagHigh;
                     res.support = flagLow;
-                    res.strategy = "强势冲高后微幅回踩构筑旗面整理，属于健康顺势中继，等待突破旗面上轨。";
+                    res.strategy = "强势冲高后微幅回踩构筑旗面整理，等待突破旗面上轨。";
                 }
                 res.valid = true;
                 return returnRes(res);
             }
         }
-        // 看跌旗形：旗杆急跌，随后微幅反弹整理
         if (poleHeight <= -curPx * 0.0035) {
             const double dropHeight = -poleHeight;
             double flagHigh = poleEnd, flagLow = poleEnd;
@@ -1238,14 +1814,13 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                     res.bias = "看空破位";
                     res.resistance = flagLow;
                     res.support = target;
-                    res.strategy = "向下跌破看跌旗面下轨！弱势中继形态确立，谨防顺势加速探底 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "跌破看跌旗面下轨，谨防顺势加速探底 " + fmtPrice(target) + "。";
                 } else {
                     res.name = "看跌旗形 (偏空中继)";
                     res.bias = "空头蓄势";
                     res.resistance = flagHigh;
                     res.support = flagLow;
-                    res.strategy = "急跌后低位弱势反弹构筑看跌旗面，反弹动能有限，随时谨防二次破位。";
+                    res.strategy = "急跌后弱势反弹构筑看跌旗面，谨防二次破位。";
                 }
                 res.valid = true;
                 return returnRes(res);
@@ -1253,9 +1828,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         }
     }
 
-    // =========================================================================
-    // 5) 双底 / W底 识别 (两底接近，中间颈线)
-    // =========================================================================
+    // 5) 双底 / W底
     if (t1.price > 0.0 && std::abs(t2.price - t1.price) / t1.price <= 0.0022 && t2.index > t1.index) {
         double neckline = 0.0;
         for (int idx = t1.index; idx <= t2.index; ++idx) {
@@ -1269,12 +1842,10 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             if (curPx >= neckline + breakBuffer) {
                 if (hasFibCandidate && (fibCandidate.bias == "强烈看多" || fibCandidate.bias == "多头蓄势")) {
                     res.name = "双底突破 + 黄金口袋共振 (W底强力反转🚀)";
-                    res.strategy = "突破W底颈线，且筑底回踩恰好落入斐波那契 0.50~0.618 黄金口袋强支撑！双重多头共振，第一目标位上看 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "突破W底颈线且筑底回踩契合黄金口袋！第一目标上看 " + fmtPrice(target) + "。";
                 } else {
                     res.name = "双底突破 (W底确立🚀)";
-                    res.strategy = "现价已强势突破W底颈线！颈线位已由阻力转为强支撑，双底反转形态确立，第一目标位上看 "
-                                   + fmtPrice(target) + "。";
+                    res.strategy = "现价已突破W底颈线！颈线转为强支撑，第一目标上看 " + fmtPrice(target) + "。";
                 }
                 res.bias = "看多突破";
                 res.support = neckline;
@@ -1284,16 +1855,14 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 res.bias = "多头蓄势";
                 res.support = baseSupport;
                 res.resistance = neckline;
-                res.strategy = "双底支撑有效确立，现价正在向颈线阻力蓄势发起冲击，突破颈线后将打开翻倍反弹空间。";
+                res.strategy = "双底支撑有效，现价正在向颈线阻力蓄势冲击。";
             }
             res.valid = true;
             return returnRes(res);
         }
     }
 
-    // =========================================================================
-    // 6) 双顶 / M顶 识别
-    // =========================================================================
+    // 6) 双顶 / M顶
     if (p1.price > 0.0 && std::abs(p2.price - p1.price) / p1.price <= 0.0022 && p2.index > p1.index) {
         double neckline = 1e9;
         for (int idx = p1.index; idx <= p2.index; ++idx) {
@@ -1309,54 +1878,60 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
                 res.bias = "看空破位";
                 res.resistance = neckline;
                 res.support = target;
-                res.strategy = "现价已跌破M顶颈线支撑！颈线位已转为反弹强阻力，双顶下行形态确立，下方第一目标位看至 "
-                               + fmtPrice(target) + "。";
+                res.strategy = "现价已跌破M顶颈线支撑！下行目标看至 " + fmtPrice(target) + "。";
             } else {
                 res.name = "双顶形态 (M顶受阻)";
                 res.bias = "空头蓄势";
                 res.resistance = baseResistance;
                 res.support = neckline;
-                res.strategy = "高位双顶强阻力压制，反弹未能创新高，当前测试颈线支撑，若跌破颈线谨防加速回落。";
+                res.strategy = "高位双顶阻力压制，当前测试颈线支撑，谨防破位。";
             }
             res.valid = true;
             return returnRes(res);
         }
     }
 
-    const double peakSlope = (p2.price - p1.price) / static_cast<double>(std::max(1, p2.index - p1.index));
-    const double troughSlope = (t2.price - t1.price) / static_cast<double>(std::max(1, t2.index - t1.index));
-    const double curUpper = p2.price + peakSlope * static_cast<double>(std::max(0, n - 1 - p2.index));
-    const double curLower = t2.price + troughSlope * static_cast<double>(std::max(0, n - 1 - t2.index));
+    // 7~13) 最小二乘回归信道（取近 3~4 个拐点做 OLS 拟合与 R^2 校验，避免两点毛刺误判）
+    const auto upperFit = fitSwingRegression(peaks, 4);
+    const auto lowerFit = fitSwingRegression(troughs, 4);
+    const double peakSlope = upperFit.valid
+                                 ? upperFit.slope
+                                 : ((p2.price - p1.price) / static_cast<double>(std::max(1, p2.index - p1.index)));
+    const double troughSlope = lowerFit.valid
+                                   ? lowerFit.slope
+                                   : ((t2.price - t1.price) / static_cast<double>(std::max(1, t2.index - t1.index)));
+    const double curUpper = upperFit.valid
+                                ? (upperFit.intercept + upperFit.slope * static_cast<double>(n - 1))
+                                : (p2.price + peakSlope * static_cast<double>(std::max(0, n - 1 - p2.index)));
+    const double curLower = lowerFit.valid
+                                ? (lowerFit.intercept + lowerFit.slope * static_cast<double>(n - 1))
+                                : (t2.price + troughSlope * static_cast<double>(std::max(0, n - 1 - t2.index)));
 
-    // =========================================================================
-    // 7) 扩散喇叭形 (Broadening / Megaphone 情绪极度分歧发散)
-    // =========================================================================
-    if (peakSlope > slopeThreshold && troughSlope < -slopeThreshold && priceRange >= curPx * 0.0035) {
+    const bool goodFit = (!upperFit.valid || peaks.size() < 3 || upperFit.r2 >= 0.40) &&
+                         (!lowerFit.valid || troughs.size() < 3 || lowerFit.r2 >= 0.40);
+
+    if (goodFit && peakSlope > slopeThreshold && troughSlope < -slopeThreshold && priceRange >= curPx * 0.0035) {
         res.type = PatternType::Broadening;
         res.name = "扩散喇叭形 (情绪加剧)";
         res.bias = "剧烈变盘";
         res.resistance = curUpper;
         res.support = curLower;
         res.breakoutTarget = curUpper + priceRange * 0.5;
-        res.strategy = "高点更高、低点更低，振幅发散放大，市场多空情绪分歧剧烈，避免追单，谨防剧烈单边爆发！";
+        res.strategy = "高点更高、低点更低，振幅发散放大，市场分歧剧烈，避免追单！";
         res.valid = true;
         return returnRes(res);
     }
 
-    // =========================================================================
-    // 8) 下降楔形 (Falling Wedge)：两轨下移，上轨斜率更陡（下降收敛），看涨向上突破
-    // =========================================================================
-    if (peakSlope < -slopeThreshold && troughSlope < 0 && peakSlope < troughSlope) {
+    if (goodFit && peakSlope < -slopeThreshold && troughSlope < 0 && peakSlope < troughSlope) {
         res.type = PatternType::FallingWedge;
         res.breakoutTarget = p1.price;
         if (curPx >= curUpper + breakBuffer) {
             if (hasFibCandidate && (fibCandidate.bias == "强烈看多" || fibCandidate.bias == "多头蓄势")) {
                 res.name = "下降楔形 + 黄金口袋共振 (向上突破🚀)";
-                res.strategy = "下降楔形向上突破上轨，且下沿获得斐波那契 0.50~0.618 黄金口袋坚实承接！空头衰竭反转，顺势看多，第一目标上看 "
-                               + fmtPrice(p1.price) + "。";
+                res.strategy = "下降楔形突破上轨且下沿获黄金口袋承接！第一目标上看 " + fmtPrice(p1.price) + "。";
             } else {
                 res.name = "下降楔形 (向上突破🚀)";
-                res.strategy = "现价已向上突破下降楔形上轨！空头衰竭确认，反转向上变盘，顺势看多。";
+                res.strategy = "现价向上突破下降楔形上轨！空头衰竭反转，顺势看多。";
             }
             res.bias = "看多突破";
             res.support = curUpper;
@@ -1366,22 +1941,19 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.bias = "看空破位";
             res.resistance = curLower;
             res.support = curLower - priceRange * 0.5;
-            res.strategy = "跌破下轨支撑破位下行，需防范加速探底风险。";
+            res.strategy = "跌破下轨支撑破位下行，防范加速探底。";
         } else {
             res.name = "下降楔形 (收敛蓄势)";
             res.bias = "多头蓄势";
             res.resistance = curUpper;
             res.support = curLower;
-            res.strategy = "下降楔形波幅持续收敛，空头下探动能衰竭，等待放量突破上轨阻力！";
+            res.strategy = "下降楔形波幅收敛，空头动能衰竭，等待突破上轨阻力。";
         }
         res.valid = true;
         return returnRes(res);
     }
 
-    // =========================================================================
-    // 9) 上升楔形 (Rising Wedge)：两轨上移，下轨斜率更陡（上升收敛），看跌向下反转
-    // =========================================================================
-    if (peakSlope > slopeThreshold && troughSlope > 0 && troughSlope > peakSlope) {
+    if (goodFit && peakSlope > slopeThreshold && troughSlope > 0 && troughSlope > peakSlope) {
         res.type = PatternType::RisingWedge;
         res.breakoutTarget = t1.price;
         if (curPx <= curLower - breakBuffer) {
@@ -1389,22 +1961,19 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.bias = "看空破位";
             res.resistance = curLower;
             res.support = t1.price;
-            res.strategy = "现价已跌破上升楔形下轨支撑！多头动能衰竭确认，谨防加速下行，注意防守减仓。";
+            res.strategy = "跌破上升楔形下轨支撑！多头衰竭，谨防加速下行。";
         } else {
             res.name = "上升楔形 (高位收敛)";
             res.bias = "空头蓄势";
             res.resistance = curUpper;
             res.support = curLower;
-            res.strategy = "上升楔形持续收紧，高位上冲动能递减，谨防跌破下轨支撑引发快速回落！";
+            res.strategy = "上升楔形持续收紧，高位动能递减，谨防跌破下轨。";
         }
         res.valid = true;
         return returnRes(res);
     }
 
-    // =========================================================================
-    // 10) 对称三角形 (Symmetrical Triangle)：波峰下移，波谷抬高（对称收敛）
-    // =========================================================================
-    if (peakSlope < -slopeThreshold && troughSlope > slopeThreshold) {
+    if (goodFit && peakSlope < -slopeThreshold && troughSlope > slopeThreshold) {
         res.type = PatternType::SymmetricalTriangle;
         res.breakoutTarget = curPx + (p1.price - t1.price) * 0.7;
         if (curPx >= curUpper + breakBuffer) {
@@ -1412,27 +1981,24 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.bias = "看多突破";
             res.support = curUpper;
             res.resistance = p1.price;
-            res.strategy = "对称三角形向上突破上轨压制！多头决战胜出，顺势看多做多。";
+            res.strategy = "对称三角形向上突破上轨压制，顺势看多。";
         } else if (curPx <= curLower - breakBuffer) {
             res.name = "对称三角形 (向下破位⚠️)";
             res.bias = "看空破位";
             res.resistance = curLower;
             res.support = t1.price;
-            res.strategy = "对称三角形跌破下轨支撑！空头胜出，谨防深度调整。";
+            res.strategy = "对称三角形跌破下轨支撑，谨防深度调整。";
         } else {
             res.name = "对称三角形收敛 (Triangle)";
             res.bias = "中性蓄势";
             res.resistance = curUpper;
             res.support = curLower;
-            res.strategy = "高低点对称收敛，多空决战蓄势，关注突破方向，顺势跟随。";
+            res.strategy = "高低点对称收敛蓄势，关注突破方向。";
         }
         res.valid = true;
         return returnRes(res);
     }
 
-    // =========================================================================
-    // 11) 上升三角形：阻力接近水平，低点抬高
-    // =========================================================================
     if (std::abs(peakSlope) <= slopeThreshold && troughSlope > slopeThreshold) {
         res.type = PatternType::AscendingTriangle;
         const double resLvl = std::max(p1.price, p2.price);
@@ -1442,21 +2008,18 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.bias = "看多突破";
             res.support = resLvl;
             res.resistance = res.breakoutTarget;
-            res.strategy = "现价已放量突破上升三角形水平阻力位！打开上行空间，顺势看多。";
+            res.strategy = "现价突破上升三角形水平阻力位，顺势看多。";
         } else {
             res.name = "上升三角形 (Ascending Triangle)";
             res.bias = "多头蓄势";
             res.resistance = resLvl;
             res.support = t2.price;
-            res.strategy = "水平阻力位多次测试，低点持续抬高，多头蓄势占优，等待向上突破。";
+            res.strategy = "水平阻力多次测试，低点抬高，等待向上突破。";
         }
         res.valid = true;
         return returnRes(res);
     }
 
-    // =========================================================================
-    // 12) 下降三角形：支撑接近水平，高点降低
-    // =========================================================================
     if (std::abs(troughSlope) <= slopeThreshold && peakSlope < -slopeThreshold) {
         res.type = PatternType::DescendingTriangle;
         const double supLvl = std::min(t1.price, t2.price);
@@ -1466,21 +2029,18 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
             res.bias = "看空破位";
             res.resistance = supLvl;
             res.support = res.breakoutTarget;
-            res.strategy = "现价已跌破下降三角形水平支撑位！空头破位确立，谨防加速下行。";
+            res.strategy = "现价跌破下降三角形水平支撑位，谨防加速下行。";
         } else {
             res.name = "下降三角形 (Descending Triangle)";
             res.bias = "空头蓄势";
             res.support = supLvl;
             res.resistance = p2.price;
-            res.strategy = "水平支撑位多次受压，高点逐级压低，空头蓄势占优，谨防破位下行。";
+            res.strategy = "水平支撑多次受压，高点逐级压低，谨防破位。";
         }
         res.valid = true;
         return returnRes(res);
     }
 
-    // =========================================================================
-    // 13) 倾斜通道 (上升通道 / 下降通道)
-    // =========================================================================
     if (peakSlope > slopeThreshold && troughSlope > slopeThreshold) {
         res.type = PatternType::ChannelUp;
         res.name = "上升通道 (Channel Up)";
@@ -1488,7 +2048,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.resistance = curUpper;
         res.support = curLower;
         res.breakoutTarget = curUpper + priceRange * 0.5;
-        res.strategy = "处于多头上升通道运行，可沿通道下轨顺势做多，破下轨止损。";
+        res.strategy = "处于多头上升通道运行，沿下轨顺势做多，破下轨止损。";
         res.valid = true;
         return returnRes(res);
     } else if (peakSlope < -slopeThreshold && troughSlope < -slopeThreshold) {
@@ -1498,7 +2058,7 @@ PatternResult ForecastEngine::identifyPattern(const std::vector<IntradayPoint>& 
         res.resistance = curUpper;
         res.support = curLower;
         res.breakoutTarget = curLower - priceRange * 0.5;
-        res.strategy = "处于弱势下降通道运行，逢反弹受阻通道上轨可适度防守。";
+        res.strategy = "处于弱势下降通道运行，反弹受阻上轨注意防守。";
         res.valid = true;
         return returnRes(res);
     }
@@ -1530,7 +2090,9 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
         return res;
 
     res.valid = true;
-    const double effAtr = cfg.atr > 0.2 ? cfg.atr : 4.0;
+    const double effAtr = cfg.atr > 0.2 ? cfg.atr : (curPx > 1000.0 ? 25.0 : 4.0);
+    const MarketRegime regime = cfg.multiDayTrend.valid ? cfg.multiDayTrend.regime : MarketRegime::LowVolRange;
+    res.regime = regime;
 
     // -------------------------------------------------------------
     // 1) 亚盘基准箱体计算 (Asian Range: 09:00 - 14:30 CST)
@@ -1540,7 +2102,7 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
     for (const auto& pt : points) {
         if (pt.price <= 0.0) continue;
         const int m = minuteOfDayFromEpochMs(pt.epochMs);
-        if (m >= 540 && m <= 870) { // 09:00 ~ 14:30 CST
+        if (m >= 540 && m <= 870) {
             if (aCount == 0) {
                 aHigh = pt.price;
                 aLow = pt.price;
@@ -1558,70 +2120,54 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
     }
 
     const int curMin = minuteOfDayFromEpochMs(points.back().epochMs);
-    const bool isPostAsian = (curMin > 870 || curMin < 540); // 14:30 之后或次日凌晨
+    const bool isPostAsian = (curMin > 870 || curMin < 540);
 
     if (res.hasAsianBox && isPostAsian) {
-        if (curPx >= res.asianHigh + 0.30) {
+        const double boxTol = std::max(0.25, effAtr * 0.08);
+        if (curPx >= res.asianHigh + boxTol) {
             res.asianBreakoutUp = true;
-        } else if (curPx <= res.asianLow - 0.30) {
+        } else if (curPx <= res.asianLow - boxTol) {
             res.asianBreakoutDown = true;
         }
     }
 
     // -------------------------------------------------------------
-    // 2) 因子 1 打分：多日中大趋势 (0 ~ 30 分)
+    // 2) 各因子归一化原始分 [0.0, 1.0]（后按市场状态动态配权至总分 100）
     // -------------------------------------------------------------
-    int fTrend = 15;
+    double rTrend = 0.5;
     if (cfg.multiDayTrend.valid) {
         switch (cfg.multiDayTrend.bias) {
-        case TrendBias::StrongBull: fTrend = 30; break;
-        case TrendBias::MildBull:   fTrend = 24; break;
-        case TrendBias::Range:      fTrend = 15; break;
-        case TrendBias::MildBear:   fTrend = 8;  break;
-        case TrendBias::StrongBear: fTrend = 2;  break;
+        case TrendBias::StrongBull: rTrend = 1.00; break;
+        case TrendBias::MildBull:   rTrend = 0.78; break;
+        case TrendBias::Range:      rTrend = 0.50; break;
+        case TrendBias::MildBear:   rTrend = 0.25; break;
+        case TrendBias::StrongBear: rTrend = 0.06; break;
         }
-        if (cfg.multiDayTrend.rsi14 > 76.0) fTrend = std::max(0, fTrend - 4);
-        else if (cfg.multiDayTrend.rsi14 < 28.0) fTrend = std::min(30, fTrend + 4);
+        if (cfg.multiDayTrend.rsi14 > 76.0)      rTrend = std::max(0.0, rTrend - 0.14);
+        else if (cfg.multiDayTrend.rsi14 < 28.0) rTrend = std::min(1.0, rTrend + 0.14);
     }
-    res.trendScore = fTrend;
 
-    // -------------------------------------------------------------
-    // 3) 因子 2 打分：时段规律与亚盘突破 (0 ~ 20 分)
-    // -------------------------------------------------------------
-    int fSession = 10;
+    double rSession = 0.5;
     if (res.hasAsianBox) {
         if (!isPostAsian) {
-            // 亚盘构筑基准箱体阶段
-            fSession = 10;
+            rSession = 0.50;
+        } else if (res.asianBreakoutUp) {
+            rSession = 1.00;
+        } else if (res.asianBreakoutDown) {
+            rSession = 0.05;
         } else {
-            // 欧盘/美盘时段
-            if (res.asianBreakoutUp) {
-                fSession = 20; // 欧美盘强势向上突破亚盘高点
-            } else if (res.asianBreakoutDown) {
-                fSession = 1;  // 欧美盘跌破亚盘低点
-            } else {
-                // 处于亚盘箱体内震荡测试
-                if (curPx >= res.asianHigh - 0.35) fSession = 14;
-                else if (curPx <= res.asianLow + 0.35) fSession = 6;
-                else fSession = 10;
-            }
+            if (curPx >= res.asianHigh - 0.35) rSession = 0.70;
+            else if (curPx <= res.asianLow + 0.35) rSession = 0.30;
+            else rSession = 0.50;
         }
     }
-    // 美盘高潮段 (20:30 - 24:00 CST: 1230 ~ 1440 min)
     if (curMin >= 1230) {
-        if (fSession >= 14) fSession = std::min(20, fSession + 2);
-        else if (fSession <= 8) fSession = std::max(0, fSession - 2);
+        if (rSession >= 0.70) rSession = std::min(1.0, rSession + 0.10);
+        else if (rSession <= 0.40) rSession = std::max(0.0, rSession - 0.10);
     }
-    res.sessionScore = fSession;
 
-    // -------------------------------------------------------------
-    // 4) 因子 3 打分：均值回归与超买超卖 / 波动带 (0 ~ 25 分)
-    // -------------------------------------------------------------
-    int fMean = 12;
-    double sumP = 0.0;
-    for (const auto& p : points) sumP += p.price;
-    const double vwap = sumP / static_cast<double>(points.size());
-
+    // 因子3：时间加权均值回归 TWAP + 极值带 + 卡尔曼动量转折
+    const double twap = computeTwap(points);
     const double predH = cfg.hasForecast ? cfg.predHigh : 0.0;
     const double predL = cfg.hasForecast ? cfg.predLow : 0.0;
 
@@ -1639,62 +2185,55 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
     const double pullbackFromHigh = dHigh - curPx;
     const double minTurn = std::max(0.08, std::min(effAtr * 0.15, rangeSoFar * 0.18));
 
+    double rMean = 0.50;
     if (predL > 0.0 && curPx <= predL + zoneTol) {
-        if (reboundFromLow >= minTurn) {
-            fMean = 24; // 触及低点支撑且企稳反弹转折，杀跌动能衰竭
-        } else {
-            fMean = 14; // 触及低点但仍在下探寻底中，防守观察
-        }
+        rMean = (reboundFromLow >= minTurn) ? 0.96 : 0.56;
     } else if (predH > 0.0 && curPx >= predH - zoneTol) {
-        if (pullbackFromHigh >= minTurn) {
-            fMean = 4;  // 触及高点阻力且冲高遇阻回落，抛压显现
-        } else {
-            fMean = 16; // 正在强势冲高中测试阻力，顺势偏强
-        }
+        rMean = (pullbackFromHigh >= minTurn) ? 0.16 : 0.64;
     } else {
-        const double diff = curPx - vwap;
-        if (diff < -1.5 * effAtr) {
-            fMean = 21; // 深度回踩超卖，随时企稳反抽
-        } else if (diff > 1.8 * effAtr) {
-            fMean = 5;  // 短线严重偏离均价超买
-        } else if (diff >= 0.0 && diff <= 0.8 * effAtr) {
-            fMean = 16; // 依托分时均线健康多头运行
-        } else if (diff < 0.0 && diff >= -0.8 * effAtr) {
-            fMean = 11; // 均线下方弱势承压
-        }
+        const double diff = curPx - twap;
+        if (diff < -1.5 * effAtr)                     rMean = 0.84;
+        else if (diff > 1.8 * effAtr)                 rMean = 0.20;
+        else if (diff >= 0.0 && diff <= 0.8 * effAtr) rMean = 0.64;
+        else if (diff < 0.0 && diff >= -0.8 * effAtr) rMean = 0.44;
     }
-    res.meanReversionScore = fMean;
 
-    // -------------------------------------------------------------
-    // 5) 因子 4 打分：形态与斐波那契共振 (0 ~ 25 分)
-    // -------------------------------------------------------------
-    int fPattern = 12;
+    // 因子4：形态与黄金口袋
+    double rPattern = 0.48;
     if (cfg.pattern.valid) {
         if (cfg.pattern.type == PatternType::FibonacciGoldenPocket) {
-            if (cfg.pattern.bias == "强烈看多" || cfg.pattern.bias == "看多突破")
-                fPattern = 25;
-            else if (cfg.pattern.bias == "多头蓄势")
-                fPattern = 19;
-            else if (cfg.pattern.bias == "看空破位")
-                fPattern = 4;
-            else
-                fPattern = 12;
+            if (cfg.pattern.bias == "强烈看多" || cfg.pattern.bias == "看多突破") rPattern = 1.00;
+            else if (cfg.pattern.bias == "多头蓄势")                              rPattern = 0.76;
+            else if (cfg.pattern.bias == "看空破位")                              rPattern = 0.16;
+            else                                                                  rPattern = 0.48;
         } else if (cfg.pattern.bias == "强烈看多" || cfg.pattern.bias == "看多突破") {
-            fPattern = 24;
+            rPattern = 0.96;
         } else if (cfg.pattern.bias == "多头蓄势") {
-            fPattern = 17;
+            rPattern = 0.68;
         } else if (cfg.pattern.bias == "强烈看空" || cfg.pattern.bias == "看空破位") {
-            fPattern = 3;
+            rPattern = 0.12;
         } else if (cfg.pattern.bias == "空头蓄势" || cfg.pattern.bias == "震荡向下") {
-            fPattern = 8;
+            rPattern = 0.32;
         }
     }
-    res.patternScore = fPattern;
 
-    // -------------------------------------------------------------
-    // 6) 综合共振打分与决策判定 (0 ~ 100)
-    // -------------------------------------------------------------
-    res.score = std::clamp(fTrend + fSession + fMean + fPattern, 0, 100);
+    // 状态动态配权：趋势市放大 Trend+Pattern，震荡市放大 MeanReversion，高波市均衡防守
+    int wTrend = 30, wSession = 20, wMean = 25, wPattern = 25;
+    if (regime == MarketRegime::Trending) {
+        wTrend = 35; wSession = 20; wMean = 15; wPattern = 30;
+    } else if (regime == MarketRegime::LowVolRange) {
+        wTrend = 22; wSession = 16; wMean = 38; wPattern = 24;
+    }
+
+    res.trendScore         = static_cast<int>(std::lround(rTrend * wTrend));
+    res.sessionScore       = static_cast<int>(std::lround(rSession * wSession));
+    res.meanReversionScore = static_cast<int>(std::lround(rMean * wMean));
+    res.patternScore       = static_cast<int>(std::lround(rPattern * wPattern));
+
+    const int crossNudge = static_cast<int>(std::lround(std::clamp(cfg.crossMarketLeadSignal * 2.0, -5.0, 5.0)));
+    const int sentNudge  = static_cast<int>(std::lround(std::clamp(cfg.sentimentScore * 1.0, -5.0, 5.0)));
+
+    res.score = std::clamp(res.trendScore + res.sessionScore + res.meanReversionScore + res.patternScore + crossNudge + sentNudge, 0, 100);
 
     if (res.score >= 80) {
         res.action = DecisionAction::StrongBuy;
@@ -1719,7 +2258,7 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
     }
 
     // -------------------------------------------------------------
-    // 7) 关键执行挂单与止损价格计算
+    // 3) 关键执行挂单与止损价格计算
     // -------------------------------------------------------------
     double s = 1e9;
     if (cfg.pattern.support > 0.0) s = std::min(s, cfg.pattern.support);
@@ -1734,17 +2273,17 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
     if (r <= 0.0) r = curPx + 1.2 * effAtr;
 
     res.conservativeBuy = std::min(curPx, s);
-    res.aggressiveBuy = r + 0.35;
+    res.aggressiveBuy = r + std::max(0.25, effAtr * 0.08);
     res.takeProfit1 = r;
     res.takeProfit2 = cfg.pattern.breakoutTarget > r ? cfg.pattern.breakoutTarget : (r + 1.2 * effAtr);
     res.stopLoss = s - 0.6 * effAtr;
 
     // -------------------------------------------------------------
-    // 8) 手续费与安全边际过滤（浙商积存金买入0手续费，卖出0.4%）
+    // 4) 手续费与安全边际过滤
     // -------------------------------------------------------------
     res.roundTripFee = curPx * cfg.feeRate;
     const double targetP = std::max(res.takeProfit1, curPx + 1.2 * effAtr);
-    const double buyCost = curPx; // 买入手续费为 0
+    const double buyCost = curPx;
     const double sellProceeds = (cfg.feeRate > 0.0) ? (targetP * (1.0 - cfg.feeRate)) : targetP;
     const double stopProceeds = (cfg.feeRate > 0.0) ? (res.stopLoss * (1.0 - cfg.feeRate)) : res.stopLoss;
     res.netReward = std::max(0.0, sellProceeds - buyCost);
@@ -1759,12 +2298,10 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
         res.actionColor = "#faad14";
     }
 
-    // -------------------------------------------------------------
-    // 9) 摘要与多因子归因阐述
-    // -------------------------------------------------------------
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "综合共振得分: %d分 (%s) | 趋势%d·时段%d·波动%d·形态%d",
-                  res.score, res.actionLabel.c_str(), fTrend, fSession, fMean, fPattern);
+    std::snprintf(buf, sizeof(buf), "综合共振: %d分 [%s·%s] | 趋势%d·时段%d·波动%d·形态%d",
+                  res.score, res.actionLabel.c_str(), MultiDayTrend::regimeLabel(regime),
+                  res.trendScore, res.sessionScore, res.meanReversionScore, res.patternScore);
     res.summary = std::string(buf);
 
     if (!res.feeEdgeSatisfied) {
@@ -1772,34 +2309,36 @@ ConfluenceDecision ForecastEngine::evaluateDecision(
     }
 
     std::string rat = "【多因子量化共振评测详情】\n";
-    rat += "1. 多日趋势维度 (" + std::to_string(fTrend) + "/30分)：" + (cfg.multiDayTrend.valid ? cfg.multiDayTrend.label() : "震荡中性") + "\n";
+    rat += "0. 市场状态识别: " + std::string(MultiDayTrend::regimeLabel(regime)) + "\n";
+    rat += "1. 多日趋势维度 (" + std::to_string(res.trendScore) + "/" + std::to_string(wTrend) + "分)："
+           + (cfg.multiDayTrend.valid ? cfg.multiDayTrend.label() : "震荡中性") + "\n";
     if (res.hasAsianBox) {
-        rat += "2. 亚欧盘时段维度 (" + std::to_string(fSession) + "/20分)：亚盘箱体 [" + fmtPrice(res.asianLow) + " ~ " + fmtPrice(res.asianHigh) + "]";
-        if (res.asianBreakoutUp) rat += " (欧美盘放量上破🚀)\n";
-        else if (res.asianBreakoutDown) rat += " (欧美盘破位下挫⚠️)\n";
+        rat += "2. 亚欧盘时段维度 (" + std::to_string(res.sessionScore) + "/" + std::to_string(wSession) + "分)：亚盘箱体 ["
+               + fmtPrice(res.asianLow) + " ~ " + fmtPrice(res.asianHigh) + "]";
+        if (res.asianBreakoutUp) rat += " (欧美盘上破🚀)\n";
+        else if (res.asianBreakoutDown) rat += " (欧美盘破位⚠️)\n";
         else rat += " (区间内震荡整理)\n";
     } else {
-        rat += "2. 亚欧盘时段维度 (" + std::to_string(fSession) + "/20分)：数据积累中\n";
+        rat += "2. 亚欧盘时段维度 (" + std::to_string(res.sessionScore) + "/" + std::to_string(wSession) + "分)：数据积累中\n";
     }
-    rat += "3. 波动与极值维度 (" + std::to_string(fMean) + "/25分)：现价 vs 分时均价 " + fmtPrice(vwap);
-    if (predH > 0 && predL > 0) rat += " (今日推演区间 " + fmtPrice(predL) + " ~ " + fmtPrice(predH) + ")";
+    rat += "3. 波动与TWAP均值维度 (" + std::to_string(res.meanReversionScore) + "/" + std::to_string(wMean) + "分)：现价 vs 时间加权均价 " + fmtPrice(twap);
+    if (predH > 0 && predL > 0) rat += " (推演区间 " + fmtPrice(predL) + " ~ " + fmtPrice(predH) + ")";
     rat += "\n";
-    rat += "4. 形态与黄金口袋 (" + std::to_string(fPattern) + "/25分)：" + (cfg.pattern.valid ? cfg.pattern.name : "箱体震荡整理") + "\n\n";
-
-    rat += "【挂单执行点位参考】\n";
-    rat += "• 稳健低吸买点: " + fmtPrice(res.conservativeBuy) + " 元/g\n";
-    rat += "• 突破顺势买点: " + fmtPrice(res.aggressiveBuy) + " 元/g\n";
-    rat += "• 目标止盈一 (前高/阻力): " + fmtPrice(res.takeProfit1) + " 元/g\n";
-    rat += "• 目标止盈二 (拓展目标): " + fmtPrice(res.takeProfit2) + " 元/g\n";
-    rat += "• 硬防守止损位: " + fmtPrice(res.stopLoss) + " 元/g\n\n";
-
-    rat += "【成本与风控测算】\n";
-    rat += "• 预计卖出手续费(0.4% · 买入0费率): -" + fmtPrice(res.roundTripFee) + " 元/g\n";
-    rat += "• 扣费后理论净利润: " + fmtPrice(res.netReward) + " 元/g\n";
-    rat += "• 理论盈亏比 (RRR): " + fmtPrice(res.rrr) + ":1\n";
-    if (!res.feeEdgeSatisfied) {
-        rat += "• 提示: 当前反弹空间扣除0.4%卖出手续费后净利微薄或盈亏比不达标，切忌高频频繁追单！\n";
+    rat += "4. 形态与黄金口袋 (" + std::to_string(res.patternScore) + "/" + std::to_string(wPattern) + "分)："
+           + (cfg.pattern.valid ? cfg.pattern.name : "箱体震荡整理") + "\n";
+    if (crossNudge != 0 || sentNudge != 0) {
+        rat += "5. 跨市场/舆情微调: 跨市场" + std::to_string(crossNudge) + " · 舆情" + std::to_string(sentNudge) + "\n";
     }
+    rat += "\n【挂单执行点位参考】\n";
+    rat += "• 稳健低吸买点: " + fmtPrice(res.conservativeBuy) + "\n";
+    rat += "• 突破顺势买点: " + fmtPrice(res.aggressiveBuy) + "\n";
+    rat += "• 目标止盈一: " + fmtPrice(res.takeProfit1) + "\n";
+    rat += "• 目标止盈二: " + fmtPrice(res.takeProfit2) + "\n";
+    rat += "• 硬防守止损位: " + fmtPrice(res.stopLoss) + "\n\n";
+    rat += "【成本与风控测算】\n";
+    rat += "• 预计卖出手续费: -" + fmtPrice(res.roundTripFee) + "\n";
+    rat += "• 扣费后理论净利润: " + fmtPrice(res.netReward) + "\n";
+    rat += "• 理论盈亏比 (RRR): " + fmtPrice(res.rrr) + ":1\n";
 
     res.rationale = rat;
     return res;

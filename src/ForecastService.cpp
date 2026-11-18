@@ -17,6 +17,64 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 
+namespace {
+double computeDayFrac(const QString& src, const QTime& nowT) {
+    if (src == QStringLiteral("gj") || src == QStringLiteral("xau")) {
+        return nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
+    }
+    const int startM = 9 * 60;
+    const int endM = 23 * 60 + 30;
+    const int nowM = nowT.hour() * 60 + nowT.minute();
+    if (nowM <= startM) return 0.05;
+    if (nowM >= endM) return 0.95;
+    return static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
+}
+
+int eodHorizonSeconds(const QString& src, const QDateTime& now = QDateTime::currentDateTime()) {
+    const QTime endT = (src == QStringLiteral("gj") || src == QStringLiteral("xau"))
+                           ? QTime(23, 55, 0)
+                           : QTime(23, 35, 0);
+    const QDateTime endDt(now.date(), endT);
+    if (endDt <= now) {
+        return 3600;
+    }
+    const qint64 secs = now.secsTo(endDt);
+    return static_cast<int>(qBound<qint64>(3600, secs, 50400));
+}
+
+goldsdk::ForecastContext buildForecastContext(const QString& src,
+                                              double actH,
+                                              double actL,
+                                              double dayFrac) {
+    goldsdk::ForecastContext ctx;
+    ctx.actHigh = actH;
+    ctx.actLow = actL;
+    ctx.dayFraction = dayFrac;
+    auto& db = ExtremeDatabase::instance();
+    ctx.atr = db.computeAtr(10, src);
+    ctx.prevClose = db.previousClose(src);
+    ctx.dailyBars = db.loadRecentDailyBars(45, src);
+    if (ctx.dailyBars.size() >= 10) {
+        ctx.multiDayTrend = goldsdk::ForecastEngine::multiDayTrendFromBars(ctx.dailyBars);
+    } else {
+        std::vector<double> closes;
+        const QDate to = QDate::currentDate();
+        const auto rows = db.loadDailyClosesRange(to.addDays(-90), to, src);
+        closes.reserve(static_cast<size_t>(rows.size()));
+        for (const auto& r : rows) {
+            if (r.second > 0.0) closes.push_back(r.second);
+        }
+        ctx.multiDayTrend = goldsdk::ForecastEngine::multiDayTrend(closes);
+    }
+    ctx.historicalPeakBucketCounts = db.loadHistoricalPeakBucketCounts(60, src);
+    ctx.historicalBucketVarWeights = db.loadHistoricalBucketVarWeights(20, src);
+    ctx.crossMarketLeadSignal = db.computeCrossMarketLeadSignal(src);
+    ctx.sentimentScore = SentimentService::instance().recentMarketImpact(6).decayedScore;
+    ctx.conformalScale = db.computeAdaptiveConformalScale(src, 30);
+    return ctx;
+}
+} // namespace
+
 ForecastService& ForecastService::instance() {
     static ForecastService s_instance;
     return s_instance;
@@ -174,30 +232,19 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
             pts.push_back(ip);
         }
         const QTime nowT = QTime::currentTime();
-        double dayFrac = 0.5;
-        if (src == QStringLiteral("gj") || src == QStringLiteral("xau"))
-            dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
-        else {
-            const int startM = 9 * 60, endM = 23 * 60 + 30;
-            const int nowM = nowT.hour() * 60 + nowT.minute();
-            if (nowM <= startM) dayFrac = 0.05;
-            else if (nowM >= endM) dayFrac = 0.95;
-            else dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
-        }
-        const auto fr = goldsdk::ForecastEngine::dayRange(pts, actH, actL, dayFrac, atr10, prevClose);
+        const double dayFrac = computeDayFrac(src, nowT);
+        goldsdk::ForecastContext fctx = buildForecastContext(src, actH, actL, dayFrac);
+        if (atr10 > 0.0) fctx.atr = atr10;
+        if (prevClose > 0.0) fctx.prevClose = prevClose;
+        const auto fr = goldsdk::ForecastEngine::dayRangeWithContext(pts, fctx);
         QString multi = QStringLiteral("样本不足");
-        {
-            std::vector<double> closes;
-            const QDate to = QDate::currentDate();
-            const auto rows = ExtremeDatabase::instance().loadDailyClosesRange(to.addDays(-90), to, src);
-            for (const auto& r : rows)
-                if (r.second > 0.0) closes.push_back(r.second);
-            const auto trn = goldsdk::ForecastEngine::multiDayTrend(closes);
-            if (trn.valid)
-                multi = QStringLiteral("%1(score=%2,RSI=%3)")
-                            .arg(QString::fromUtf8(trn.label()))
-                            .arg(trn.score, 0, 'f', 2)
-                            .arg(trn.rsi14, 0, 'f', 1);
+        if (fctx.multiDayTrend.valid) {
+            multi = QStringLiteral("%1(score=%2,RSI=%3,ER=%4,状态=%5)")
+                        .arg(QString::fromUtf8(fctx.multiDayTrend.label()))
+                        .arg(fctx.multiDayTrend.score, 0, 'f', 2)
+                        .arg(fctx.multiDayTrend.rsi14, 0, 'f', 1)
+                        .arg(fctx.multiDayTrend.efficiencyRatio, 0, 'f', 2)
+                        .arg(QString::fromUtf8(goldsdk::MultiDayTrend::regimeLabel(fctx.multiDayTrend.regime)));
         }
         if (fr.valid) {
             QString alertNote;
@@ -219,8 +266,9 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
                 "高点时段=%3 (概率约%4%)\n"
                 "低点时段=%5\n"
                 "高点已现概率约%6% 低点已现概率约%7% 剩余上行约%8\n"
-                "情景=%9\n"
-                "多日趋势=%10%11\n"
+                "量化指标: HAR-RV预期振幅=%9 | 卡尔曼速度Z=%10 | 跨市场领先信号=%11 | 共形校准=%12\n"
+                "情景=%13\n"
+                "多日趋势=%14%15\n"
                 "请在本地预测基准上微调，切勿大幅脱离事实。")
                 .arg(fr.predHigh, 0, 'f', 2)
                 .arg(fr.predLow, 0, 'f', 2)
@@ -230,6 +278,10 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
                 .arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0)
                 .arg(fr.lowAlreadyInProb * 100.0, 0, 'f', 0)
                 .arg(fr.remainingUpside, 0, 'f', 2)
+                .arg(fr.harExpectedRange, 0, 'f', 2)
+                .arg(fr.kalmanVelocityZ, 0, 'f', 2)
+                .arg(fctx.crossMarketLeadSignal, 0, 'f', 2)
+                .arg(fctx.conformalScale, 0, 'f', 2)
                 .arg(QString::fromStdString(fr.scenario), multi, alertNote);
         }
     }
@@ -682,43 +734,29 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
     m_lastResult.confidence = conf;
     // LLM 路径补充本地概率/多日（若可算）
     {
-        std::vector<double> closes;
-        const QDate to = QDate::currentDate();
-        const auto rows = ExtremeDatabase::instance().loadDailyClosesRange(
-            to.addDays(-90), to, m_currentSource);
-        for (const auto& r : rows)
-            if (r.second > 0.0) closes.push_back(r.second);
-        const auto trend = goldsdk::ForecastEngine::multiDayTrend(closes);
+        const QTime nowT = QTime::currentTime();
+        const double dayFrac = computeDayFrac(m_currentSource, nowT);
+        const auto fctx = buildForecastContext(m_currentSource, actH, actL, dayFrac);
+        const auto& trend = fctx.multiDayTrend;
         if (trend.valid)
             m_lastResult.multiDayBias = QString::fromUtf8(trend.label());
         else
             m_lastResult.multiDayBias.clear();
-        // 概率类仍以本地引擎为准（若有上次本地结果则保留；否则保持 0）
+
+        const auto ptsSamples = ExtremeDatabase::instance().loadIntradaySamples(
+            QDate::currentDate(), m_currentSource);
+        std::vector<goldsdk::IntradayPoint> pts;
+        pts.reserve(static_cast<size_t>(ptsSamples.size()));
+        for (const auto& pt : ptsSamples) {
+            goldsdk::IntradayPoint ip;
+            ip.epochMs = pt.first.toMSecsSinceEpoch();
+            ip.price = pt.second;
+            pts.push_back(ip);
+        }
+
+        // 概率类仍以本地引擎为准（若有上次本地结果则保留；否则基于完整上下文计算）
         if (m_lastResult.peakWindowProb <= 0.0) {
-            // 轻量再算一次本地概率供卡片展示
-            const auto ptsSamples = ExtremeDatabase::instance().loadIntradaySamples(
-                QDate::currentDate(), m_currentSource);
-            std::vector<goldsdk::IntradayPoint> pts;
-            for (const auto& pt : ptsSamples) {
-                goldsdk::IntradayPoint ip;
-                ip.epochMs = pt.first.toMSecsSinceEpoch();
-                ip.price = pt.second;
-                pts.push_back(ip);
-            }
-            const QTime nowT = QTime::currentTime();
-            double dayFrac = 0.5;
-            if (m_currentSource == QStringLiteral("gj") || m_currentSource == QStringLiteral("xau"))
-                dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
-            else {
-                const int startM = 9 * 60, endM = 23 * 60 + 30;
-                const int nowM = nowT.hour() * 60 + nowT.minute();
-                if (nowM <= startM) dayFrac = 0.05;
-                else if (nowM >= endM) dayFrac = 0.95;
-                else dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
-            }
-            const double atr = ExtremeDatabase::instance().computeAtr(10, m_currentSource);
-            const double prev = ExtremeDatabase::instance().previousClose(m_currentSource);
-            const auto fr = goldsdk::ForecastEngine::dayRange(pts, actH, actL, dayFrac, atr, prev);
+            const auto fr = goldsdk::ForecastEngine::dayRangeWithContext(pts, fctx);
             if (fr.valid) {
                 m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
                 m_lastResult.lowAlreadyInProb = fr.lowAlreadyInProb;
@@ -737,29 +775,20 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
                     m_lastResult.predHighTimeWindow = QString::fromStdString(fr.predHighTimeWindow);
                 } else if (predHigh < actH) {
                     // 若 LLM 预测高点低于当前日内真实最高价，顺势抬升至真实最高价之上，杜绝违背客观事实
-                    predHigh = actH + qMax(0.15, atr * 0.1);
+                    predHigh = actH + qMax(0.15, fctx.atr * 0.1);
                     m_lastResult.predHigh = predHigh;
                 }
             }
         }
 
         // 形态识别
-        const auto ptsSamples = ExtremeDatabase::instance().loadIntradaySamples(
-            QDate::currentDate(), m_currentSource);
-        std::vector<goldsdk::IntradayPoint> pts;
-        for (const auto& pt : ptsSamples) {
-            goldsdk::IntradayPoint ip;
-            ip.epochMs = pt.first.toMSecsSinceEpoch();
-            ip.price = pt.second;
-            pts.push_back(ip);
-        }
         goldsdk::PatternConfig pcfg;
         pcfg.feeRate = (m_currentSource == QStringLiteral("gj") || m_currentSource == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
         pcfg.highAlreadyInProb = m_lastResult.highAlreadyInProb;
         pcfg.lowAlreadyInProb = m_lastResult.lowAlreadyInProb;
         pcfg.predHigh = m_lastResult.predHigh;
         pcfg.predLow = m_lastResult.predLow;
-        pcfg.atr = ExtremeDatabase::instance().computeAtr(10, m_currentSource);
+        pcfg.atr = fctx.atr;
         pcfg.multiDayBias = trend.valid ? trend.bias : goldsdk::TrendBias::Range;
         const auto pat = goldsdk::ForecastEngine::identifyPattern(pts, pcfg);
         if (pat.valid) {
@@ -796,6 +825,7 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
     }
 
     // 存库与统计
+    const int horizonSec = eodHorizonSeconds(m_currentSource, m_lastResult.timestamp);
     ExtremeDatabase::instance().insertForecastLog(
         m_lastResult.timestamp, m_currentSource, m_lastResult.modeTag,
         m_lastResult.predHigh, m_lastResult.predLow,
@@ -803,10 +833,11 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
         m_lastResult.brief,
         m_lastResult.predHighTimeWindow,
         m_lastResult.predLowTimeWindow,
-        m_lastResult.keyCatalyst);
+        m_lastResult.keyCatalyst,
+        horizonSec);
 
     ForecastTracker::instance().recordDayRange(
-        m_lastResult.timestamp, 3600, m_lastResult.predHigh, m_lastResult.predLow, m_lastResult.modeTag);
+        m_lastResult.timestamp, horizonSec, m_lastResult.predHigh, m_lastResult.predLow, m_lastResult.modeTag);
 
     Logger::info(QStringLiteral("ForecastService: LLM forecast success! high=%1 (%2) low=%3 (%4) catalyst=%5")
                      .arg(predHigh, 0, 'f', 2).arg(m_lastResult.predHighTimeWindow)
@@ -842,22 +873,10 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     if (actL <= 0.0) actL = curPrice;
 
     const QTime nowT = QTime::currentTime();
-    double dayFrac = 0.5;
-    if (src == QStringLiteral("gj") || src == QStringLiteral("xau")) {
-        dayFrac = nowT.msecsSinceStartOfDay() / (24.0 * 3600.0 * 1000.0);
-    } else {
-        const int startM = 9 * 60;
-        const int endM = 23 * 60 + 30;
-        const int nowM = nowT.hour() * 60 + nowT.minute();
-        if (nowM <= startM) dayFrac = 0.05;
-        else if (nowM >= endM) dayFrac = 0.95;
-        else dayFrac = static_cast<double>(nowM - startM) / static_cast<double>(endM - startM);
-    }
-
-    const double atr = ExtremeDatabase::instance().computeAtr(10, src);
-    const double prevClose = ExtremeDatabase::instance().previousClose(src);
-
-    const auto fr = goldsdk::ForecastEngine::dayRange(pts, actH, actL, dayFrac, atr, prevClose);
+    const double dayFrac = computeDayFrac(src, nowT);
+    const auto fctx = buildForecastContext(src, actH, actL, dayFrac);
+    const double atr = fctx.atr;
+    const auto fr = goldsdk::ForecastEngine::dayRangeWithContext(pts, fctx);
     if (!fr.valid) {
         Logger::warn(QStringLiteral("ForecastService: local forecastEngine returned invalid"));
         emit forecastFailed(tr("分时数据不足"));
@@ -872,37 +891,34 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
     m_lastResult.scenario = QString::fromStdString(fr.scenario);
     m_lastResult.keyCatalyst = QString::fromStdString(fr.keyCatalyst);
 
-    // 多日趋势过滤（利于正收益：非多头时不强调冲高）
+    // 多日趋势过滤（复用 buildForecastContext 中的 OHLC 趋势与市场状态）
     QString multiBias = tr("震荡");
     bool allowLong = true;
-    goldsdk::MultiDayTrend trend;
-    {
-        std::vector<double> closes;
-        const QDate to = QDate::currentDate();
-        const auto rows = ExtremeDatabase::instance().loadDailyClosesRange(
-            to.addDays(-90), to, src);
-        closes.reserve(static_cast<size_t>(rows.size()));
-        for (const auto& r : rows) {
-            if (r.second > 0.0)
-                closes.push_back(r.second);
-        }
-        trend = goldsdk::ForecastEngine::multiDayTrend(closes);
-        if (trend.valid) {
-            multiBias = QString::fromUtf8(trend.label());
-            allowLong = trend.allowLongBias();
-            if (!allowLong) {
-                m_lastResult.scenario = tr("多日%1·不追高，以观望或保护利润为主；%2")
-                                            .arg(multiBias, m_lastResult.scenario);
-            } else {
-                m_lastResult.scenario = tr("多日%1·可顺势关注高点窗口；%2")
-                                            .arg(multiBias, m_lastResult.scenario);
-            }
+    const goldsdk::MultiDayTrend& trend = fctx.multiDayTrend;
+    if (trend.valid) {
+        multiBias = QString::fromUtf8(trend.label());
+        allowLong = trend.allowLongBias();
+        const QString regimeTag = QString::fromUtf8(goldsdk::MultiDayTrend::regimeLabel(trend.regime));
+        if (!allowLong) {
+            m_lastResult.scenario = tr("多日%1[%2]·不追高，以观望或保护利润为主；%3")
+                                        .arg(multiBias, regimeTag, m_lastResult.scenario);
+        } else {
+            m_lastResult.scenario = tr("多日%1[%2]·可顺势关注高点窗口；%3")
+                                        .arg(multiBias, regimeTag, m_lastResult.scenario);
         }
     }
 
     m_lastResult.bias = allowLong
                             ? ((fr.predHigh - actH > actL - fr.predLow) ? tr("偏多") : tr("震荡"))
                             : tr("偏空");
+    m_lastResult.confidence = fr.confidence > 0.0 ? fr.confidence : 0.65;
+    m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
+    m_lastResult.lowAlreadyInProb = fr.lowAlreadyInProb;
+    m_lastResult.remainingUpside = fr.remainingUpside;
+    m_lastResult.peakWindowProb = fr.peakWindowProb;
+    m_lastResult.multiDayBias = multiBias;
+    m_lastResult.modeTag = tag;
+    m_lastResult.timestamp = QDateTime::currentDateTime();
 
     const auto impact = SentimentService::instance().recentMarketImpact(6);
     if (impact.hasImpact) {
@@ -922,16 +938,7 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
             m_lastResult.highAlreadyInProb = qMax(m_lastResult.highAlreadyInProb, 0.70);
         }
     }
-
     m_lastResult.brief = m_lastResult.scenario;
-    m_lastResult.confidence = fr.confidence > 0.0 ? fr.confidence : 0.65;
-    m_lastResult.highAlreadyInProb = fr.highAlreadyInProb;
-    m_lastResult.lowAlreadyInProb = fr.lowAlreadyInProb;
-    m_lastResult.remainingUpside = fr.remainingUpside;
-    m_lastResult.peakWindowProb = fr.peakWindowProb;
-    m_lastResult.multiDayBias = multiBias;
-    m_lastResult.modeTag = tag;
-    m_lastResult.timestamp = QDateTime::currentDateTime();
 
     goldsdk::PatternConfig pcfg;
     pcfg.feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
@@ -957,6 +964,7 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
         m_lastResult.patternTrailingStop = pat.atrTrailingStop;
     }
 
+    const int horizonSec = eodHorizonSeconds(src, m_lastResult.timestamp);
     ExtremeDatabase::instance().insertForecastLog(
         m_lastResult.timestamp, src, m_lastResult.modeTag,
         m_lastResult.predHigh, m_lastResult.predLow,
@@ -964,10 +972,11 @@ void ForecastService::fallbackLocal(const QString& source, const QString& tag) {
         m_lastResult.brief,
         m_lastResult.predHighTimeWindow,
         m_lastResult.predLowTimeWindow,
-        m_lastResult.keyCatalyst);
+        m_lastResult.keyCatalyst,
+        horizonSec);
 
     ForecastTracker::instance().recordDayRange(
-        m_lastResult.timestamp, 3600, m_lastResult.predHigh, m_lastResult.predLow, m_lastResult.modeTag);
+        m_lastResult.timestamp, horizonSec, m_lastResult.predHigh, m_lastResult.predLow, m_lastResult.modeTag);
 
     Logger::info(QStringLiteral("ForecastService: local forecast ready high=%1 (%2) low=%3 (%4)")
                      .arg(fr.predHigh, 0, 'f', 2).arg(m_lastResult.predHighTimeWindow)

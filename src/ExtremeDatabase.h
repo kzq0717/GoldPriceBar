@@ -7,6 +7,8 @@
 #include <QString>
 #include <QVector>
 #include <QPair>
+#include <vector>
+#include "goldsdk/types.hpp"
 
 /**
  * SQLite 行情与建模数据
@@ -106,8 +108,26 @@ public:
     /** USD/oz → 约元/克：cny_per_g = usd_oz * usdCny / 31.1034768 */
     static double usdOzToCnyG(double usdPerOz, double usdCny);
 
-    /** 计算近 N 日真实波幅均值（ATR），不含当日 */
+    /** 计算近 N 日真实波幅均值（Wilder ATR），不含当日 */
     double computeAtr(int days = 10, const QString& source = QString()) const;
+
+    /** 加载最近 N 日完整 OHLC 日线（旧→新，不含当日），供 HAR-RV / Garman-Klass 使用 */
+    std::vector<goldsdk::DailyBar> loadRecentDailyBars(int maxDays = 40,
+                                                       const QString& source = QString()) const;
+
+    /** 统计近 N 日历史日高点落入 48 个半小时 CST 时间桶的频次 */
+    std::vector<int> loadHistoricalPeakBucketCounts(int lookbackDays = 60,
+                                                    const QString& source = QString()) const;
+
+    /** 统计近 N 日 48 个半小时 CST 时间桶的已实现方差分布占比 */
+    std::vector<double> loadHistoricalBucketVarWeights(int lookbackDays = 20,
+                                                       const QString& source = QString()) const;
+
+    /** 基于 secondary_quotes 计算跨市场内外盘领先信号 Z-Score（正值表示外盘强于内盘） */
+    double computeCrossMarketLeadSignal(const QString& primarySource = QString()) const;
+
+    /** 基于历史已结算预测残差计算自适应共形区间校准因子 */
+    double computeAdaptiveConformalScale(const QString& source = QString(), int limit = 30) const;
 
     /** 查询前一交易日收盘价 */
     double previousClose(const QString& source = QString()) const;
@@ -127,7 +147,8 @@ public:
                              double basePrice, const QString& brief = QString(),
                              const QString& predHighTime = QString(),
                              const QString& predLowTime = QString(),
-                             const QString& catalyst = QString());
+                             const QString& catalyst = QString(),
+                             int horizonSec = 3600);
 
     /** 当日预测记录（按时间升序，最新在末尾） */
     QVector<ForecastLogEntry> loadForecastLogsForDay(const QDate& day,

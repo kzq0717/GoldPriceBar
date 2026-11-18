@@ -12,6 +12,7 @@
 #include <QNetworkProxy>
 #include "AppSettings.h"
 #include <algorithm>
+#include <cmath>
 
 SentimentService& SentimentService::instance()
 {
@@ -61,14 +62,15 @@ void SentimentService::onSettingsChanged()
 int SentimentService::scoreText(const QString& text)
 {
     const QString t = text;
-    // 重大利多关键词 (+3)
+    if (t.isEmpty())
+        return 0;
+
     static const QStringList heavyBull = {
         QStringLiteral("暴涨"), QStringLiteral("大幅降息"), QStringLiteral("超预期降息"),
         QStringLiteral("央行购金"), QStringLiteral("避险飙升"), QStringLiteral("地缘局势升级"),
         QStringLiteral("地缘冲突"), QStringLiteral("中东局势紧张"), QStringLiteral("创历史新高"),
         QStringLiteral("多头大爆发"), QStringLiteral("避险情绪升温"), QStringLiteral("避险买盘激增")
     };
-    // 常规利多关键词 (+1)
     static const QStringList bull = {
         QStringLiteral("上涨"), QStringLiteral("走强"), QStringLiteral("突破"),
         QStringLiteral("新高"), QStringLiteral("利多"), QStringLiteral("避险买盘"),
@@ -77,7 +79,6 @@ int SentimentService::scoreText(const QString& text)
         QStringLiteral("反弹"), QStringLiteral("多头"),
         QStringLiteral("rally"), QStringLiteral("surge"), QStringLiteral("bullish"),
     };
-    // 重大利空关键词 (-3)
     static const QStringList heavyBear = {
         QStringLiteral("暴跌"), QStringLiteral("大幅加息"), QStringLiteral("非农强劲"),
         QStringLiteral("非农大超预期"), QStringLiteral("央行抛售"), QStringLiteral("地缘和解"),
@@ -87,7 +88,6 @@ int SentimentService::scoreText(const QString& text)
         QStringLiteral("跳水重挫"), QStringLiteral("单边下挫"), QStringLiteral("大幅收跌"),
         QStringLiteral("断崖式下跌"), QStringLiteral("大跌创")
     };
-    // 常规利空关键词 (-1)
     static const QStringList bear = {
         QStringLiteral("下跌"), QStringLiteral("走弱"), QStringLiteral("回落"),
         QStringLiteral("新低"), QStringLiteral("利空"), QStringLiteral("加息"),
@@ -96,20 +96,55 @@ int SentimentService::scoreText(const QString& text)
         QStringLiteral("空头"), QStringLiteral("跳水"), QStringLiteral("回调"),
         QStringLiteral("slump"), QStringLiteral("drop"), QStringLiteral("bearish"),
     };
+    static const QStringList negations = {
+        QStringLiteral("不会"), QStringLiteral("不再"), QStringLiteral("并非"),
+        QStringLiteral("否认"), QStringLiteral("排除"), QStringLiteral("难以"),
+        QStringLiteral("未见"), QStringLiteral("未能"), QStringLiteral("暂停"),
+        QStringLiteral("取消"), QStringLiteral("不"), QStringLiteral("未"),
+        QStringLiteral("not "), QStringLiteral("no "), QStringLiteral("unlikely"),
+        QStringLiteral("ruled out"), QStringLiteral("without")
+    };
+
+    const int tLen = static_cast<int>(t.size());
+    QVector<bool> used(tLen, false);
+    auto matchList = [&](const QStringList& list, int weight) -> int {
+        int acc = 0;
+        for (const auto& w : list) {
+            const int idx = static_cast<int>(t.indexOf(w, 0, Qt::CaseInsensitive));
+            if (idx < 0)
+                continue;
+            const int wLen = static_cast<int>(w.size());
+            const int endIdx = qMin(tLen, idx + wLen);
+            bool overlap = false;
+            for (int k = idx; k < endIdx; ++k) {
+                if (used[k]) { overlap = true; break; }
+            }
+            if (overlap)
+                continue;
+            for (int k = idx; k < endIdx; ++k)
+                used[k] = true;
+
+            // 前向否定词检测窗口（前 10 个字符）：防止“不会大幅加息”被误判为重大利空
+            const int winStart = qMax(0, idx - 10);
+            const QString prefix = t.mid(winStart, idx - winStart);
+            bool negated = false;
+            for (const auto& neg : negations) {
+                if (prefix.contains(neg, Qt::CaseInsensitive)) {
+                    negated = true;
+                    break;
+                }
+            }
+            acc += negated ? (-weight / 2 != 0 ? -weight / 2 : -weight) : weight;
+        }
+        return acc;
+    };
 
     int score = 0;
-    for (const auto& w : heavyBull) {
-        if (t.contains(w, Qt::CaseInsensitive)) score += 3;
-    }
-    for (const auto& w : bull) {
-        if (t.contains(w, Qt::CaseInsensitive)) score += 1;
-    }
-    for (const auto& w : heavyBear) {
-        if (t.contains(w, Qt::CaseInsensitive)) score -= 3;
-    }
-    for (const auto& w : bear) {
-        if (t.contains(w, Qt::CaseInsensitive)) score -= 1;
-    }
+    // 先匹配长短语（heavy），再匹配常规短词，防止“大幅降息”叠加“降息”重复计分
+    score += matchList(heavyBull, 3);
+    score += matchList(heavyBear, -3);
+    score += matchList(bull, 1);
+    score += matchList(bear, -1);
     return score;
 }
 
@@ -131,44 +166,54 @@ SentimentImpact SentimentService::recentMarketImpact(int maxAgeHours) const
 
     const QDateTime now = QDateTime::currentDateTime();
     int netScore = 0;
-    int topAbsScore = 0;
+    double decayedScore = 0.0;
+    double topWeightedAbs = 0.0;
     SentimentItem topItem;
 
+    // 指数时间衰减（半衰期 2.5 小时）：最新快讯权重显著高于数小时前旧闻
+    constexpr double kHalfLifeHours = 2.5;
     for (const auto& it : m_items) {
-        if (it.published.isValid() && it.published.secsTo(now) > maxAgeHours * 3600)
-            continue;
+        double ageHours = 0.5;
+        if (it.published.isValid()) {
+            const qint64 secs = it.published.secsTo(now);
+            if (secs > maxAgeHours * 3600)
+                continue;
+            ageHours = qMax(0.0, static_cast<double>(secs) / 3600.0);
+        }
+        const double w = std::pow(0.5, ageHours / kHalfLifeHours);
         netScore += it.score;
-        if (qAbs(it.score) > topAbsScore) {
-            topAbsScore = qAbs(it.score);
+        decayedScore += static_cast<double>(it.score) * w;
+        const double wAbs = qAbs(static_cast<double>(it.score)) * w;
+        if (wAbs > topWeightedAbs) {
+            topWeightedAbs = wAbs;
             topItem = it;
         }
     }
 
-    // 若按时间过滤为空，兜底取前3条
-    if (topAbsScore == 0 && !m_items.isEmpty()) {
+    if (topWeightedAbs <= 1e-6 && !m_items.isEmpty()) {
         const int checkCount = qMin(3, m_items.size());
         for (int i = 0; i < checkCount; ++i) {
             const auto& it = m_items.at(i);
             netScore += it.score;
-            if (qAbs(it.score) > topAbsScore) {
-                topAbsScore = qAbs(it.score);
+            decayedScore += static_cast<double>(it.score) * 0.35;
+            if (qAbs(it.score) > topWeightedAbs) {
+                topWeightedAbs = qAbs(it.score);
                 topItem = it;
             }
         }
     }
 
     res.netScore = netScore;
-    // 关键修正：必须根据净得分与最强单项的真实正负符号（而非绝对值）判断利多还是利空！
-    // 严禁使用 topAbsScore >= 2 判定利多，否则大跌/暴跌（score=-3）会被绝对值(3>=2)严重误判为“利多驱动”！
-    const int effectiveDir = (qAbs(netScore) >= 2) ? netScore : topItem.score;
-    if (effectiveDir >= 2 || netScore >= 2) {
+    res.decayedScore = decayedScore;
+    const double effectiveDir = (std::abs(decayedScore) >= 1.5) ? decayedScore : static_cast<double>(topItem.score);
+    if (effectiveDir >= 1.8 || decayedScore >= 1.8) {
         res.hasImpact = true;
         res.bias = QStringLiteral("bullish");
         res.topTitle = topItem.title.isEmpty() ? tr("多项消息面偏向利多") : topItem.title;
         res.topSource = topItem.source;
         res.topTime = topItem.published;
         res.summary = QStringLiteral("【利多消息驱动】%1").arg(res.topTitle);
-    } else if (effectiveDir <= -2 || netScore <= -2) {
+    } else if (effectiveDir <= -1.8 || decayedScore <= -1.8) {
         res.hasImpact = true;
         res.bias = QStringLiteral("bearish");
         res.topTitle = topItem.title.isEmpty() ? tr("多项消息面偏向利空") : topItem.title;
