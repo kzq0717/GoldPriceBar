@@ -1,0 +1,68 @@
+{
+  "version": "1.0",
+  "agents": [
+    {
+      "agent_id": "cpp_daily_master",
+      "name": "C++ 30天核心知识阶梯推送",
+      "agent_type": "curriculum",
+      "schedule_rule": "10:00",
+      "enabled": true,
+      "created_at": "2026-10-28T10:38:57.551828",
+      "last_run": "2026-10-28 10:40:05",
+      "next_run": "2026-10-29 10:00:00",
+      "config": {
+        "curriculum_file": "data/cpp_30days_curriculum.json",
+        "current_day": 1,
+        "repeat_when_finished": false,
+        "channels": [
+          "toast",
+          "markdown",
+          "log"
+        ],
+        "webhook_url": ""
+      }
+    },
+    {
+      "agent_id": "drink_water",
+      "name": "健康喝水提醒",
+      "agent_type": "custom_task",
+      "schedule_rule": "interval@1h",
+      "enabled": true,
+      "created_at": "2026-10-28T10:40:44.461723",
+      "last_run": null,
+      "next_run": "2026-10-28 11:40:44",
+      "config": {
+        "task_mode": "reminder",
+        "message": "工作忙碌之余，记得喝一杯温水，活动活动肩颈！",
+        "channels": [
+          "toast",
+          "log"
+        ],
+        "command": "",
+        "api_url": "",
+        "webhook_url": ""
+      }
+    },
+    {
+      "agent_id": "git_status_check",
+      "name": "代码仓库变更监控",
+      "agent_type": "custom_task",
+      "schedule_rule": "18:00",
+      "enabled": true,
+      "created_at": "2026-10-28T10:44:42.595632",
+      "last_run": "2026-10-28 10:45:12",
+      "next_run": "2026-10-28 18:00:00",
+      "config": {
+        "task_mode": "command",
+        "command": "git status",
+        "channels": [
+          "toast",
+          "log"
+        ],
+        "message": "提醒：自动化任务执行完毕",
+        "api_url": "",
+        "webhook_url": ""
+      }
+    }
+  ]
+}

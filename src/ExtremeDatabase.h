@@ -36,6 +36,22 @@ struct ForecastLogEntry {
     QString catalyst;
 };
 
+struct SimulatedTradeEntry {
+    qint64 id = 0;
+    QDateTime tradeTime;
+    QString source;
+    QString action;       // "BUY" 或 "SELL"
+    QString decisionTag;  // e.g. "🟢 企稳反弹·分批建仓", "🎯 冲高受阻·分批止盈"
+    double price = 0.0;
+    double grams = 0.0;
+    double amount = 0.0;
+    double fee = 0.0;
+    double realizedPnl = 0.0;
+    double remainingGrams = 0.0;
+    double remainingCost = 0.0;
+    QString note;
+};
+
 class ExtremeDatabase : public QObject
 {
     Q_OBJECT
@@ -65,6 +81,9 @@ public:
                     double& outHigh, double& outLow, int& outDays) const;
 
     bool insertIntradaySample(const QDateTime& ts, const QString& source, double price);
+
+    bool backfillIntradaySamplesFromChart(const QDate& tradeDate, const QString& source,
+                                          const QVector<QPair<qint64, double>>& points);
 
     QVector<QPair<QDateTime, double>> loadIntradaySamples(const QDate& day,
                                                           const QString& source) const;
@@ -131,6 +150,20 @@ public:
     /** 建模：时段状态变化（可选节流） */
     bool insertSessionMark(const QDateTime& ts, const QString& source,
                            bool isOpen, const QString& status);
+
+
+    /** 模拟交易：记录买入/卖出明细 */
+    bool insertSimulatedTrade(const SimulatedTradeEntry& entry);
+
+    /** 模拟交易：查询记录（按时间倒序） */
+    QVector<SimulatedTradeEntry> loadSimulatedTrades(int limit = 100,
+                                                     const QString& source = QString()) const;
+
+    /** 模拟交易：累计已实现平仓盈亏 */
+    double totalRealizedPnl(const QString& source = QString()) const;
+
+    /** 模拟交易：清空历史记录 */
+    bool clearSimulatedTrades();
 
 private:
     explicit ExtremeDatabase(QObject* parent = nullptr);

@@ -12,5 +12,11 @@
             <file alias="qml/PriceBar.qml">../qml/PriceBar.qml</file>
             <file alias="qml/SentimentWindow.qml">../qml/SentimentWindow.qml</file>
             <file alias="qml/SettingsWindow.qml">../qml/SettingsWindow.qml</file>
+            <file alias="qml/AgentWindow.qml">../qml/AgentWindow.qml</file>
+            <file alias="qml/AgentNotificationCard.qml">../qml/AgentNotificationCard.qml</file>
+            <file alias="qml/AgentAiChatWindow.qml">../qml/AgentAiChatWindow.qml</file>
+            <file alias="qml/SimulatedTradesWindow.qml">../qml/SimulatedTradesWindow.qml</file>
+            <file alias="data/cpp_30days_curriculum.json">../data/cpp_30days_curriculum.json</file>
+            <file alias="data/rust_30days_curriculum.json">../data/rust_30days_curriculum.json</file>
     </qresource>
 </RCC>

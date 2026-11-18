@@ -12,8 +12,11 @@
 #include "Logger.h"
 #include "goldsdk/forecast.hpp"
 #include "ForecastService.h"
+#include "AgentService.h"
+#include "AgentAiService.h"
 
 #include <QDesktopServices>
+#include <QClipboard>
 #include <QMessageBox>
 #include <QUrl>
 #include <QMenu>
@@ -30,6 +33,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QElapsedTimer>
 #include <QQuickWindow>
 
 QmlBridge::QmlBridge(PriceService *priceService, QObject *parent)
@@ -99,6 +103,24 @@ QmlBridge::QmlBridge(PriceService *priceService, QObject *parent)
         checkEventAlerts();
         ForecastService::instance().requestForecast();
     });
+
+    // 初始化自动化 Agent 引擎
+    AgentService::instance().init();
+    connect(&AgentService::instance(), &AgentService::agentTriggered, this, [this](const QVariantMap &notification) {
+        emit agentNotificationTriggered(notification);
+        openAgentCardWindow();
+        if (m_tray && m_tray->isVisible()) {
+            m_tray->showMessage(notification.value("title").toString(),
+                                notification.value("summary").toString(),
+                                QSystemTrayIcon::Information, 6000);
+        }
+    });
+    connect(&AgentService::instance(), &AgentService::tasksUpdated, this, &QmlBridge::agentTasksUpdated);
+
+    // AI 知识问答与延伸服务信号中继（确保 QML 聊天窗口能实时接收问答进度与模型响应）
+    connect(&AgentAiService::instance(), &AgentAiService::answerStarted, this, &QmlBridge::aiAnswerStarted);
+    connect(&AgentAiService::instance(), &AgentAiService::answerFinished, this, &QmlBridge::aiAnswerReceived);
+    connect(&AgentAiService::instance(), &AgentAiService::answerFailed, this, &QmlBridge::aiAnswerFailed);
 }
 
 QmlBridge::~QmlBridge() {
@@ -106,8 +128,13 @@ QmlBridge::~QmlBridge() {
         m_checkTimer->stop();
     }
     if (m_secondaryReply) {
-        m_secondaryReply->abort();
-        m_secondaryReply->deleteLater();
+        QNetworkReply *old = m_secondaryReply.data();
+        m_secondaryReply.clear();
+        if (old) {
+            QObject::disconnect(old, nullptr, nullptr, nullptr);
+            old->abort();
+            old->deleteLater();
+        }
     }
     if (m_chartWindow) {
         delete m_chartWindow;
@@ -142,11 +169,21 @@ void QmlBridge::setupTray() {
     auto *actChart = menu->addAction(tr("分时走势图"));
     connect(actChart, &QAction::triggered, this, &QmlBridge::openChartWindow);
 
-    auto *actDaily = menu->addAction(tr("今日收盘摘要"));
+    auto *actSimTrade = menu->addAction(tr("📊 模拟交易明细与记录"));
+    connect(actSimTrade, &QAction::triggered, this, &QmlBridge::openSimulatedTradesWindow);
+        auto *actDaily = menu->addAction(tr("今日收盘摘要"));
     connect(actDaily, &QAction::triggered, this, &QmlBridge::showDailyReportDialog);
 
     auto *actDca = menu->addAction(tr("今日已定投（打卡）"));
     connect(actDca, &QAction::triggered, this, &QmlBridge::markDcaExecutedToday);
+
+    auto *actAgent = menu->addAction(tr("🤖 自动化 Agent 任务中心"));
+    connect(actAgent, &QAction::triggered, this, &QmlBridge::openAgentWindow);
+
+    auto *actAiChat = menu->addAction(tr("🤖 AI 知识问答与延伸"));
+    connect(actAiChat, &QAction::triggered, this, [this]() {
+        openAgentChatWindow();
+    });
 
     auto *actSettings = menu->addAction(tr("设置"));
     connect(actSettings, &QAction::triggered, this, &QmlBridge::openSettingsWindow);
@@ -212,6 +249,11 @@ void QmlBridge::onPriceUpdated(double price, double change, const QString &sourc
     }
 
     emit priceChanged();
+
+    // 保持伦敦金（对照价）与积存金刷新时间严格同步
+    if (AppSettings::instance().showSecondaryPrice() || (m_chartWindow && m_chartWindow->isVisible())) {
+        onSecondaryTimer();
+    }
 }
 
 void QmlBridge::onFetchFailed(const QString &error) {
@@ -319,6 +361,23 @@ void QmlBridge::openSentimentWindow() {
     }
 }
 
+void QmlBridge::closeSentimentWindow() {
+    Logger::info(QStringLiteral("QmlBridge::closeSentimentWindow called"));
+    if (m_sentimentWindow) {
+        m_sentimentWindow->setVisible(false);
+    }
+    emit requestCloseSentiment();
+}
+
+void QmlBridge::toggleSentimentWindow() {
+    Logger::info(QStringLiteral("QmlBridge::toggleSentimentWindow called"));
+    if (m_sentimentWindow && m_sentimentWindow->isVisible()) {
+        closeSentimentWindow();
+        return;
+    }
+    openSentimentWindow();
+}
+
 void QmlBridge::openSettingsWindow() {
     Logger::info(QStringLiteral("QmlBridge::openSettingsWindow called (QML SettingsWindow)"));
     if (m_settingsWindow) {
@@ -328,6 +387,23 @@ void QmlBridge::openSettingsWindow() {
         m_settingsWindow->requestActivate();
     }
     emit requestShowSettings();
+}
+
+void QmlBridge::closeSettingsWindow() {
+    Logger::info(QStringLiteral("QmlBridge::closeSettingsWindow called"));
+    if (m_settingsWindow) {
+        m_settingsWindow->setVisible(false);
+    }
+    emit requestCloseSettings();
+}
+
+void QmlBridge::toggleSettingsWindow() {
+    Logger::info(QStringLiteral("QmlBridge::toggleSettingsWindow called"));
+    if (m_settingsWindow && m_settingsWindow->isVisible()) {
+        closeSettingsWindow();
+        return;
+    }
+    openSettingsWindow();
 }
 
 void QmlBridge::onSettingsDialogAccepted() {
@@ -370,6 +446,22 @@ void QmlBridge::openChartWindow() {
     if (m_priceService && m_priceService->hasValidPrice()) {
         m_chartWindow->onNewPrice(m_priceService->lastPrice(), m_priceService->lastChange(), m_priceService->lastSourceName());
     }
+}
+
+void QmlBridge::closeChartWindow() {
+    Logger::info(QStringLiteral("QmlBridge::closeChartWindow called"));
+    if (m_chartWindow) {
+        m_chartWindow->hide();
+    }
+}
+
+void QmlBridge::toggleChartWindow() {
+    Logger::info(QStringLiteral("QmlBridge::toggleChartWindow called"));
+    if (m_chartWindow && m_chartWindow->isVisible()) {
+        closeChartWindow();
+        return;
+    }
+    openChartWindow();
 }
 
 void QmlBridge::openUrl(const QString &url) {
@@ -525,6 +617,8 @@ QVariantMap QmlBridge::getAllSettings() const {
     // 持仓与报告
     m["positionGrams"] = s.positionGrams();
     m["positionCost"] = s.positionCost();
+    m["autoSimulateTrading"] = s.autoSimulateTrading();
+    m["simulateTradeBatchGrams"] = s.simulateTradeBatchGrams();
     m["dailyReportEnabled"] = s.dailyReportEnabled();
     m["dailyReportTime"] = s.dailyReportTime().toString(QStringLiteral("HH:mm"));
     m["dcaDayOfMonth"] = s.dcaDayOfMonth();
@@ -583,6 +677,12 @@ void QmlBridge::saveAllSettings(const QVariantMap &m) {
 
     if (m.contains("positionGrams")) s.setPositionGrams(m.value("positionGrams").toDouble());
     if (m.contains("positionCost")) s.setPositionCost(m.value("positionCost").toDouble());
+    if (m.contains("autoSimulateTrading")) s.setAutoSimulateTrading(m.value("autoSimulateTrading").toBool());
+    if (m.contains("simulateTradeBatchGrams")) s.setSimulateTradeBatchGrams(m.value("simulateTradeBatchGrams").toDouble());
+    if (m.contains("positionGrams") || m.contains("positionCost")) {
+        updatePnL(m_price);
+        emit positionChanged();
+    }
     if (m.contains("dailyReportEnabled")) s.setDailyReportEnabled(m.value("dailyReportEnabled").toBool());
     if (m.contains("dailyReportTime")) s.setDailyReportTime(QTime::fromString(m.value("dailyReportTime").toString(), QStringLiteral("HH:mm")));
     if (m.contains("dcaDayOfMonth")) s.setDcaDayOfMonth(m.value("dcaDayOfMonth").toInt());
@@ -715,19 +815,44 @@ void QmlBridge::fetchModelList(const QString &provider, const QString &apiKey) {
         return;
     }
     if (m_modelsReply) {
-        m_modelsReply->abort();
-        m_modelsReply->deleteLater();
+        QNetworkReply *old = m_modelsReply.data();
         m_modelsReply.clear();
+        if (old) {
+            QObject::disconnect(old, nullptr, nullptr, nullptr);
+            old->abort();
+            old->deleteLater();
+        }
     }
     QNetworkRequest req;
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     req.setTransferTimeout(20000);
     req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.3.10"));
 
-    if (provider == QStringLiteral("gemini")) {
+    const QString provLow = provider.trimmed().toLower();
+    if (provLow == QStringLiteral("gemini")) {
         const QUrl url(QStringLiteral("https://generativelanguage.googleapis.com/v1beta/models?key=%1&pageSize=100")
                            .arg(QString::fromUtf8(QUrl::toPercentEncoding(key))));
         req.setUrl(url);
+    } else if (provLow == QStringLiteral("deepseek")) {
+        req.setUrl(QUrl(QStringLiteral("https://api.deepseek.com/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (provLow == QStringLiteral("glm") || provLow == QStringLiteral("zhipu")) {
+        req.setUrl(QUrl(QStringLiteral("https://open.bigmodel.cn/api/paas/v4/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (provLow == QStringLiteral("qwen")) {
+        req.setUrl(QUrl(QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (provLow == QStringLiteral("moonshot")) {
+        req.setUrl(QUrl(QStringLiteral("https://api.moonshot.cn/v1/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (provLow == QStringLiteral("openai")) {
+        req.setUrl(QUrl(QStringLiteral("https://api.openai.com/v1/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
     } else {
         req.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/models")));
         req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
@@ -743,8 +868,34 @@ void QmlBridge::fetchModelList(const QString &provider, const QString &apiKey) {
         const QByteArray raw = reply->readAll();
         reply->deleteLater();
 
+        auto getFallbackModels = [](const QString &p) -> QStringList {
+            QString pl = p.trimmed().toLower();
+            if (pl == QStringLiteral("zhipu")) pl = QStringLiteral("glm");
+            if (pl == QStringLiteral("deepseek")) return {QStringLiteral("deepseek-chat"), QStringLiteral("deepseek-reasoner")};
+            if (pl == QStringLiteral("glm")) return {QStringLiteral("glm-4-plus"), QStringLiteral("glm-4-flash"), QStringLiteral("glm-4-long"), QStringLiteral("glm-4v-plus"), QStringLiteral("glm-3-turbo")};
+            if (pl == QStringLiteral("qwen")) return {QStringLiteral("qwen-max"), QStringLiteral("qwen-plus"), QStringLiteral("qwen-turbo"), QStringLiteral("qwen-long")};
+            if (pl == QStringLiteral("moonshot")) return {QStringLiteral("moonshot-v1-8k"), QStringLiteral("moonshot-v1-32k"), QStringLiteral("moonshot-v1-128k")};
+            if (pl == QStringLiteral("gemini")) return {QStringLiteral("gemini-flash-latest"), QStringLiteral("gemini-2.5-flash-lite"), QStringLiteral("gemini-2.0-flash"), QStringLiteral("gemini-pro-latest"), QStringLiteral("gemini-1.5-flash")};
+            if (pl == QStringLiteral("openai")) return {QStringLiteral("gpt-4o"), QStringLiteral("gpt-4o-mini"), QStringLiteral("o1"), QStringLiteral("o1-mini"), QStringLiteral("gpt-4-turbo")};
+            if (pl == QStringLiteral("xai")) return {QStringLiteral("grok-2-latest"), QStringLiteral("grok-2"), QStringLiteral("grok-beta"), QStringLiteral("grok-vision-beta")};
+            return {QStringLiteral("deepseek-chat"), QStringLiteral("glm-4-flash"), QStringLiteral("gpt-4o-mini")};
+        };
+
         if (err != QNetworkReply::NoError) {
-            emit modelsLoadFailed(tr("拉取模型失败：%1").arg(errStr));
+            QStringList fallbacks = getFallbackModels(provider);
+            QVariantList vl;
+            for (const QString &m : fallbacks) vl.append(m);
+            emit modelsLoaded(vl);
+
+            QString friendlyErr;
+            if (err == QNetworkReply::ProxyConnectionRefusedError || errStr.contains(QStringLiteral("Proxy"), Qt::CaseInsensitive)) {
+                friendlyErr = tr("无法连接本地代理 (%1:%2)！请检查代理客户端是否已开启。已载入内置备选模型。").arg(AppSettings::instance().proxyHost(), QString::number(AppSettings::instance().proxyPort()));
+            } else if (errStr.contains(QStringLiteral("401"))) {
+                friendlyErr = tr("API Key 鉴权失败 (HTTP 401)！请核对服务商与 Key 是否匹配。已载入内置备选模型。");
+            } else {
+                friendlyErr = tr("在线拉取失败：%1（已载入 %2 官方预设模型，可点击「测试连通性」排查）").arg(errStr.isEmpty() ? tr("网络异常") : errStr, provider.toUpper());
+            }
+            emit modelsLoadFailed(friendlyErr);
             return;
         }
         QJsonParseError pe{};
@@ -779,12 +930,152 @@ void QmlBridge::fetchModelList(const QString &provider, const QString &apiKey) {
         models.removeDuplicates();
         models.sort();
         if (models.isEmpty()) {
-            emit modelsLoadFailed(tr("未解析到可用模型列表"));
+            QStringList fallbacks = getFallbackModels(provider);
+            QVariantList vl;
+            for (const QString &m : fallbacks) vl.append(m);
+            emit modelsLoaded(vl);
+            emit modelsLoadFailed(tr("接口未返回可用模型列表，已载入 %1 官方推荐模型").arg(provider.toUpper()));
             return;
         }
         QVariantList vl;
         for (const QString &m : models) vl.append(m);
         emit modelsLoaded(vl);
+    });
+}
+
+void QmlBridge::testAiConnection(const QString &provider, const QString &apiKey, const QString &model, const QString &customEndpoint) {
+    if (!m_modelsNam) {
+        m_modelsNam = new QNetworkAccessManager(this);
+    }
+    const QString key = apiKey.trimmed();
+    if (key.isEmpty()) {
+        emit aiConnectionTested(false, tr("请先填写 API Key"), 0);
+        return;
+    }
+    const QString provLow = provider.trimmed().toLower();
+    QString mdl = model.trimmed();
+    if (mdl.isEmpty()) {
+        if (provLow == QStringLiteral("gemini")) mdl = QStringLiteral("gemini-flash-latest");
+        else if (provLow == QStringLiteral("deepseek")) mdl = QStringLiteral("deepseek-chat");
+        else if (provLow == QStringLiteral("glm") || provLow == QStringLiteral("zhipu")) mdl = QStringLiteral("glm-4-flash");
+        else if (provLow == QStringLiteral("qwen")) mdl = QStringLiteral("qwen-plus");
+        else if (provLow == QStringLiteral("moonshot")) mdl = QStringLiteral("moonshot-v1-8k");
+        else if (provLow == QStringLiteral("openai")) mdl = QStringLiteral("gpt-4o-mini");
+        else mdl = QStringLiteral("grok-2-latest");
+    }
+
+    QNetworkRequest req;
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(15000); // 15秒测试超时
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.4.0 (AI Connection Tester)"));
+
+    QByteArray postData;
+    if (provLow == QStringLiteral("gemini")) {
+        QString m = mdl;
+        if (m.startsWith(QStringLiteral("models/"))) m = m.mid(7);
+        const QUrl url(QStringLiteral("https://generativelanguage.googleapis.com/v1beta/models/%1:generateContent?key=%2")
+                           .arg(m, QString::fromUtf8(QUrl::toPercentEncoding(key))));
+        req.setUrl(url);
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        QJsonObject body;
+        QJsonArray contents;
+        QJsonObject userMsg;
+        userMsg.insert(QStringLiteral("role"), QStringLiteral("user"));
+        QJsonArray parts;
+        parts.append(QJsonObject{{QStringLiteral("text"), QStringLiteral("ping")}});
+        userMsg.insert(QStringLiteral("parts"), parts);
+        contents.append(userMsg);
+        body.insert(QStringLiteral("contents"), contents);
+        QJsonObject genCfg;
+        genCfg.insert(QStringLiteral("maxOutputTokens"), 5);
+        body.insert(QStringLiteral("generationConfig"), genCfg);
+        postData = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    } else {
+        QUrl url;
+        if (!customEndpoint.trimmed().isEmpty()) {
+            url = QUrl(customEndpoint.trimmed());
+        } else if (provLow == QStringLiteral("deepseek")) {
+            url = QUrl(QStringLiteral("https://api.deepseek.com/chat/completions"));
+        } else if (provLow == QStringLiteral("glm") || provLow == QStringLiteral("zhipu")) {
+            url = QUrl(QStringLiteral("https://open.bigmodel.cn/api/paas/v4/chat/completions"));
+        } else if (provLow == QStringLiteral("qwen")) {
+            url = QUrl(QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"));
+        } else if (provLow == QStringLiteral("moonshot")) {
+            url = QUrl(QStringLiteral("https://api.moonshot.cn/v1/chat/completions"));
+        } else if (provLow == QStringLiteral("openai")) {
+            url = QUrl(QStringLiteral("https://api.openai.com/v1/chat/completions"));
+        } else {
+            url = QUrl(QStringLiteral("https://api.x.ai/v1/chat/completions"));
+        }
+        req.setUrl(url);
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        QJsonObject body;
+        body.insert(QStringLiteral("model"), mdl);
+        body.insert(QStringLiteral("max_tokens"), 5);
+        QJsonArray messages;
+        messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")}, {QStringLiteral("content"), QStringLiteral("ping")}});
+        body.insert(QStringLiteral("messages"), messages);
+        postData = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    }
+
+    auto timer = std::make_shared<QElapsedTimer>();
+    timer->start();
+
+    QNetworkReply *reply = m_modelsNam->post(req, postData);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, timer, provider, mdl]() {
+        const qint64 latency = timer->elapsed();
+        const auto err = reply->error();
+        const QString errStr = reply->errorString();
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray resp = reply->readAll();
+        reply->deleteLater();
+
+        if (err == QNetworkReply::NoError && statusCode >= 200 && statusCode < 300) {
+            const QString msg = tr("连接成功！模型 [%1] 响应正常，延迟: %2 ms").arg(mdl, QString::number(latency));
+            Logger::info(QStringLiteral("testAiConnection success: %1 (model=%2 latency=%3ms)").arg(provider, mdl, QString::number(latency)));
+            emit aiConnectionTested(true, msg, static_cast<int>(latency));
+            return;
+        }
+
+        QString apiErrMsg;
+        if (!resp.isEmpty()) {
+            const QJsonDocument doc = QJsonDocument::fromJson(resp);
+            if (doc.isObject()) {
+                if (doc.object().contains(QStringLiteral("error"))) {
+                    const QJsonValue ev = doc.object().value(QStringLiteral("error"));
+                    if (ev.isObject()) {
+                        apiErrMsg = ev.toObject().value(QStringLiteral("message")).toString();
+                    } else if (ev.isString()) {
+                        apiErrMsg = ev.toString();
+                    }
+                }
+            }
+        }
+
+        QString friendlyMsg;
+        if (err == QNetworkReply::ProxyConnectionRefusedError || errStr.contains(QStringLiteral("Proxy"), Qt::CaseInsensitive)) {
+            friendlyMsg = tr("无法连接本地代理 (%1:%2)！请检查 Clash/V2Ray 是否开启，或在「网络代理」设置中关闭代理或修改端口。")
+                              .arg(AppSettings::instance().proxyHost(), QString::number(AppSettings::instance().proxyPort()));
+        } else if (statusCode == 401) {
+            friendlyMsg = tr("鉴权失败 (HTTP 401)！API Key 无效或未激活，请核对 Key 与服务商是否匹配。");
+        } else if (statusCode == 404) {
+            friendlyMsg = tr("模型不存在或已下线 (HTTP 404)！该模型 [%1] 无法调用，请在下拉菜单选择其他模型。").arg(mdl);
+        } else if (statusCode == 429) {
+            friendlyMsg = tr("调用超限或额度耗尽 (HTTP 429)！免费配额已用尽或请求过于频繁，请稍后再试或充值。");
+        } else if (err == QNetworkReply::TimeoutError) {
+            friendlyMsg = tr("连接超时 (15s)！若使用海外模型 (如 Gemini/OpenAI)，需在高级设置中配置有效网络代理。");
+        } else if (err == QNetworkReply::HostNotFoundError) {
+            friendlyMsg = tr("无法解析服务器域名！请检查网络连接及 DNS 配置。");
+        } else if (!apiErrMsg.isEmpty()) {
+            friendlyMsg = tr("服务商报错 (HTTP %1): %2").arg(QString::number(statusCode), apiErrMsg);
+        } else {
+            friendlyMsg = tr("连接失败: %1 (HTTP %2)").arg(errStr, QString::number(statusCode));
+        }
+
+        Logger::warn(QStringLiteral("testAiConnection failed: %1 (model=%2 status=%3 err=%4 apiMsg=%5)")
+                         .arg(provider, mdl, QString::number(statusCode), errStr, apiErrMsg));
+        emit aiConnectionTested(false, friendlyMsg, static_cast<int>(latency));
     });
 }
 
@@ -812,44 +1103,62 @@ void QmlBridge::onSecondaryTimer() {
         }
         return;
     }
-    if (m_secondaryReply)
-        return;
     if (!m_secondaryNam)
         return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_secondaryReply) {
+        if (m_secondaryRequestStartMs > 0 && (nowMs - m_secondaryRequestStartMs < 5000) && m_secondaryReply->isRunning()) {
+            return;
+        }
+        // 超过 5 秒未返回的卡死请求，安全断开后终止并释放，避免信号重入
+        QNetworkReply *old = m_secondaryReply.data();
+        m_secondaryReply.clear();
+        m_secondaryRequestStartMs = 0;
+        if (old) {
+            QObject::disconnect(old, nullptr, this, nullptr);
+            old->abort();
+            old->deleteLater();
+        }
+    }
 
     const QString primary = AppSettings::instance().dataSource();
     const QString sec = (primary == QStringLiteral("gj") || primary == QStringLiteral("xau"))
                             ? QStringLiteral("zs")
                             : QStringLiteral("gj");
-    const QUrl url(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1").arg(sec));
+    const QUrl url(QStringLiteral("https://jin.20021002.xyz/api.php?type=%1&_t=%2").arg(sec).arg(nowMs));
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.3.10"));
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     req.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
-    req.setTransferTimeout(8000);
+    req.setTransferTimeout(3500);
     req.setRawHeader("Accept", "*/*");
-    Logger::info(QStringLiteral("Secondary price: requesting %1 (sec: %2)").arg(url.toString(), sec));
+
     QNetworkReply *reply = m_secondaryNam->get(req);
     m_secondaryReply = reply;
+    m_secondaryRequestStartMs = nowMs;
     connect(reply, &QNetworkReply::finished, this, [this, reply, sec]() { onSecondaryFinished(reply, sec); });
 }
 
 void QmlBridge::onSecondaryFinished(QNetworkReply *reply, const QString &sec) {
-    if (m_secondaryReply.data() == reply)
+    if (m_secondaryReply.data() == reply) {
         m_secondaryReply.clear();
+        m_secondaryRequestStartMs = 0;
+    }
     if (!reply)
         return;
+    reply->deleteLater();
+
     if (reply->error() != QNetworkReply::NoError) {
-        Logger::warn(QStringLiteral("Secondary price fetch error: %1 (%2)").arg(reply->errorString(), reply->url().toString()));
+        // Logger::warn(QStringLiteral("Secondary price fetch error: %1 (%2)").arg(reply->errorString(), reply->url().toString()));
         if (m_secondaryNam && m_secondaryNam->proxy().type() != QNetworkProxy::NoProxy) {
             m_secondaryNam->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
         }
-        reply->deleteLater();
         // 如果是国际金且主源失败，自动请求备用源
         if (sec == QStringLiteral("gj") && !m_secondaryReply) {
             const QUrl backupUrl(AppSettings::instance().backupPriceUrl1());
             if (backupUrl.isValid()) {
-                Logger::info(QStringLiteral("Secondary price fallback to backup: %1").arg(backupUrl.toString()));
+                // Logger::info(QStringLiteral("Secondary price fallback to backup: %1").arg(backupUrl.toString()));
                 QNetworkRequest bReq(backupUrl);
                 bReq.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("GoldPriceBarLite/1.3.10"));
                 bReq.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -857,6 +1166,7 @@ void QmlBridge::onSecondaryFinished(QNetworkReply *reply, const QString &sec) {
                 bReq.setTransferTimeout(8000);
                 QNetworkReply *bReply = m_secondaryNam->get(bReq);
                 m_secondaryReply = bReply;
+                m_secondaryRequestStartMs = QDateTime::currentMSecsSinceEpoch();
                 connect(bReply, &QNetworkReply::finished, this, [this, bReply]() {
                     onSecondaryFinished(bReply, QStringLiteral("backup"));
                 });
@@ -865,7 +1175,6 @@ void QmlBridge::onSecondaryFinished(QNetworkReply *reply, const QString &sec) {
         return;
     }
     const QByteArray raw = reply->readAll();
-    reply->deleteLater();
     const QJsonDocument doc = QJsonDocument::fromJson(raw);
     if (!doc.isObject()) {
         Logger::warn(QStringLiteral("Secondary price JSON parse failed: %1").arg(QString::fromUtf8(raw.left(120))));
@@ -897,7 +1206,7 @@ void QmlBridge::onSecondaryFinished(QNetworkReply *reply, const QString &sec) {
     m_secondaryPrice = price;
     m_lastSecondaryPrice = price;
     m_secondaryPriceText = tr("%1 %2").arg(shortName).arg(price, 0, 'f', 2);
-    Logger::info(QStringLiteral("Secondary price updated: %1 (price: %2)").arg(m_secondaryPriceText).arg(price, 0, 'f', 2));
+    // Logger::info(QStringLiteral("Secondary price updated: %1 (price: %2)").arg(m_secondaryPriceText).arg(price, 0, 'f', 2));
     emit secondaryPriceChanged();
     if (m_chartWindow) {
         m_chartWindow->onSecondaryPriceUpdated(price);
@@ -1252,10 +1561,14 @@ void QmlBridge::evaluateDecision(double price) {
             m_forecastConfidenceText = fr.confidence > 0
                 ? tr("%1%").arg(fr.confidence * 100.0, 0, 'f', 0) : tr("—");
         } else {
-            predHigh = actHigh * 1.003;
-            predLow = actLow * 0.997;
+            const double basePrice = price > 0.0 ? price : (actHigh > 0.0 ? actHigh : 750.0);
+            predHigh = qMax(actHigh, basePrice * 1.005);
+            predLow = (actLow > 0.0) ? qMin(actLow, basePrice * 0.995) : basePrice * 0.995;
         }
     }
+
+    m_predHigh = predHigh;
+    m_predLow = predLow;
 
     m_decisionTimeWindowText = tr("高点: %1 | 低点: %2").arg(
         m_predHighTimeWindow.isEmpty() ? tr("—") : m_predHighTimeWindow,
@@ -1336,81 +1649,306 @@ void QmlBridge::evaluateDecision(double price) {
         const bool patternIsBuy = hasPattern && (patBias == QStringLiteral("看多突破") || patBias == QStringLiteral("强烈看多"));
         const bool patternIsSell = hasPattern && (patBias == QStringLiteral("看空破位") || patBias == QStringLiteral("强烈看空"));
 
-        // 0. ATR 移动追踪止盈检测（保盈截断）
-        if (patTrailingStop > 0.0 && price <= patTrailingStop && AppSettings::instance().positionGrams() > 0) {
+        const double posGrams = AppSettings::instance().positionGrams();
+        const double posCost = AppSettings::instance().positionCost();
+        const double feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+        const double breakEvenPrice = (feeRate > 0.0 && feeRate < 0.1) ? (posCost / (1.0 - feeRate)) : posCost;
+        const bool isInProfit = (posGrams > 0.0 && posCost > 0.0 && price > breakEvenPrice + 0.15);
+
+        // 0. ATR 移动追踪止盈检测（必须真正处于正收益盈利状态，严禁浮亏状态下误判为“止盈”）
+        if (patTrailingStop > 0.0 && posGrams > 0.0 && isInProfit && price <= qMax(breakEvenPrice + 0.10, patTrailingStop)) {
             level = 5;
-            tag = tr("🛡️ 触及移动止盈·保护利润");
+            tag = tr("🎯 触及移动止盈·锁定利润");
             color = QStringLiteral("#FF7875");
             bg = QStringLiteral("#3E1C1F");
-            advice = tr("现价 %1 跌破动态 ATR 移动止盈/保盈线 %2，建议及时落袋为安，保护多头利润！")
+            const double curProfit = (price - posCost) * posGrams - (price * posGrams * feeRate);
+            advice = tr("现价 %1 触及动态移动止盈/保盈线 %2（持仓成本 %3，保本线 %4），当前实现净浮盈 +%5 元，建议果断落袋为安锁定正收益！")
                          .arg(price, 0, 'f', 2)
-                         .arg(patTrailingStop, 0, 'f', 2);
-        }
-        // 1. 顶层极值高点阻力一票否决：价格已触及推演高点，上方空间锁死，坚决阻断追多，协同分批止盈/卖出！
-        else if (predHigh > 0.0 && price >= predHigh * 0.9985) {
-            level = 5;
-            tag = tr("🎯 触及高点·分批卖出");
-            color = QStringLiteral("#FF7875");
-            bg = QStringLiteral("#3E1C1F");
-            advice = tr("现价已触及当日推演高点阻力区（%1），上方获利抛压沉重且盈亏比偏低，建议逢高止盈锁定收益。预计高点窗口: %2。")
-                         .arg(predHigh, 0, 'f', 2)
-                         .arg(m_predHighTimeWindow.isEmpty() ? tr("时段末") : m_predHighTimeWindow);
-        }
-        // 2. 形态破位优先：若已发生形态/0.618破位，坚决禁止低吸，优先防守减仓
-        else if (patternIsSell) {
-            level = 5;
-            tag = tr("⚠️ 形态破位·防守减仓");
-            color = QStringLiteral("#FF7875");
-            bg = QStringLiteral("#3E1C1F");
-            advice = tr("触发【%1】！%2").arg(patName, patStrategy);
-        }
-        // 3. 底层极值低点支撑保护：价格已下探推演低点，下方杀跌动能衰竭，坚决阻断地板杀跌，提示企稳分批买入！
-        else if (predLow > 0.0 && price <= predLow * 1.0015) {
-            level = 3;
-            tag = tr("🎯 触及低点·分批买入");
-            color = QStringLiteral("#52C41A");
-            bg = QStringLiteral("#163219");
-            advice = tr("现价已下探至当日推演低点支撑区（%1），下方支撑强劲且风险收益比占优，适合企稳分批买入或定投。预计低点窗口: %2。")
-                         .arg(predLow, 0, 'f', 2)
-                         .arg(m_predLowTimeWindow.isEmpty() ? tr("时段末") : m_predLowTimeWindow);
-        }
-        // 4. 形态突破/黄金口袋企稳买入优先：顺势多头共振
-        else if (patternIsBuy) {
-            level = 3;
-            tag = tr("🚀 形态突破·顺势买入");
-            color = QStringLiteral("#52C41A");
-            bg = QStringLiteral("#163219");
-            advice = tr("触发【%1】！%2").arg(patName, patStrategy);
-            if (patRrr > 0.0) {
-                advice += tr(" [扣费后净盈亏比 RRR: %1:1 | 移动止盈位: %2]")
-                              .arg(patRrr, 0, 'f', 2)
-                              .arg(patTrailingStop, 0, 'f', 2);
+                         .arg(patTrailingStop, 0, 'f', 2)
+                         .arg(posCost, 0, 'f', 2)
+                         .arg(breakEvenPrice, 0, 'f', 2)
+                         .arg(curProfit, 0, 'f', 1);
+        } else {
+            const double rangeSoFar = qMax(0.05, actHigh - actLow);
+            const double curAtr = ExtremeDatabase::instance().computeAtr(10, src);
+            const double effAtr = curAtr > 0.1 ? curAtr : (price > 1000.0 ? 25.0 : 4.0);
+
+            // 自适应容差：在窄幅震荡时收缩，在宽幅时适应 ATR，避免微涨/微跌误触发
+            const double zoneTol = qBound(0.05, effAtr * 0.12, qMax(0.08, rangeSoFar * 0.20));
+
+            // 短线动量与转折点判定（回溯最近 15 根采样点）
+            double recentMin = price;
+            double recentMax = price;
+            const int nPts = static_cast<int>(pts.size());
+            const int lookback = qMin(15, nPts);
+            for (int i = nPts - lookback; i < nPts; ++i) {
+                if (i >= 0) {
+                    recentMin = qMin(recentMin, pts[i].price);
+                    recentMax = qMax(recentMax, pts[i].price);
+                }
             }
-        } else if (m_predHighTimeWindow.contains(QStringLiteral("高点大概率已现")) || m_predHighTimeWindow.contains(QStringLiteral("已确立"))) {
-            level = 4;
-            tag = tr("⚠️ 高点已现·防守保护");
-            color = QStringLiteral("#FAAD14");
-            bg = QStringLiteral("#352814");
-            advice = tr("当日高点阻力大概率已于前期确立（%1），动能衰竭，建议防守保护多头利润，切勿盲目追高！")
-                         .arg(m_predHighTimeWindow);
-        } else if (pct20 >= 80 && ma5 > 0.0 && price > ma5) {
-            level = 4;
-            tag = tr("📈 偏多·谨防追高");
-            color = QStringLiteral("#FAAD14");
-            bg = QStringLiteral("#352814");
-            advice = tr("价格站上MA5(%1)且处于近20日高分位(%2%)，短期多头强势，谨防追高回落。").arg(ma5, 0, 'f', 2).arg(pct20, 0, 'f', 0);
-        } else if (pct20 <= 20 && ma5 > 0.0 && price < ma5) {
-            level = 2;
-            tag = tr("📉 超跌·关注低吸");
-            color = QStringLiteral("#73D13D");
-            bg = QStringLiteral("#1B301D");
-            advice = tr("处于近20日极低分位(%1%)且运行于MA5(%2)下方，短线超跌，建议关注企稳低吸机会。").arg(pct20, 0, 'f', 0).arg(ma5, 0, 'f', 2);
+            const double prevP = (nPts >= 6) ? pts[nPts - 6].price : pts.front().price;
+            const double shortSlope = price - prevP; // 5个点前的微观斜率动量
+            const double reboundFromLow = price - actLow;
+            const double pullbackFromHigh = actHigh - price;
+
+            // 企稳转折确认与冲高受阻确认阈值
+            const double pos = (rangeSoFar > 0.001) ? qBound(0.0, (price - actLow) / rangeSoFar, 1.0) : 0.5;
+            const double minReboundConfirm = qMax(0.08, qMin(effAtr * 0.15, rangeSoFar * 0.18));
+            const double minPullbackConfirm = qMax(0.08, qMin(effAtr * 0.15, rangeSoFar * 0.18));
+
+            const bool isBottomStabilized = (reboundFromLow >= minReboundConfirm) && (shortSlope >= -0.02);
+            const bool isTopStalled = (pullbackFromHigh >= minPullbackConfirm) && (shortSlope <= 0.01);
+            const bool isNearLowZone = (predLow > 0.0 && price <= predLow + zoneTol);
+            const bool isNearHighZone = (predHigh > 0.0 && price >= predHigh - zoneTol);
+            const bool isBreakingNewHigh = (price >= actHigh - zoneTol * 0.25) || (shortSlope > zoneTol * 0.4);
+            const bool isBreakingNewLow = (price <= actLow + zoneTol * 0.25) || (shortSlope < -zoneTol * 0.4);
+
+            // 多头推进 / 弱势下探动能判定（杜绝在上行推进中误判为见顶衰竭）
+            const bool isUptrend = (shortSlope > 0.01 && (reboundFromLow >= pullbackFromHigh || pos >= 0.45))
+                                || (pos >= 0.60 && shortSlope >= -0.01 && !isTopStalled);
+            const bool isDowntrend = (shortSlope < -0.01 && (pullbackFromHigh >= reboundFromLow || pos <= 0.55))
+                                  || (pos <= 0.40 && shortSlope <= 0.01 && !isBottomStabilized);
+
+            // 1. 形态破位或关键支撑向下击穿（坚决阻断地板抄底接飞刀）
+            if (patternIsSell || (predLow > 0.0 && price < predLow - zoneTol && isBreakingNewLow)) {
+                if (posGrams > 0.0) {
+                    const double hardStopLossPrice = posCost - qMax(3.8, effAtr * 0.75);
+                    const double supportBreakTolerance = qBound(1.8, effAtr * 0.35, 3.5);
+                    const bool breakDailySupport = (predLow > 0.0 && price < predLow - supportBreakTolerance && isBreakingNewLow);
+                    if (price <= hardStopLossPrice || breakDailySupport) {
+                        level = 5;
+                        tag = tr("⚠️ 破位止损·防守减仓");
+                        color = QStringLiteral("#FF7875");
+                        bg = QStringLiteral("#3E1C1F");
+                        advice = tr("现价 %1 已击穿关键防守底线（持仓成本 %2，硬止损线 %3，支撑参考 %4），破位下行风险加剧，建议分批减仓防守！")
+                                     .arg(price, 0, 'f', 2)
+                                     .arg(posCost, 0, 'f', 2)
+                                     .arg(hardStopLossPrice, 0, 'f', 2)
+                                     .arg(predLow, 0, 'f', 2);
+                    } else {
+                        // 尚在成本波动缓冲区内，仅做持仓防守预警，杜绝因 15 分钟级微观杂波频繁割肉损耗手续费
+                        level = 4;
+                        tag = tr("⚠️ 短线承压·防守观察");
+                        color = QStringLiteral("#FAAD14");
+                        bg = QStringLiteral("#352814");
+                        advice = patternIsSell
+                                     ? tr("分时形态显现【%1】短线承压，当前运行于持仓成本防守区（成本 %2，硬止损线 %3），耐心等待企稳，避免微观杂波频繁割肉损耗手续费。")
+                                           .arg(patName)
+                                           .arg(posCost, 0, 'f', 2)
+                                           .arg(hardStopLossPrice, 0, 'f', 2)
+                                     : tr("现价下探测试推演支撑（%1），关注企稳力度，严格守好成本防守线 %2。")
+                                           .arg(predLow, 0, 'f', 2)
+                                           .arg(hardStopLossPrice, 0, 'f', 2);
+                    }
+                } else {
+                    level = 2;
+                    tag = tr("📉 形态走弱·空仓观望");
+                    color = QStringLiteral("#FF7875");
+                    bg = QStringLiteral("#3E1C1F");
+                    advice = patternIsSell
+                                 ? tr("短线形态显现【%1】！%2，当前无仓位，建议保持观望切勿盲目抄底。").arg(patName, patStrategy)
+                                 : tr("现价已跌破日内推演关键支撑（%1），杀跌动能释放中，切勿逆势抄底接飞刀！").arg(predLow, 0, 'f', 2);
+                }
+            }
+            // 2. 形态突破或阻力放量向上突破（顺势多头主升，坚决避免过早卖飞）
+            else if (patternIsBuy || (predHigh > 0.0 && price > predHigh + zoneTol * 0.5 && isBreakingNewHigh)) {
+                const auto lastFc = ForecastService::instance().lastForecast();
+                const auto sentiment = SentimentService::instance().recentMarketImpact();
+                const bool isMacroBear = m_multiDayBiasText.contains(QStringLiteral("空")) ||
+                                         lastFc.multiDayBias.contains(QStringLiteral("空")) ||
+                                         sentiment.bias == QStringLiteral("bearish");
+                if (isMacroBear) {
+                    level = 2;
+                    tag = tr("⏳ 弱反抽·谨防诱多");
+                    color = QStringLiteral("#FAAD14");
+                    bg = QStringLiteral("#352814");
+                    advice = tr("虽然分时呈现【%1】，但日线大周期处于空头承压或消息面利空驱动中，分时脉冲极易沦为诱多反抽，切勿在逆势环境下追多接盘！")
+                                 .arg(patternIsBuy ? patName : tr("向上脉冲"));
+                } else {
+                    level = 3;
+                    tag = tr("🚀 形态突破·顺势买入");
+                    color = QStringLiteral("#52C41A");
+                    bg = QStringLiteral("#163219");
+                    if (patternIsBuy) {
+                        advice = tr("触发【%1】！%2").arg(patName, patStrategy);
+                        if (patRrr > 0.0) {
+                            advice += tr(" [扣费后净盈亏比 RRR: %1:1 | 移动止盈位: %2]")
+                                          .arg(patRrr, 0, 'f', 2)
+                                          .arg(patTrailingStop, 0, 'f', 2);
+                        }
+                    } else {
+                        advice = tr("现价放量突破日内推演阻力位（%1），多头主升浪顺势展开，建议顺势持有，防守线抬升至突破位。").arg(predHigh, 0, 'f', 2);
+                    }
+                }
+            }
+            // 3. 极值低位区处理：必须区分「探底寻底中（严禁接飞刀）」vs「企稳反弹转折（确认分批买入）」
+            else if (isNearLowZone) {
+                if (isBottomStabilized) {
+                    // 转折确认：已从低点止跌并有效反弹，动能衰竭
+                    const auto lastFc = ForecastService::instance().lastForecast();
+                    const auto sentiment = SentimentService::instance().recentMarketImpact();
+                    const bool isMacroBear = m_multiDayBiasText.contains(QStringLiteral("空")) ||
+                                             lastFc.multiDayBias.contains(QStringLiteral("空")) ||
+                                             sentiment.bias == QStringLiteral("bearish");
+                    if (isMacroBear) {
+                        level = 2;
+                        tag = tr("📉 探底微弱反抽·等待筑底");
+                        color = QStringLiteral("#73D13D");
+                        bg = QStringLiteral("#1B301D");
+                        advice = tr("现价下探至推演支撑区（%1）虽有微幅反抽（+%2元），但大周期空头趋势或利空消息压制沉重，底部尚未稳固，建议耐心等待右侧真正放量筑底。")
+                                     .arg(predLow, 0, 'f', 2)
+                                     .arg(reboundFromLow, 0, 'f', 2);
+                    } else {
+                        level = 3;
+                        tag = tr("🟢 企稳反弹·分批建仓");
+                        color = QStringLiteral("#52C41A");
+                        bg = QStringLiteral("#163219");
+                        advice = tr("现价下探至推演低点支撑区（%1）后出现企稳反弹迹象（自低点回升+%2元），杀跌衰竭，适合企稳分批建仓或定投。预计低点窗口: %3。")
+                                     .arg(predLow, 0, 'f', 2)
+                                     .arg(reboundFromLow, 0, 'f', 2)
+                                     .arg(m_predLowTimeWindow.isEmpty() ? tr("时段末") : m_predLowTimeWindow);
+                    }
+                } else {
+                    // 仍在下探跌落中：未见止跌，严禁接飞刀
+                    level = 2;
+                    tag = tr("📉 探底寻底中·等待企稳");
+                    color = QStringLiteral("#73D13D");
+                    bg = QStringLiteral("#1B301D");
+                    advice = tr("现价正在下探测试推演支撑区（%1），短线下行动能仍在释放，切勿盲目抢反弹接飞刀！耐心等待止跌企稳与转折信号。")
+                                 .arg(predLow, 0, 'f', 2);
+                }
+            }
+            // 4. 极值高位区处理：必须区分「冲高中顺势（严禁卖飞）」vs「冲高受阻回落（确认分批止盈）」
+            else if (isNearHighZone) {
+                if (isTopStalled) {
+                    // 转折确认：冲高受阻，已从最高位回撤确认滞涨
+                    level = 5;
+                    tag = tr("🎯 冲高受阻·分批止盈");
+                    color = QStringLiteral("#FF7875");
+                    bg = QStringLiteral("#3E1C1F");
+                    advice = tr("现价已触及推演高点阻力区（%1）并显现遇阻回落（自今高回落-%2元），短线上方抛压沉重且盈亏比偏低，建议逢高止盈锁定利润。预计高点窗口: %3。")
+                                 .arg(predHigh, 0, 'f', 2)
+                                 .arg(pullbackFromHigh, 0, 'f', 2)
+                                 .arg(m_predHighTimeWindow.isEmpty() ? tr("时段末") : m_predHighTimeWindow);
+                } else {
+                    // 正在冲高破高途中：多头强势，顺势持有
+                    level = 4;
+                    tag = tr("🚀 冲高中·多头顺势");
+                    color = QStringLiteral("#FAAD14");
+                    bg = QStringLiteral("#352814");
+                    advice = tr("现价正上攻测试推演高点阻力区（%1），多头动能充沛，顺势持有并跟踪抬升防守位，切勿过早盲目猜顶卖飞！预计高点窗口: %2。")
+                                 .arg(predHigh, 0, 'f', 2)
+                                 .arg(m_predHighTimeWindow.isEmpty() ? tr("时段末") : m_predHighTimeWindow);
+                }
+            }
+            // 5. 高点已现防守（必须经过遇阻滞涨、动能衰竭与回撤确认，严禁在上行推进阶段误报）
+            else if (isTopStalled && (m_predHighTimeWindow.contains(QStringLiteral("高点大概率已现")) || m_predHighTimeWindow.contains(QStringLiteral("已确立"))) && shortSlope <= 0.0 && !isUptrend) {
+                level = 4;
+                tag = tr("⚠️ 高点已现·防守保护");
+                color = QStringLiteral("#FAAD14");
+                bg = QStringLiteral("#352814");
+                advice = tr("当日高点阻力大概率已于前期确立（%1），现价自高位回撤-%2元显现滞涨，短线上行动能衰竭，建议防守保护多头利润，切勿盲目追高！")
+                             .arg(m_predHighTimeWindow)
+                             .arg(pullbackFromHigh, 0, 'f', 2);
+            }
+            // 6. 顺势多头反弹与推进（上行阶段明确指示多头反弹、顺势持有，杜绝猜顶）
+            else if (isUptrend) {
+                if (shortSlope > zoneTol * 0.25 || pos >= 0.68) {
+                    level = 4;
+                    tag = tr("📈 多头反弹·顺势推进");
+                    color = QStringLiteral("#52C41A");
+                    bg = QStringLiteral("#163219");
+                    advice = tr("短线处于多头反弹/上行推进通道中（动能向上 +%1），建议顺势持有并跟踪抬升防守位，关注上方推演阻力（%2）。预计高点窗口: %3。")
+                                 .arg(shortSlope, 0, 'f', 2)
+                                 .arg(predHigh > 0.0 ? QString::number(predHigh, 'f', 2) : tr("前期高位"))
+                                 .arg(m_predHighTimeWindow.isEmpty() ? tr("欧美盘高峰") : m_predHighTimeWindow);
+                } else {
+                    level = 3;
+                    tag = tr("📈 偏多运行·顺势持有");
+                    color = QStringLiteral("#69C0FF");
+                    bg = QStringLiteral("#142738");
+                    advice = tr("现价站稳日内中轴上方偏多运行（反弹 +%1元），反弹形态良好，建议持有现有头寸，动态关注上方目标 %2。预计高点窗口: %3。")
+                                 .arg(reboundFromLow, 0, 'f', 2)
+                                 .arg(predHigh > 0.0 ? QString::number(predHigh, 'f', 2) : tr("--"))
+                                 .arg(m_predHighTimeWindow.isEmpty() ? tr("时段后程") : m_predHighTimeWindow);
+                }
+            }
+            // 7. 弱势下探调整阶段
+            else if (isDowntrend) {
+                level = 2;
+                tag = tr("📉 下探调整·空仓等待");
+                color = QStringLiteral("#FF7875");
+                bg = QStringLiteral("#3E1C1F");
+                advice = tr("短线处于下探调整走势中（微观动能 -%1），下方推演支撑参考 %2，未现止跌企稳前切勿盲目抢反弹。预计低点窗口: %3。")
+                             .arg(-shortSlope, 0, 'f', 2)
+                             .arg(predLow > 0.0 ? QString::number(predLow, 'f', 2) : tr("前期低位"))
+                             .arg(m_predLowTimeWindow.isEmpty() ? tr("时段后程") : m_predLowTimeWindow);
+            }
+            // 8. 均线与分位常规状态
+            else if (pct20 >= 80 && ma5 > 0.0 && price > ma5) {
+                level = 4;
+                tag = tr("📈 偏多·谨防追高");
+                color = QStringLiteral("#FAAD14");
+                bg = QStringLiteral("#352814");
+                advice = tr("价格站上MA5(%1)且处于近20日高分位(%2%)，短期多头强势，谨防追高回落。").arg(ma5, 0, 'f', 2).arg(pct20, 0, 'f', 0);
+            } else if (pct20 <= 20 && ma5 > 0.0 && price < ma5) {
+                const auto lastFc = ForecastService::instance().lastForecast();
+                const auto sentiment = SentimentService::instance().recentMarketImpact();
+                const bool isMacroBear = m_multiDayBiasText.contains(QStringLiteral("空")) ||
+                                         lastFc.multiDayBias.contains(QStringLiteral("空")) ||
+                                         sentiment.bias == QStringLiteral("bearish");
+                level = 2;
+                if (isMacroBear) {
+                    tag = tr("📉 弱势超跌·空仓观望");
+                    color = QStringLiteral("#FF7875");
+                    bg = QStringLiteral("#3E1C1F");
+                    advice = tr("处于近20日低分位(%1%)且压制在MA5(%2)下方，大周期处于空头通道中，超跌绝不盲目左侧接飞刀，建议保持空仓等待右侧企稳。")
+                                 .arg(pct20, 0, 'f', 0).arg(ma5, 0, 'f', 2);
+                } else {
+                    tag = tr("📉 超跌寻底·等待企稳");
+                    color = QStringLiteral("#FAAD14");
+                    bg = QStringLiteral("#352814");
+                    advice = tr("处于近20日低分位(%1%)且运行于MA5(%2)下方，短线超跌寻底，建议耐心等待止跌企稳信号，切勿急于盲目抄底。")
+                                 .arg(pct20, 0, 'f', 0).arg(ma5, 0, 'f', 2);
+                }
+            }
         }
     }
 
     const QString upcomingWarn = EventCalendar::currentEventWarning();
     if (!upcomingWarn.isEmpty() && !advice.contains(upcomingWarn)) {
         advice += QStringLiteral("\n") + upcomingWarn;
+    }
+
+    // 卖出后冷静期与多Tick企稳确认机制，彻底解决“卖出后2-3秒立即提示买入”的翻转抽搐
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 kSellAdviceCooldownMs = 8 * 60 * 1000; // 卖出后 8 分钟内禁止立即反手提示买入
+    const bool inSellCooldown = (m_lastSellAdviceMs > 0 && (nowMs - m_lastSellAdviceMs < kSellAdviceCooldownMs));
+
+    if (level == 5 || (level == 4 && tag.contains(QStringLiteral("高点已现·防守保护")))) {
+        m_lastSellAdviceMs = nowMs;
+        m_consecutiveBuyTicks = 0;
+    } else if (level == 3) {
+        if (inSellCooldown) {
+            level = 2;
+            tag = tr("⏳ 卖出观察·等待企稳确认");
+            color = QStringLiteral("#73D13D");
+            bg = QStringLiteral("#1B301D");
+            const int minsAgo = qMax(1, static_cast<int>((nowMs - m_lastSellAdviceMs) / 60000));
+            advice = tr("短线此前已触发卖出防守/止盈（距今仅 %1 分钟），当前处于卖出后冷静观察期，坚决阻断立即反手追多接飞刀，耐心等待右侧支撑与形态稳固。")
+                         .arg(minsAgo);
+        } else {
+            m_consecutiveBuyTicks++;
+            if (m_consecutiveBuyTicks < 2) {
+                level = 2;
+                tag = tr("👀 观察企稳·等待信号确认");
+                color = QStringLiteral("#73D13D");
+                bg = QStringLiteral("#1B301D");
+            }
+        }
+    } else {
+        m_consecutiveBuyTicks = 0;
     }
 
     m_decisionLevel = level;
@@ -1434,11 +1972,11 @@ void QmlBridge::evaluateDecision(double price) {
         const double net = price - fee;
         const double breakEven = price / (1.0 - feeRate);
         if (level == 3) {
-            feeLine = tr("\n• 浙商卖出手续费(0.4%): 买入保本卖出价 %1 元/g (抗费损 +%2 元/g)")
+            feeLine = tr("\n• 浙商费率(买0/卖0.4%): 买入保本卖出价 %1 元/g (抗卖出费损 +%2 元/g)")
                           .arg(breakEven, 0, 'f', 2)
                           .arg(breakEven - price, 0, 'f', 2);
         } else {
-            feeLine = tr("\n• 浙商卖出手续费(0.4%): 扣费 %1 元/g · 预计净到手: %2 元/g")
+            feeLine = tr("\n• 浙商费率(买0/卖0.4%): 若当前卖出扣费 %1 元/g · 净到手: %2 元/g")
                           .arg(fee, 0, 'f', 2)
                           .arg(net, 0, 'f', 2);
         }
@@ -1459,6 +1997,7 @@ void QmlBridge::evaluateDecision(double price) {
                             .arg(m_decisionMetricsText)
                             .arg(m_decisionSessionText)
                             .arg(feeLine);
+    checkAutoSimulateTrading(price, level, tag);
     emit decisionChanged();
 
     // 当出现重要决策级别 (触及高点/低点/计划价) 时推送托盘通知
@@ -1493,6 +2032,7 @@ void QmlBridge::updatePnL(double price) {
         m_pnlText.clear();
     }
     emit pnlChanged();
+    emit positionChanged();
 }
 
 void QmlBridge::checkDcaReminder() {
@@ -1619,5 +2159,526 @@ void QmlBridge::checkEventAlerts() {
     AppSettings::instance().save();
     if (m_tray) {
         m_tray->showMessage(tr("宏观日程"), text.left(60), QSystemTrayIcon::Warning, 4500);
+    }
+}
+
+// ============================================================
+// 自动化 Agent 相关接口实现
+// ============================================================
+void QmlBridge::openAgentWindow() {
+    Logger::info(QStringLiteral("QmlBridge::openAgentWindow called"));
+    if (m_agentWindow) {
+        m_agentWindow->setVisible(true);
+        m_agentWindow->show();
+        m_agentWindow->raise();
+        m_agentWindow->requestActivate();
+    }
+    emit requestShowAgentWindow();
+}
+
+void QmlBridge::closeAgentWindow() {
+    Logger::info(QStringLiteral("QmlBridge::closeAgentWindow called"));
+    if (m_agentWindow) {
+        m_agentWindow->setVisible(false);
+    }
+    emit requestCloseAgentWindow();
+}
+
+void QmlBridge::toggleAgentWindow() {
+    Logger::info(QStringLiteral("QmlBridge::toggleAgentWindow called"));
+    if (m_agentWindow && m_agentWindow->isVisible()) {
+        closeAgentWindow();
+        return;
+    }
+    openAgentWindow();
+}
+
+void QmlBridge::openAgentCardWindow() {
+    if (m_agentCardWindow) {
+        m_agentCardWindow->setVisible(true);
+        m_agentCardWindow->show();
+        m_agentCardWindow->raise();
+    }
+}
+
+void QmlBridge::closeAgentCardWindow() {
+    if (m_agentCardWindow) {
+        m_agentCardWindow->setVisible(false);
+    }
+}
+
+QVariantList QmlBridge::getAgentTasks() const {
+    return AgentService::instance().allTasksVariant();
+}
+
+bool QmlBridge::addOrUpdateAgentTask(const QVariantMap &taskData) {
+    return AgentService::instance().saveTask(AgentTask::fromMap(taskData));
+}
+
+bool QmlBridge::deleteAgentTask(const QString &taskId) {
+    return AgentService::instance().deleteTask(taskId);
+}
+
+bool QmlBridge::toggleAgentTask(const QString &taskId, bool enabled) {
+    return AgentService::instance().toggleTask(taskId, enabled);
+}
+
+void QmlBridge::runAgentTaskNow(const QString &taskId) {
+    AgentService::instance().runTaskNow(taskId);
+}
+
+void QmlBridge::advanceCurriculumDay(const QString &taskId) {
+    AgentService::instance().advanceCurriculum(taskId);
+}
+
+void QmlBridge::setCurriculumDay(const QString &taskId, int day) {
+    AgentService::instance().setCurriculumDay(taskId, day);
+}
+
+QVariantMap QmlBridge::getCurriculumTopic(int day) const {
+    return AgentService::instance().getCurriculumTopic(day);
+}
+
+QVariantMap QmlBridge::getCurriculumTopicForAgent(const QString &agentId, int day) const {
+    return AgentService::instance().getCurriculumTopic(agentId, day);
+}
+
+int QmlBridge::getCurriculumTotalDaysForAgent(const QString &agentId) const {
+    return AgentService::instance().curriculumTotalDays(agentId);
+}
+
+QString QmlBridge::getCurriculumWechatSummaryMarkdown() const {
+    return AgentService::instance().getCurriculumWechatSummaryMarkdown();
+}
+
+QString QmlBridge::getCurriculumWechatSummaryMarkdownForAgent(const QString &agentId) const {
+    return AgentService::instance().getCurriculumWechatSummaryMarkdown(agentId);
+}
+
+QString QmlBridge::getCurriculumDayWechatMarkdown(int day) const {
+    return AgentService::instance().getCurriculumDayWechatMarkdown(day);
+}
+
+QString QmlBridge::getCurriculumDayWechatMarkdownForAgent(const QString &agentId, int day) const {
+    return AgentService::instance().getCurriculumDayWechatMarkdown(agentId, day);
+}
+
+void QmlBridge::copyToClipboard(const QString &text) {
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(text);
+    }
+}
+
+QString QmlBridge::getAgentDatabasePath() const {
+    return AgentService::instance().databasePath();
+}
+
+void QmlBridge::openLearningNotesDir() {
+    const QString dir = AgentService::instance().learningNotesDir();
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
+QStringList QmlBridge::getNoteFiles() const {
+    return AgentService::instance().getNoteFiles();
+}
+
+QString QmlBridge::getNoteContent(const QString &fileName) const {
+    return AgentService::instance().getNoteContent(fileName);
+}
+
+
+void QmlBridge::openAgentWindowWithNote(const QString &fileName) {
+    openAgentWindow();
+    emit requestOpenNoteInAgentWindow(fileName);
+}
+
+void QmlBridge::openAgentChatWindow(const QString &initialPrompt, const QString &contextTopic) {
+    if (m_agentChatWindow) {
+        m_agentChatWindow->setVisible(true);
+        m_agentChatWindow->show();
+        m_agentChatWindow->raise();
+        m_agentChatWindow->requestActivate();
+    }
+    emit requestOpenAgentChatWindow(initialPrompt, contextTopic);
+}
+
+void QmlBridge::closeAgentChatWindow() {
+    if (m_agentChatWindow) {
+        m_agentChatWindow->setVisible(false);
+    }
+}
+
+void QmlBridge::askAiQuestion(const QString &question,
+                               const QString &contextTopic,
+                               const QString &provider,
+                               const QString &model,
+                               const QString &apiKey,
+                               const QString &customEndpoint)
+{
+    AgentAiService::instance().askQuestion(question, contextTopic, provider, model, apiKey, customEndpoint);
+}
+
+void QmlBridge::cancelAiQuestion() {
+    AgentAiService::instance().cancel();
+}
+
+bool QmlBridge::isAiBusy() const {
+    return AgentAiService::instance().isBusy();
+}
+
+QString QmlBridge::defaultAiProvider() const {
+    return AgentAiService::instance().defaultProvider();
+}
+
+QString QmlBridge::defaultAiApiKey() const {
+    return AgentAiService::instance().defaultApiKey();
+}
+
+QString QmlBridge::defaultAiModel() const {
+    return AgentAiService::instance().defaultModel();
+}
+
+void QmlBridge::saveAiSettings(const QString &provider, const QString &apiKey, const QString &model) {
+    if (!provider.isEmpty()) AppSettings::instance().setLlmProvider(provider);
+    if (!apiKey.isEmpty()) AppSettings::instance().setXaiApiKey(apiKey);
+    if (!model.isEmpty()) AppSettings::instance().setXaiModel(model);
+    AppSettings::instance().save();
+}
+
+
+bool QmlBridge::autoSimulateTrading() const {
+    return AppSettings::instance().autoSimulateTrading();
+}
+
+void QmlBridge::setAutoSimulateTrading(bool on) {
+    if (AppSettings::instance().autoSimulateTrading() != on) {
+        AppSettings::instance().setAutoSimulateTrading(on);
+        AppSettings::instance().save();
+        emit autoSimulateTradingChanged();
+    }
+}
+
+double QmlBridge::simulateTradeBatchGrams() const {
+    return AppSettings::instance().simulateTradeBatchGrams();
+}
+
+void QmlBridge::setSimulateTradeBatchGrams(double g) {
+    if (!qFuzzyCompare(AppSettings::instance().simulateTradeBatchGrams(), g)) {
+        AppSettings::instance().setSimulateTradeBatchGrams(g);
+        AppSettings::instance().save();
+        emit simulateTradeBatchGramsChanged();
+    }
+}
+
+double QmlBridge::totalRealizedPnl() const {
+    const QString src = AppSettings::instance().dataSource();
+    return ExtremeDatabase::instance().totalRealizedPnl(src);
+}
+
+double QmlBridge::positionGrams() const {
+    return AppSettings::instance().positionGrams();
+}
+
+double QmlBridge::positionCost() const {
+    return AppSettings::instance().positionCost();
+}
+
+QString QmlBridge::positionSummaryText() const {
+    const double g = positionGrams();
+    const double c = positionCost();
+    if (g <= 0.0) return tr("当前空仓 (0g)");
+    return tr("持仓 %1g · 成本 %2元/g").arg(g, 0, 'f', 2).arg(c, 0, 'f', 2);
+}
+
+void QmlBridge::openSimulatedTradesWindow() {
+    Logger::info(QStringLiteral("QmlBridge::openSimulatedTradesWindow called"));
+    if (m_simulatedTradesWindow) {
+        m_simulatedTradesWindow->setVisible(true);
+        m_simulatedTradesWindow->show();
+        m_simulatedTradesWindow->raise();
+        m_simulatedTradesWindow->requestActivate();
+    }
+    emit requestShowSimulatedTrades();
+}
+
+void QmlBridge::closeSimulatedTradesWindow() {
+    Logger::info(QStringLiteral("QmlBridge::closeSimulatedTradesWindow called"));
+    if (m_simulatedTradesWindow) {
+        m_simulatedTradesWindow->setVisible(false);
+    }
+    emit requestCloseSimulatedTrades();
+}
+
+void QmlBridge::toggleSimulatedTradesWindow() {
+    Logger::info(QStringLiteral("QmlBridge::toggleSimulatedTradesWindow called"));
+    if (m_simulatedTradesWindow && m_simulatedTradesWindow->isVisible()) {
+        closeSimulatedTradesWindow();
+        return;
+    }
+    openSimulatedTradesWindow();
+}
+
+bool QmlBridge::executeSimulatedTrade(const QString &action, double grams, const QString &customNote) {
+    if (m_price <= 0.0) return false;
+    const double price = m_price;
+    const QString src = AppSettings::instance().dataSource();
+    const double sellFeeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    const double buyFeeRate = 0.0; // 浙商积存金等当前买入手续费为 0，仅卖出收取 0.4%
+    const QString decisionTag = m_decisionText.isEmpty() ? tr("手工决策") : m_decisionText;
+
+    double tradeGrams = grams > 0.0 ? grams : AppSettings::instance().simulateTradeBatchGrams();
+    if (tradeGrams <= 0.0) tradeGrams = 10.0;
+
+    double oldGrams = AppSettings::instance().positionGrams();
+    double oldCost = AppSettings::instance().positionCost();
+    double newGrams = oldGrams;
+    double newCost = oldCost;
+    double realizedPnl = 0.0;
+    double grossAmount = 0.0;
+    double fee = 0.0;
+
+    if (action.toUpper() == QStringLiteral("BUY")) {
+        grossAmount = price * tradeGrams;
+        fee = grossAmount * buyFeeRate;
+        newGrams = oldGrams + tradeGrams;
+        if (oldGrams <= 0.0 || oldCost <= 0.0) {
+            newCost = (grossAmount + fee) / tradeGrams;
+        } else {
+            newCost = (oldGrams * oldCost + grossAmount + fee) / newGrams;
+        }
+        realizedPnl = 0.0;
+    } else if (action.toUpper() == QStringLiteral("SELL")) {
+        if (oldGrams <= 0.0) {
+            if (m_tray) {
+                m_tray->showMessage(tr("模拟交易提醒"), tr("当前无持仓可卖出！"), QSystemTrayIcon::Warning, 3000);
+            }
+            return false;
+        }
+        m_lastSellAdviceMs = QDateTime::currentMSecsSinceEpoch();
+        m_consecutiveBuyTicks = 0;
+        tradeGrams = qMin(tradeGrams, oldGrams);
+        grossAmount = price * tradeGrams;
+        fee = grossAmount * sellFeeRate;
+        realizedPnl = (price - oldCost) * tradeGrams - fee;
+        newGrams = oldGrams - tradeGrams;
+        if (newGrams <= 0.0001) {
+            newGrams = 0.0;
+            newCost = 0.0;
+        } else {
+            newCost = oldCost;
+        }
+    } else {
+        return false;
+    }
+
+    AppSettings::instance().setPositionGrams(newGrams);
+    AppSettings::instance().setPositionCost(newCost);
+    AppSettings::instance().save();
+
+    SimulatedTradeEntry entry;
+    entry.tradeTime = QDateTime::currentDateTime();
+    entry.source = src;
+    entry.action = action.toUpper();
+    entry.decisionTag = decisionTag;
+    entry.price = price;
+    entry.grams = tradeGrams;
+    entry.amount = grossAmount;
+    entry.fee = fee;
+    entry.realizedPnl = realizedPnl;
+    entry.remainingGrams = newGrams;
+    entry.remainingCost = newCost;
+    entry.note = customNote.isEmpty() ? QStringLiteral("根据决策【%1】模拟%2").arg(decisionTag, action.toUpper() == "BUY" ? "买入" : "卖出") : customNote;
+    ExtremeDatabase::instance().insertSimulatedTrade(entry);
+
+    updatePnL(price);
+    emit positionChanged();
+    emit simulatedTradesUpdated();
+    emit simulatedTradeExecuted(action.toUpper(), price, tradeGrams, realizedPnl, decisionTag);
+
+    if (m_tray && AppSettings::instance().trayNotifyOnAlert()) {
+        QString msg;
+        if (action.toUpper() == QStringLiteral("BUY")) {
+            msg = tr("【模拟买入记账完成】\n决策: %1\n成交: %2 元/g · %3 克 (金额: %4 元, 买入免手续费: %5 元)\n现持仓: %6 克 · 成本: %7 元/g")
+                      .arg(decisionTag)
+                      .arg(price, 0, 'f', 2)
+                      .arg(tradeGrams, 0, 'f', 2)
+                      .arg(grossAmount, 0, 'f', 2)
+                      .arg(fee, 0, 'f', 2)
+                      .arg(newGrams, 0, 'f', 2)
+                      .arg(newCost, 0, 'f', 2);
+        } else {
+            msg = tr("【模拟卖出记账完成】\n决策: %1\n成交: %2 元/g · %3 克 (金额: %4 元, 扣费: %5 元)\n本次实现盈亏: %6%7 元\n剩余持仓: %8 克")
+                      .arg(decisionTag)
+                      .arg(price, 0, 'f', 2)
+                      .arg(tradeGrams, 0, 'f', 2)
+                      .arg(grossAmount, 0, 'f', 2)
+                      .arg(fee, 0, 'f', 2)
+                      .arg(realizedPnl >= 0 ? "+" : "")
+                      .arg(realizedPnl, 0, 'f', 2)
+                      .arg(newGrams, 0, 'f', 2);
+        }
+        m_tray->showMessage(tr("模拟交易完成"), msg, QSystemTrayIcon::Information, 5000);
+    }
+    return true;
+}
+
+QVariantList QmlBridge::getSimulatedTrades(int limit) const {
+    const QString src = AppSettings::instance().dataSource();
+    const auto list = ExtremeDatabase::instance().loadSimulatedTrades(limit, src);
+    QVariantList res;
+    res.reserve(list.size());
+    for (const auto &t : list) {
+        QVariantMap m;
+        m[QStringLiteral("id")] = t.id;
+        m[QStringLiteral("tradeTime")] = t.tradeTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        m[QStringLiteral("source")] = t.source;
+        m[QStringLiteral("action")] = t.action;
+        m[QStringLiteral("decisionTag")] = t.decisionTag;
+        m[QStringLiteral("price")] = t.price;
+        m[QStringLiteral("grams")] = t.grams;
+        m[QStringLiteral("amount")] = t.amount;
+        m[QStringLiteral("fee")] = t.fee;
+        m[QStringLiteral("realizedPnl")] = t.realizedPnl;
+        m[QStringLiteral("remainingGrams")] = t.remainingGrams;
+        m[QStringLiteral("remainingCost")] = t.remainingCost;
+        m[QStringLiteral("note")] = t.note;
+        res.append(m);
+    }
+    return res;
+}
+
+double QmlBridge::getTotalRealizedPnl() const {
+    return totalRealizedPnl();
+}
+
+void QmlBridge::clearSimulatedTrades() {
+    ExtremeDatabase::instance().clearSimulatedTrades();
+    emit simulatedTradesUpdated();
+}
+
+void QmlBridge::checkAutoSimulateTrading(double price, int level, const QString &tag) {
+    if (!AppSettings::instance().autoSimulateTrading() || price <= 0.0) return;
+    if (AppSettings::instance().isInQuietHours()) return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 kMinAutoTradeIntervalMs = 20 * 60 * 1000;
+    if (m_lastAutoTradeMs > 0 && (nowMs - m_lastAutoTradeMs < kMinAutoTradeIntervalMs)) {
+        return; // 严格执行20分钟交易冷却间隔，杜绝因微小价差穿透冷却期
+    }
+
+    const double currentGrams = AppSettings::instance().positionGrams();
+    const double batchGrams = AppSettings::instance().simulateTradeBatchGrams();
+    const double posCost = AppSettings::instance().positionCost();
+    const QString src = AppSettings::instance().dataSource();
+    const double feeRate = (src == QStringLiteral("gj") || src == QStringLiteral("xau")) ? 0.0 : AppSettings::instance().feeRate();
+    const double fullCycleFee = price * feeRate; // 买入0费率，仅卖出扣除 0.4%
+    const double breakEvenPrice = (feeRate > 0.0 && feeRate < 0.1) ? (posCost / (1.0 - feeRate)) : posCost;
+
+    // 卖出后冷静期：至少30分钟内禁止反手追多买入，彻底避免“卖出后立即反手买入”
+    const qint64 kPostSellBuyCooldownMs = 30 * 60 * 1000;
+    if (m_lastAutoTradeAction == QStringLiteral("SELL") && (nowMs - m_lastAutoTradeMs < kPostSellBuyCooldownMs)) {
+        return;
+    }
+
+    const bool isBuySignal = (level == 3) && (tag.contains(QStringLiteral("买入")) || tag.contains(QStringLiteral("建仓")));
+    const bool isSellSignal = (level == 5 && currentGrams > 0.0) ||
+                             (level == 4 && tag.contains(QStringLiteral("高点已现·防守保护")) && currentGrams > 0.0);
+
+    const auto lastFc = ForecastService::instance().lastForecast();
+    const auto sentiment = SentimentService::instance().recentMarketImpact();
+
+    // 买入前进行宏观大势、消息面与空间费损核验
+    if (isBuySignal && m_lastAutoTradeDecisionTag != tag) {
+        // 1. 宏观日线趋势与消息面严控：强空/偏空或利空消息下严禁逆势接飞刀
+        const bool isMacroBear = m_multiDayBiasText.contains(QStringLiteral("空")) ||
+                                 lastFc.multiDayBias.contains(QStringLiteral("空")) ||
+                                 sentiment.bias == QStringLiteral("bearish");
+        if (isMacroBear) {
+            Logger::info(QStringLiteral("AutoTrade skipped BUY: macro trend (%1) or news sentiment (%2) is bearish.")
+                             .arg(m_multiDayBiasText).arg(sentiment.bias));
+            return;
+        }
+
+        // 2. 高点已大概率出现：禁止追高
+        if (lastFc.valid && lastFc.highAlreadyInProb >= 0.70) {
+            Logger::info(QStringLiteral("AutoTrade skipped BUY: highAlreadyInProb (%1) >= 0.70.")
+                             .arg(lastFc.highAlreadyInProb));
+            return;
+        }
+
+        // 3. 空间与摩擦成本核验：浙商积存金卖出扣 0.4%（约3.3~3.5元/g）。
+        // 预期上方空间必须足以覆盖至少 2.5 倍卖出手续费（保留至少 8.5 元/g 的安全空间），否则期望为负，拒绝开仓
+        const double minUpsideRequired = (feeRate > 0.0) ? qMax(8.0, fullCycleFee * 2.5) : 3.0;
+        if (m_predHigh > 0.0 && (m_predHigh - price < minUpsideRequired)) {
+            Logger::info(QStringLiteral("AutoTrade skipped BUY: expectedUpside (%1) < minUpsideRequired (%2)")
+                             .arg(m_predHigh - price).arg(minUpsideRequired));
+            return;
+        }
+
+        m_lastAutoTradeMs = nowMs;
+        m_lastAutoTradePrice = price;
+        m_lastAutoTradeDecisionTag = tag;
+        m_lastAutoTradeAction = QStringLiteral("BUY");
+        executeSimulatedTrade(QStringLiteral("BUY"), batchGrams,
+                              tr("决策算法【%1】触发自动模拟买入").arg(tag));
+    } else if (isSellSignal && m_lastAutoTradeDecisionTag != tag) {
+        // 卖出过滤：
+        // 1. 止盈类操作：必须确保扣费后处于真实净收益盈利状态
+        const bool isProfitTaking = tag.contains(QStringLiteral("止盈")) || tag.contains(QStringLiteral("冲高受阻"));
+        if (isProfitTaking && currentGrams > 0.0 && posCost > 0.0) {
+            if (price <= breakEvenPrice + 0.10) {
+                Logger::info(QStringLiteral("AutoTrade skipped SELL on take-profit: price (%1) <= breakEvenPrice (%2)")
+                                 .arg(price).arg(breakEvenPrice));
+                return;
+            }
+        }
+
+        // 2. 防守减仓 / 止损类操作：必须经过硬止损线或日线支撑跌破核验，杜绝 15 分钟级微观杂波频繁割肉
+        const bool isDefensiveSell = tag.contains(QStringLiteral("破位")) || tag.contains(QStringLiteral("防守")) || tag.contains(QStringLiteral("失效"));
+        if (isDefensiveSell && currentGrams > 0.0 && posCost > 0.0) {
+            const double curAtr = ExtremeDatabase::instance().computeAtr(10, src);
+            const double effAtr = curAtr > 0.1 ? curAtr : 4.0;
+            const double hardStopLossPrice = posCost - qMax(3.8, effAtr * 0.75);
+            const double supportBreakTolerance = qBound(1.8, effAtr * 0.35, 3.5);
+            const bool breakDailySupport = (m_predLow > 0.0 && price < m_predLow - supportBreakTolerance);
+            if (price > hardStopLossPrice && !breakDailySupport) {
+                Logger::info(QStringLiteral("AutoTrade skipped SELL on noise: price (%1) > hardStopLoss (%2) and above daily support (%3)")
+                                 .arg(price).arg(hardStopLossPrice).arg(m_predLow - supportBreakTolerance));
+                return;
+            }
+        }
+
+        m_lastAutoTradeMs = nowMs;
+        m_lastAutoTradePrice = price;
+        m_lastAutoTradeDecisionTag = tag;
+        m_lastAutoTradeAction = QStringLiteral("SELL");
+        m_lastSellAdviceMs = nowMs;
+
+        // 梯级减仓机制：彻底废弃“一旦破位就全仓100%市价割肉”的极端恶劣逻辑！
+        // 区分常规防守（减仓 50% 或 1个 batch，保留底仓抗洗盘，节省一半手续费） vs 灾难性深跌（亏损 > max(5.0, ATR*1.0) 时全额清仓止损）
+        double sellG = batchGrams;
+        const double curAtr = ExtremeDatabase::instance().computeAtr(10, src);
+        const double effAtr = curAtr > 0.1 ? curAtr : 4.0;
+        const double catastrophicStopPrice = posCost - qMax(5.0, effAtr * 1.0);
+        const bool isCatastrophic = (posCost > 0.0 && price <= catastrophicStopPrice);
+
+        if (tag.contains(QStringLiteral("移动止盈"))) {
+            // 移动止盈锁定正收益：全仓获利了结
+            sellG = currentGrams;
+        } else if (isCatastrophic) {
+            // 灾难性深跌：全仓硬止损，阻断深套破产风险
+            sellG = currentGrams;
+            Logger::warn(QStringLiteral("AutoTrade triggered CATASTROPHIC stop-loss: price (%1) <= catastrophicStopPrice (%2), sell all %3g")
+                             .arg(price).arg(catastrophicStopPrice).arg(currentGrams));
+        } else {
+            // 常规防守减仓：梯级减仓 50%（或至少 1 个 batchGrams，至多留下一半底仓）
+            // 既有效降低风险敞口、减少一半手续费，又避免因假摔或下影线插针被“一次性全额洗劫在最低点”
+            sellG = qMin(currentGrams, qMax(batchGrams, qRound(currentGrams * 0.5 * 100.0) / 100.0));
+            Logger::info(QStringLiteral("AutoTrade triggered GRADUATED defensive reduction: sell %1g out of %2g (50% risk-reduction)")
+                             .arg(sellG).arg(currentGrams));
+        }
+
+        executeSimulatedTrade(QStringLiteral("SELL"), sellG,
+                              tr("决策算法【%1】触发自动模拟卖出").arg(tag));
     }
 }

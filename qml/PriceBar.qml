@@ -436,12 +436,16 @@ Window {
 
                 ToolTip.delay: 300
                 ToolTip.visible: pnlMouse.containsMouse
-                ToolTip.text: "本地持仓浮动盈亏（设置中已配置克数与成本）"
+                ToolTip.text: "本地持仓浮动盈亏（点击展开/关闭模拟交易详情）"
 
                 MouseArea {
                     id: pnlMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        bridge.toggleSimulatedTradesWindow()
+                    }
                 }
             }
 
@@ -584,7 +588,7 @@ Window {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             console.log("Sentiment button clicked")
-                            bridge.openSentimentWindow()
+                            bridge.toggleSentimentWindow()
                         }
                     }
                     ToolTip.delay: 600
@@ -616,13 +620,77 @@ Window {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             console.log("Chart button clicked")
-                            bridge.openChartWindow()
+                            bridge.toggleChartWindow()
                         }
                     }
                     ToolTip.delay: 600
                     ToolTip.timeout: 4000
                     ToolTip.visible: btnChartMouse.containsMouse
                     ToolTip.text: "分时走势图"
+                }
+
+                // 模拟交易记录与持仓明细按钮
+                Rectangle {
+                    id: btnTrades
+                    width: 28
+                    height: 26
+                    radius: 4
+                    color: btnTradesMouse.pressed ? "#3D3E54" : (btnTradesMouse.containsMouse ? "#2C2D3A" : "transparent")
+                    border.color: btnTradesMouse.containsMouse ? "#4D4E62" : "transparent"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "📋"
+                        font.pixelSize: 13
+                    }
+                    MouseArea {
+                        id: btnTradesMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        preventStealing: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            console.log("Trades button clicked")
+                            bridge.toggleSimulatedTradesWindow()
+                        }
+                    }
+                    ToolTip.delay: 600
+                    ToolTip.timeout: 4000
+                    ToolTip.visible: btnTradesMouse.containsMouse
+                    ToolTip.text: "模拟交易记录与持仓明细 (查看买入价、克数、时间及盈亏表格)"
+                }
+
+
+                // 自动化 Agent 任务中心按钮
+                Rectangle {
+                    id: btnAgent
+                    width: 28
+                    height: 26
+                    radius: 4
+                    color: btnAgentMouse.pressed ? "#3D3E54" : (btnAgentMouse.containsMouse ? "#2C2D3A" : "transparent")
+                    border.color: btnAgentMouse.containsMouse ? "#4D4E62" : "transparent"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "🤖"
+                        font.pixelSize: 13
+                    }
+                    MouseArea {
+                        id: btnAgentMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        preventStealing: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            bridge.toggleAgentWindow()
+                        }
+                    }
+                    ToolTip.delay: 600
+                    ToolTip.timeout: 4000
+                    ToolTip.visible: btnAgentMouse.containsMouse
+                    ToolTip.text: "自动化 Agent 任务中心 (C++ 学习/定时提醒/系统监控)"
                 }
 
                 // 设置按钮
@@ -648,7 +716,7 @@ Window {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             console.log("Settings button clicked")
-                            bridge.openSettingsWindow()
+                            bridge.toggleSettingsWindow()
                         }
                     }
                     ToolTip.delay: 600
@@ -910,6 +978,8 @@ Window {
                             font.pixelSize: 10
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
+                            maximumLineCount: 3
+                            elide: Text.ElideRight
                         }
                     }
 
@@ -959,7 +1029,7 @@ Window {
 
                 // Footer Hint
                 Text {
-                    text: "👉 点击徽章可直接打开分时走势与推演图"
+                    text: "👉 点击卡片空白处打开走势图 · 点击【明细】查看模拟交易历史"
                     color: "#7E7E94"
                     font.pixelSize: 9
                     Layout.fillWidth: true
@@ -1334,7 +1404,11 @@ Window {
         }
         MenuItem {
             text: "📈 分时走势图"
-            onTriggered: bridge.openChartWindow()
+            onTriggered: bridge.toggleChartWindow()
+        }
+        MenuItem {
+            text: "📋 模拟交易记录与明细"
+            onTriggered: bridge.toggleSimulatedTradesWindow()
         }
         MenuItem {
             text: "🔄 强制刷新行情"

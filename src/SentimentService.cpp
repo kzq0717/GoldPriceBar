@@ -82,7 +82,10 @@ int SentimentService::scoreText(const QString& text)
         QStringLiteral("暴跌"), QStringLiteral("大幅加息"), QStringLiteral("非农强劲"),
         QStringLiteral("非农大超预期"), QStringLiteral("央行抛售"), QStringLiteral("地缘和解"),
         QStringLiteral("停火"), QStringLiteral("美元指数暴涨"), QStringLiteral("重挫"),
-        QStringLiteral("高位跳水"), QStringLiteral("闪崩")
+        QStringLiteral("高位跳水"), QStringLiteral("闪崩"), QStringLiteral("创一年新低"),
+        QStringLiteral("创历史新低"), QStringLiteral("连续下调"), QStringLiteral("突遭抛售"),
+        QStringLiteral("跳水重挫"), QStringLiteral("单边下挫"), QStringLiteral("大幅收跌"),
+        QStringLiteral("断崖式下跌"), QStringLiteral("大跌创")
     };
     // 常规利空关键词 (-1)
     static const QStringList bear = {
@@ -90,7 +93,7 @@ int SentimentService::scoreText(const QString& text)
         QStringLiteral("新低"), QStringLiteral("利空"), QStringLiteral("加息"),
         QStringLiteral("抛售"), QStringLiteral("减持"), QStringLiteral("大跌"),
         QStringLiteral("看跌"), QStringLiteral("承压"), QStringLiteral("跌破"),
-        QStringLiteral("空头"), QStringLiteral("跳水"),
+        QStringLiteral("空头"), QStringLiteral("跳水"), QStringLiteral("回调"),
         QStringLiteral("slump"), QStringLiteral("drop"), QStringLiteral("bearish"),
     };
 
@@ -155,14 +158,17 @@ SentimentImpact SentimentService::recentMarketImpact(int maxAgeHours) const
     }
 
     res.netScore = netScore;
-    if (topAbsScore >= 2 || netScore >= 2) {
+    // 关键修正：必须根据净得分与最强单项的真实正负符号（而非绝对值）判断利多还是利空！
+    // 严禁使用 topAbsScore >= 2 判定利多，否则大跌/暴跌（score=-3）会被绝对值(3>=2)严重误判为“利多驱动”！
+    const int effectiveDir = (qAbs(netScore) >= 2) ? netScore : topItem.score;
+    if (effectiveDir >= 2 || netScore >= 2) {
         res.hasImpact = true;
         res.bias = QStringLiteral("bullish");
         res.topTitle = topItem.title.isEmpty() ? tr("多项消息面偏向利多") : topItem.title;
         res.topSource = topItem.source;
         res.topTime = topItem.published;
         res.summary = QStringLiteral("【利多消息驱动】%1").arg(res.topTitle);
-    } else if (topAbsScore <= -2 || netScore <= -2) {
+    } else if (effectiveDir <= -2 || netScore <= -2) {
         res.hasImpact = true;
         res.bias = QStringLiteral("bearish");
         res.topTitle = topItem.title.isEmpty() ? tr("多项消息面偏向利空") : topItem.title;
@@ -172,6 +178,7 @@ SentimentImpact SentimentService::recentMarketImpact(int maxAgeHours) const
     } else {
         res.hasImpact = false;
         res.bias = QStringLiteral("neutral");
+        res.summary = QStringLiteral("【消息面中性整理】");
     }
     return res;
 }
@@ -292,6 +299,26 @@ void SentimentService::parseSinaJson(const QByteArray& data)
             item.published = QDateTime::currentDateTime();
 
         const QString blob = item.title + QStringLiteral(" ") + item.summary;
+        // 严格资讯相关性过滤：坚决排除农产品、生猪、白糖等无关期货晨报，确保聚焦黄金与贵金属
+        const bool isGoldRelated = blob.contains(QStringLiteral("黄金"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("金价"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("贵金属"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("伦敦金"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("积存金"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("金饰"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("金条"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("现货黄金"), Qt::CaseInsensitive)
+                                || blob.contains(QStringLiteral("XAU"), Qt::CaseInsensitive)
+                                || (blob.contains(QStringLiteral("央行"), Qt::CaseInsensitive) && blob.contains(QStringLiteral("购金"), Qt::CaseInsensitive));
+        const bool isIrrelevant = item.title.contains(QStringLiteral("农产品"))
+                               || item.title.contains(QStringLiteral("生猪"))
+                               || item.title.contains(QStringLiteral("白糖"))
+                               || item.title.contains(QStringLiteral("玉米"))
+                               || item.title.contains(QStringLiteral("棉花"))
+                               || item.title.contains(QStringLiteral("大豆"));
+        if (!isGoldRelated || isIrrelevant)
+            continue;
+
         item.score = scoreText(blob);
         item.bias = classifyBias(blob);
         m_pending.append(item);
@@ -340,12 +367,20 @@ void SentimentService::parseRss(const QByteArray& data, const QString& feedName)
                 inItem = false;
                 if (cur.title.isEmpty())
                     continue;
-                // 过滤明显无关
+                // 过滤明显无关资讯
                 const QString blob = cur.title + cur.summary;
-                if (!blob.contains(QStringLiteral("金"), Qt::CaseInsensitive)
-                    && !blob.contains(QStringLiteral("gold"), Qt::CaseInsensitive)
-                    && !blob.contains(QStringLiteral("XAU"), Qt::CaseInsensitive)
-                    && !blob.contains(QStringLiteral("贵金属")))
+                const bool isGoldRelated = blob.contains(QStringLiteral("黄金"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("金价"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("贵金属"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("伦敦金"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("积存金"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("金饰"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("gold"), Qt::CaseInsensitive)
+                                        || blob.contains(QStringLiteral("XAU"), Qt::CaseInsensitive);
+                const bool isIrrelevant = cur.title.contains(QStringLiteral("农产品"))
+                                       || cur.title.contains(QStringLiteral("生猪"))
+                                       || cur.title.contains(QStringLiteral("大豆"));
+                if (!isGoldRelated || isIrrelevant)
                     continue;
                 cur.score = scoreText(blob);
                 cur.bias = classifyBias(blob);

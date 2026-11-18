@@ -30,6 +30,58 @@ Window {
     ]
 
     property var cachedAmpData: null
+    property string rootSavedModel: ""
+
+    property var aiProviders: [
+        { id: "deepseek", name: "DeepSeek (深度求索)", placeholder: "sk-...", defaultModels: ["deepseek-chat", "deepseek-reasoner"] },
+        { id: "glm",      name: "智谱 GLM (BigModel)", placeholder: "api_key.id", defaultModels: ["glm-4-plus", "glm-4-flash", "glm-4-long", "glm-4v-plus", "glm-3-turbo"] },
+        { id: "qwen",     name: "通义千问 (Qwen/百炼)", placeholder: "sk-...", defaultModels: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long"] },
+        { id: "moonshot", name: "月之暗面 (Moonshot Kimi)", placeholder: "sk-...", defaultModels: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"] },
+        { id: "xai",      name: "xAI (Grok)", placeholder: "xai-...", defaultModels: ["grok-2-latest", "grok-2", "grok-beta", "grok-vision-beta"] },
+        { id: "gemini",   name: "Google Gemini", placeholder: "AIzaSy...", defaultModels: ["gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-pro-latest", "gemini-1.5-flash"] },
+        { id: "openai",   name: "OpenAI (ChatGPT)", placeholder: "sk-...", defaultModels: ["gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "gpt-4-turbo"] },
+        { id: "custom",   name: "自定义 (OpenAI 兼容)", placeholder: "sk-...", defaultModels: ["deepseek-chat", "glm-4-flash", "gpt-4o-mini"] }
+    ]
+
+    function getProviderIndexById(providerId) {
+        if (!providerId) return 0;
+        var p = providerId.toString().toLowerCase().trim();
+        if (p === "zhipu") p = "glm";
+        for (var i = 0; i < aiProviders.length; ++i) {
+            if (aiProviders[i].id === p) return i;
+        }
+        return 0;
+    }
+
+    function defaultModelsForProvider(provIdx) {
+        if (provIdx >= 0 && provIdx < aiProviders.length) {
+            return aiProviders[provIdx].defaultModels;
+        }
+        return aiProviders[0].defaultModels;
+    }
+
+    function setModelComboSelection(modelName) {
+        var mList = comboModelName.model
+        if (!mList || mList.length === 0) {
+            mList = defaultModelsForProvider(comboProvider.currentIndex)
+            comboModelName.model = mList
+        }
+        var foundIdx = -1
+        for (var i = 0; i < mList.length; ++i) {
+            if (mList[i] === modelName) {
+                foundIdx = i
+                break
+            }
+        }
+        if (foundIdx >= 0) {
+            comboModelName.currentIndex = foundIdx
+        } else if (modelName && modelName.length > 0) {
+            var arr = Array.from(mList)
+            arr.unshift(modelName)
+            comboModelName.model = arr
+            comboModelName.currentIndex = 0
+        }
+    }
 
     // Inline Reusable Components
     component SettingCard: Rectangle {
@@ -213,6 +265,25 @@ Window {
         }
     }
 
+    component DarkButton: Button {
+        id: dbtn
+        implicitHeight: 30
+        contentItem: Text {
+            text: dbtn.text
+            color: dbtn.hovered ? "#FFFFFF" : "#D0D0E0"
+            font.pixelSize: 11
+            font.bold: false
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            color: dbtn.pressed ? "#1E1E28" : (dbtn.hovered ? "#2A2A38" : "#1F1F2A")
+            radius: 4
+            border.color: dbtn.hovered ? "#4E4E68" : "#323242"
+            border.width: 1
+        }
+    }
+
     Connections {
         target: bridge
         function onRequestShowSettings() {
@@ -223,21 +294,40 @@ Window {
             root.requestActivate()
         }
 
+        function onRequestCloseSettings() {
+            root.visible = false
+        }
+
         function onModelsLoaded(models) {
-            modelComboModel.clear()
-            for (var i = 0; i < models.length; ++i) {
-                modelComboModel.append({ text: models[i] })
-            }
-            lblModelStatus.text = "✅ 成功拉取 " + models.length + " 个可用模型"
-            lblModelStatus.color = "#52C41A"
-            if (models.length > 0) {
-                txtModelName.text = models[0]
+            if (models && models.length > 0) {
+                comboModelName.model = models
+                var cur = rootSavedModel || ""
+                var found = -1
+                for (var i = 0; i < models.length; ++i) {
+                    if (models[i] === cur) {
+                        found = i
+                        break
+                    }
+                }
+                comboModelName.currentIndex = (found >= 0) ? found : 0
+                lblModelStatus.text = "✅ 成功拉取 " + models.length + " 个可用模型，请在下拉菜单中点选"
+                lblModelStatus.color = "#52C41A"
+            } else {
+                lblModelStatus.text = "⚠️ 未解析到可用模型列表"
+                lblModelStatus.color = "#FFD04B"
             }
         }
 
         function onModelsLoadFailed(err) {
             lblModelStatus.text = "❌ " + err
             lblModelStatus.color = "#FF4D4F"
+        }
+
+        function onAiConnectionTested(success, msg, latency) {
+            btnTestAi.enabled = true
+            btnTestAi.text = "⚡ 测试连通性"
+            lblModelStatus.text = (success ? "✅ " : "❌ ") + msg
+            lblModelStatus.color = success ? "#52C41A" : "#FF4D4F"
         }
 
         function onPriceChanged() {
@@ -292,13 +382,18 @@ Window {
         // 3. AI价格预测
         comboForecastEngine.currentIndex = s.forecastOnline ? 1 : 0
         spinForecastInterval.value = s.forecastIntervalSec || 300
-        comboProvider.currentIndex = (s.llmProvider === "gemini") ? 1 : 0
+        var pIdx = getProviderIndexById(s.llmProvider)
+        comboProvider.currentIndex = pIdx
         txtApiKey.text = s.xaiApiKey || ""
-        txtModelName.text = s.xaiModel || (comboProvider.currentIndex === 1 ? "gemini-2.0-flash" : "grok-2-latest")
+        rootSavedModel = s.xaiModel || ""
+        comboModelName.model = defaultModelsForProvider(pIdx)
+        setModelComboSelection(s.xaiModel || defaultModelsForProvider(pIdx)[0])
 
         // 4. 持仓与报告
         txtPositionGrams.text = (s.positionGrams && s.positionGrams > 0) ? Number(s.positionGrams).toFixed(2) : ""
         txtPositionCost.text = (s.positionCost && s.positionCost > 0) ? Number(s.positionCost).toFixed(2) : ""
+        chkAutoSimulateTrading.checked = !!s.autoSimulateTrading
+        txtSimTradeBatchGrams.text = (s.simulateTradeBatchGrams && s.simulateTradeBatchGrams > 0) ? Number(s.simulateTradeBatchGrams).toFixed(1) : "10.0" 
         chkDailyReport.checked = !!s.dailyReportEnabled
         txtDailyReportTime.text = s.dailyReportTime || "17:30"
         spinDcaDay.value = (s.dcaDayOfMonth >= 1 && s.dcaDayOfMonth <= 31) ? s.dcaDayOfMonth : 15
@@ -357,13 +452,16 @@ Window {
         // 3. AI价格预测
         m["forecastOnline"] = (comboForecastEngine.currentIndex === 1)
         m["forecastIntervalSec"] = spinForecastInterval.value
-        m["llmProvider"] = (comboProvider.currentIndex === 1) ? "gemini" : "xai"
+        var curProv = (comboProvider.currentIndex >= 0 && comboProvider.currentIndex < aiProviders.length) ? aiProviders[comboProvider.currentIndex].id : "deepseek"
+        m["llmProvider"] = curProv
         m["xaiApiKey"] = txtApiKey.text.trim()
-        m["xaiModel"] = txtModelName.text.trim()
+        m["xaiModel"] = comboModelName.currentText ? comboModelName.currentText.trim() : ""
 
         // 4. 持仓与报告
         m["positionGrams"] = parseFloat(txtPositionGrams.text) || 0.0
         m["positionCost"] = parseFloat(txtPositionCost.text) || 0.0
+        m["autoSimulateTrading"] = chkAutoSimulateTrading.checked
+        m["simulateTradeBatchGrams"] = parseFloat(txtSimTradeBatchGrams.text) || 10.0
         m["dailyReportEnabled"] = chkDailyReport.checked
         m["dailyReportTime"] = txtDailyReportTime.text.trim()
         m["dcaDayOfMonth"] = spinDcaDay.value
@@ -1112,13 +1210,18 @@ Window {
                                 DarkComboBox {
                                     id: comboProvider
                                     Layout.fillWidth: true
-                                    model: ["xAI (Grok)", "Google Gemini"]
-                                    onCurrentIndexChanged: {
-                                        if (txtModelName.text.indexOf("grok") >= 0 && currentIndex === 1) {
-                                            txtModelName.text = "gemini-2.0-flash"
-                                        } else if (txtModelName.text.indexOf("gemini") >= 0 && currentIndex === 0) {
-                                            txtModelName.text = "grok-2-latest"
+                                    model: {
+                                        var arr = []
+                                        for (var i = 0; i < root.aiProviders.length; ++i) {
+                                            arr.push(root.aiProviders[i].name)
                                         }
+                                        return arr
+                                    }
+                                    onCurrentIndexChanged: {
+                                        comboModelName.model = defaultModelsForProvider(currentIndex)
+                                        comboModelName.currentIndex = 0
+                                        lblModelStatus.text = "已切换服务商为 " + root.aiProviders[currentIndex].name + "，请选择对应模型或在线拉取"
+                                        lblModelStatus.color = "#8E8E9F"
                                     }
                                 }
                             }
@@ -1138,7 +1241,9 @@ Window {
                                     id: txtApiKey
                                     Layout.fillWidth: true
                                     echoMode: chkShowKey.checked ? TextInput.Normal : TextInput.Password
-                                    placeholderText: comboProvider.currentIndex === 0 ? "xai-..." : "AIzaSy..."
+                                    placeholderText: (comboProvider.currentIndex >= 0 && comboProvider.currentIndex < root.aiProviders.length)
+                                        ? (root.aiProviders[comboProvider.currentIndex].name + " API Key (" + root.aiProviders[comboProvider.currentIndex].placeholder + ")")
+                                        : "API Key..."
                                 }
 
                                 DarkCheckBox {
@@ -1158,10 +1263,14 @@ Window {
                                     Layout.preferredWidth: 90
                                 }
 
-                                DarkTextField {
-                                    id: txtModelName
+                                DarkComboBox {
+                                    id: comboModelName
                                     Layout.fillWidth: true
-                                    placeholderText: "例如 grok-2-latest 或 gemini-2.0-flash"
+                                    model: defaultModelsForProvider(comboProvider.currentIndex)
+                                    onActivated: {
+                                        lblModelStatus.text = "已选择模型: " + currentText + "，可点击「⚡ 测试连通性」检验此模型可用性"
+                                        lblModelStatus.color = "#FFD04B"
+                                    }
                                 }
 
                                 Button {
@@ -1169,8 +1278,8 @@ Window {
                                     onClicked: {
                                         lblModelStatus.text = "正在拉取最新模型列表..."
                                         lblModelStatus.color = "#FFD04B"
-                                        var p = (comboProvider.currentIndex === 1) ? "gemini" : "xai"
-                                        bridge.fetchModelList(p, txtApiKey.text)
+                                        var provId = (comboProvider.currentIndex >= 0 && comboProvider.currentIndex < root.aiProviders.length) ? root.aiProviders[comboProvider.currentIndex].id : "deepseek"
+                                        bridge.fetchModelList(provId, txtApiKey.text)
                                     }
                                     contentItem: Text {
                                         text: parent.text
@@ -1184,13 +1293,52 @@ Window {
                                         radius: 4
                                     }
                                 }
+
+                                Button {
+                                    id: btnTestAi
+                                    text: "⚡ 测试连通性"
+                                    onClicked: {
+                                        var provId = (comboProvider.currentIndex >= 0 && comboProvider.currentIndex < root.aiProviders.length) ? root.aiProviders[comboProvider.currentIndex].id : "deepseek"
+                                        var mName = comboModelName.currentText ? comboModelName.currentText.trim() : ""
+                                        if (!txtApiKey.text.trim()) {
+                                            lblModelStatus.text = "❌ 请先填写 API Key"
+                                            lblModelStatus.color = "#FF4D4F"
+                                            return
+                                        }
+                                        btnTestAi.enabled = false
+                                        btnTestAi.text = "⏳ 测试中..."
+                                        lblModelStatus.text = "正在向服务商发起连通性测试 (模型: " + mName + ")..."
+                                        lblModelStatus.color = "#FFD04B"
+                                        bridge.testAiConnection(provId, txtApiKey.text, mName)
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#3E9646" : "#2A7232"
+                                        radius: 4
+                                    }
+                                }
                             }
 
                             Text {
                                 id: lblModelStatus
-                                text: "支持输入自定义模型，或点击右侧按钮根据 API Key 自动拉取全部可用模型"
+                                text: "支持选择或拉取可用模型。选择后可点击「⚡ 测试连通性」即时检验 API 联通状态及代理连通率。"
                                 color: "#8E8E9F"
                                 font.pixelSize: 11
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 102
+                            }
+
+                            Text {
+                                text: "💡 海外模型 (Gemini/OpenAI) 需在「高级 - 网络代理」开启代理；国内模型 (DeepSeek/GLM/通义千问) 推荐直连。"
+                                color: "#6F7285"
+                                font.pixelSize: 10
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 102
                             }
@@ -1257,6 +1405,59 @@ Window {
                                         font.pixelSize: 11
                                         font.bold: true
                                         Layout.fillWidth: true
+                                    }
+                                }
+                            }
+
+                            // 决策模拟交易联动
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: "#252535"
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 14
+
+                                DarkCheckBox {
+                                    id: chkAutoSimulateTrading
+                                    text: "🤖 决策算法联动自动模拟交易 (触发买卖信号时自动记账调仓)"
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                RowLayout {
+                                    spacing: 4
+                                    visible: chkAutoSimulateTrading.checked
+                                    Text { text: "单笔克数:"; color: "#A6A6B4"; font.pixelSize: 11 }
+                                    DarkTextField {
+                                        id: txtSimTradeBatchGrams
+                                        implicitWidth: 60
+                                        text: "10.0"
+                                    }
+                                    Text { text: "克"; color: "#8E8EA4"; font.pixelSize: 11 }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                DarkButton {
+                                    text: "📋 查看模拟交易明细与记录..."
+                                    onClicked: {
+                                        bridge.openSimulatedTradesWindow()
+                                    }
+                                }
+
+                                DarkButton {
+                                    text: "🔄 重置模拟持仓与清空记录"
+                                    onClicked: {
+                                        txtPositionGrams.text = "0"
+                                        txtPositionCost.text = "0"
+                                        if (bridge) bridge.clearSimulatedTrades()
+                                        updatePositionProfit()
                                     }
                                 }
                             }

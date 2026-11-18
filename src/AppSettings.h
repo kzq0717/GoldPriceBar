@@ -145,6 +145,13 @@ class AppSettings : public QObject {
     void setPositionCost(double c);
 
     /** 浙商银行卖出手续费率（默认 0.4%，即 0.004） */
+
+    /** 决策模拟交易：自动买入/卖出联动开关与单笔克数 */
+    bool autoSimulateTrading() const;
+    void setAutoSimulateTrading(bool on);
+    double simulateTradeBatchGrams() const;
+    void setSimulateTradeBatchGrams(double g);
+
     double feeRate() const;
     void setFeeRate(double rate);
 
@@ -225,6 +232,8 @@ class AppSettings : public QObject {
     int m_percentileHigh = 80;
     double m_positionGrams = 0.0;
     double m_positionCost = 0.0;
+    bool m_autoSimulateTrading = false;
+    double m_simulateTradeBatchGrams = 10.0;
     double m_feeRate = 0.004;
     bool m_premiumAlertEnabled = true;
     double m_premiumThresholdPct = 2.0;

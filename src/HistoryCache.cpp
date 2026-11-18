@@ -78,10 +78,29 @@ void HistoryCache::replaceFromChart(const QVector<QPair<qint64, double>>& chartP
     m_points.clear();
     m_points.reserve(chartPoints.size());
 
+    const QDate today = QDate::currentDate();
+    const QDateTime nowDt = QDateTime::currentDateTime().addSecs(60);
+
+    QDate apiLatestDate;
     for (const auto& pt : chartPoints) {
-        if (pt.second <= 0.0)
+        if (pt.first <= 0 || pt.second <= 0.0)
             continue;
-        const QDateTime dt = QDateTime::fromSecsSinceEpoch(pt.first);
+        const QDateTime rawDt = QDateTime::fromSecsSinceEpoch(pt.first);
+        if (rawDt.isValid() && (!apiLatestDate.isValid() || rawDt.date() > apiLatestDate))
+            apiLatestDate = rawDt.date();
+    }
+
+    for (const auto& pt : chartPoints) {
+        if (pt.first <= 0 || pt.second <= 0.0)
+            continue;
+        const QDateTime rawDt = QDateTime::fromSecsSinceEpoch(pt.first);
+        if (!rawDt.isValid())
+            continue;
+        if (apiLatestDate.isValid() && rawDt.date() != apiLatestDate)
+            continue;
+        const QDateTime dt(today, rawDt.time());
+        if (!dt.isValid() || dt > nowDt)
+            continue;
         m_points.append({dt, pt.second});
     }
 

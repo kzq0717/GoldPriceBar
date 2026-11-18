@@ -1,5 +1,6 @@
 #include "ExtremeDatabase.h"
 #include "AppSettings.h"
+#include "Logger.h"
 
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -10,6 +11,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QVariant>
+#include <QMap>
 
 ExtremeDatabase& ExtremeDatabase::instance()
 {
@@ -192,6 +194,26 @@ bool ExtremeDatabase::ensureSchema()
         "  status TEXT,"
         "  UNIQUE(ts, source)"
         ")"));
+
+
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS simulated_trades ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  trade_time TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  action TEXT NOT NULL,"
+        "  decision_tag TEXT,"
+        "  price REAL NOT NULL,"
+        "  grams REAL NOT NULL,"
+        "  amount REAL NOT NULL,"
+        "  fee REAL NOT NULL,"
+        "  realized_pnl REAL DEFAULT 0,"
+        "  remaining_grams REAL,"
+        "  remaining_cost REAL,"
+        "  note TEXT"
+        ")"));
+    q.exec(QStringLiteral(
+        "CREATE INDEX IF NOT EXISTS idx_sim_trades_time ON simulated_trades(trade_time)"));
 
     return true;
 }
@@ -446,6 +468,52 @@ bool ExtremeDatabase::insertIntradaySample(const QDateTime& ts, const QString& s
     return true;
 }
 
+bool ExtremeDatabase::backfillIntradaySamplesFromChart(
+    const QDate& tradeDate, const QString& source,
+    const QVector<QPair<qint64, double>>& points)
+{
+    if (!m_open && !open())
+        return false;
+    if (!tradeDate.isValid() || points.isEmpty())
+        return false;
+
+    const QString src = source.isEmpty() ? QStringLiteral("zs") : source;
+    const QString fallbackDateStr = tradeDate.toString(Qt::ISODate);
+
+    // 按分钟归并（同分钟保留最新有效价格），再一次性事务写入，避免逐条写盘卡顿
+    QMap<QString, QPair<QDateTime, double>> bucketMap;
+    for (const auto& pt : points) {
+        if (pt.first <= 0 || pt.second <= 0.0)
+            continue;
+        const QDateTime rawDt = QDateTime::fromSecsSinceEpoch(pt.first);
+        if (!rawDt.isValid())
+            continue;
+        const QDateTime alignedDt(tradeDate, rawDt.time());
+        const QString minuteKey = alignedDt.toString(QStringLiteral("HH:mm"));
+        bucketMap.insert(minuteKey, {alignedDt, pt.second});
+    }
+    if (bucketMap.isEmpty())
+        return false;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    db.transaction();
+    QSqlQuery u(db);
+    u.prepare(QStringLiteral(
+        "INSERT INTO intraday_samples (trade_date, minute_key, source, ts, price) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(trade_date, minute_key, source) DO UPDATE SET "
+        "  ts=excluded.ts, price=excluded.price"));
+    for (auto it = bucketMap.cbegin(); it != bucketMap.cend(); ++it) {
+        u.addBindValue(fallbackDateStr);
+        u.addBindValue(it.key());
+        u.addBindValue(src);
+        u.addBindValue(it.value().first.toString(Qt::ISODateWithMs));
+        u.addBindValue(it.value().second);
+        u.exec();
+    }
+    return db.commit();
+}
+
 QVector<QPair<QDateTime, double>> ExtremeDatabase::loadIntradaySamples(
     const QDate& day, const QString& source) const
 {
@@ -476,8 +544,10 @@ QVector<QPair<QDateTime, double>> ExtremeDatabase::loadIntradaySamples(
                 dt = QDateTime(day, t);
         }
         const double p = q.value(1).toDouble();
-        if (dt.isValid() && p > 0.0)
-            out.append({dt, p});
+        if (dt.isValid() && p > 0.0) {
+            const QTime localTime = dt.toLocalTime().time();
+            out.append({QDateTime(day, localTime), p});
+        }
     }
     return out;
 }
@@ -921,4 +991,121 @@ bool ExtremeDatabase::insertSessionMark(const QDateTime& ts, const QString& sour
         return false;
     }
     return true;
+}
+
+
+bool ExtremeDatabase::insertSimulatedTrade(const SimulatedTradeEntry& entry)
+{
+    static QMutex s_mutex;
+    QMutexLocker locker(&s_mutex);
+
+    if (!m_open && !open())
+        return false;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "INSERT INTO simulated_trades (trade_time, source, action, decision_tag, price, grams, amount, fee, realized_pnl, remaining_grams, remaining_cost, note) "
+        "VALUES (:ts, :src, :action, :tag, :price, :grams, :amount, :fee, :pnl, :rem_grams, :rem_cost, :note)"));
+    q.bindValue(QStringLiteral(":ts"), entry.tradeTime.toString(Qt::ISODateWithMs));
+    q.bindValue(QStringLiteral(":src"), entry.source);
+    q.bindValue(QStringLiteral(":action"), entry.action);
+    q.bindValue(QStringLiteral(":tag"), entry.decisionTag);
+    q.bindValue(QStringLiteral(":price"), entry.price);
+    q.bindValue(QStringLiteral(":grams"), entry.grams);
+    q.bindValue(QStringLiteral(":amount"), entry.amount);
+    q.bindValue(QStringLiteral(":fee"), entry.fee);
+    q.bindValue(QStringLiteral(":pnl"), entry.realizedPnl);
+    q.bindValue(QStringLiteral(":rem_grams"), entry.remainingGrams);
+    q.bindValue(QStringLiteral(":rem_cost"), entry.remainingCost);
+    q.bindValue(QStringLiteral(":note"), entry.note);
+
+    if (!q.exec()) {
+        Logger::error(QStringLiteral("insertSimulatedTrade failed: %1").arg(q.lastError().text()));
+        return false;
+    }
+    return true;
+}
+
+QVector<SimulatedTradeEntry> ExtremeDatabase::loadSimulatedTrades(int limit, const QString& source) const
+{
+    static QMutex s_mutex;
+    QMutexLocker locker(&s_mutex);
+
+    QVector<SimulatedTradeEntry> out;
+    if (!m_open && !const_cast<ExtremeDatabase*>(this)->open())
+        return out;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    QString sql = QStringLiteral("SELECT id, trade_time, source, action, decision_tag, price, grams, amount, fee, realized_pnl, remaining_grams, remaining_cost, note FROM simulated_trades ");
+    if (!source.isEmpty()) {
+        sql += QStringLiteral("WHERE source = :src ");
+    }
+    sql += QStringLiteral("ORDER BY id DESC LIMIT :lim");
+    q.prepare(sql);
+    if (!source.isEmpty()) {
+        q.bindValue(QStringLiteral(":src"), source);
+    }
+    q.bindValue(QStringLiteral(":lim"), limit > 0 ? limit : 100);
+
+    if (q.exec()) {
+        while (q.next()) {
+            SimulatedTradeEntry e;
+            e.id = q.value(0).toLongLong();
+            e.tradeTime = QDateTime::fromString(q.value(1).toString(), Qt::ISODateWithMs);
+            if (!e.tradeTime.isValid())
+                e.tradeTime = QDateTime::fromString(q.value(1).toString(), Qt::ISODate);
+            e.source = q.value(2).toString();
+            e.action = q.value(3).toString();
+            e.decisionTag = q.value(4).toString();
+            e.price = q.value(5).toDouble();
+            e.grams = q.value(6).toDouble();
+            e.amount = q.value(7).toDouble();
+            e.fee = q.value(8).toDouble();
+            e.realizedPnl = q.value(9).toDouble();
+            e.remainingGrams = q.value(10).toDouble();
+            e.remainingCost = q.value(11).toDouble();
+            e.note = q.value(12).toString();
+            out.append(e);
+        }
+    }
+    return out;
+}
+
+double ExtremeDatabase::totalRealizedPnl(const QString& source) const
+{
+    static QMutex s_mutex;
+    QMutexLocker locker(&s_mutex);
+
+    if (!m_open && !const_cast<ExtremeDatabase*>(this)->open())
+        return 0.0;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    QString sql = QStringLiteral("SELECT SUM(realized_pnl) FROM simulated_trades");
+    if (!source.isEmpty()) {
+        sql += QStringLiteral(" WHERE source = :src");
+        q.prepare(sql);
+        q.bindValue(QStringLiteral(":src"), source);
+    } else {
+        q.prepare(sql);
+    }
+    if (q.exec() && q.next()) {
+        return q.value(0).toDouble();
+    }
+    return 0.0;
+}
+
+bool ExtremeDatabase::clearSimulatedTrades()
+{
+    static QMutex s_mutex;
+    QMutexLocker locker(&s_mutex);
+
+    if (!m_open && !open())
+        return false;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    QSqlQuery q(db);
+    return q.exec(QStringLiteral("DELETE FROM simulated_trades"));
 }

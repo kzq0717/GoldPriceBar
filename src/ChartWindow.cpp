@@ -48,6 +48,9 @@
 #include <QPen>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QGraphicsLineItem>
+#include <QGraphicsEllipseItem>
+#include <QGraphicsSimpleTextItem>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -154,6 +157,21 @@ void ChartWindow::setupChart() {
   yPen.setStyle(Qt::DotLine);
   m_yesterdaySeries->setPen(yPen);
 
+  m_day2Series = new QLineSeries(this);
+  m_day2Series->setName(tr("前日"));
+  m_day2Series->setPointsVisible(false);
+  m_day2Series->setVisible(false);
+
+  m_day3Series = new QLineSeries(this);
+  m_day3Series->setName(tr("4日前"));
+  m_day3Series->setPointsVisible(false);
+  m_day3Series->setVisible(false);
+
+  m_day4Series = new QLineSeries(this);
+  m_day4Series->setName(tr("5日前"));
+  m_day4Series->setPointsVisible(false);
+  m_day4Series->setVisible(false);
+
   // 未来 2 分钟预测：虚线
   m_forecastSeries = new QLineSeries(this);
   m_forecastSeries->setName(tr("预测最高"));
@@ -214,6 +232,9 @@ void ChartWindow::setupChart() {
   m_chart->addSeries(m_ma10Series);
   m_chart->addSeries(m_ma20Series);
   m_chart->addSeries(m_yesterdaySeries);
+  m_chart->addSeries(m_day2Series);
+  m_chart->addSeries(m_day3Series);
+  m_chart->addSeries(m_day4Series);
   m_chart->addSeries(m_forecastSeries);
   m_chart->addSeries(m_forecastLowSeries);
   m_chart->addSeries(m_fib50Series);
@@ -242,7 +263,8 @@ void ChartWindow::setupChart() {
   m_chart->addAxis(m_axisY, Qt::AlignLeft);
 
   const QList<QAbstractSeries*> seriesList = {
-      m_series, m_ma5Series, m_ma10Series, m_ma20Series, m_yesterdaySeries,
+      m_series, m_ma5Series, m_ma10Series, m_ma20Series,
+      m_yesterdaySeries, m_day2Series, m_day3Series, m_day4Series,
       m_forecastSeries, m_forecastLowSeries, m_fib50Series, m_fib618Series,
       m_currentSeries, m_highSeries, m_lowSeries};
   for (QAbstractSeries *s : seriesList) {
@@ -268,6 +290,25 @@ void ChartWindow::setupChart() {
       "border-radius:4px;padding:5px 9px;font-size:12px;}");
   m_tipLabel->hide();
 
+  // 十字光标线：垂直横轴竖线、垂直竖轴横线与曲线吸附高亮圆点
+  m_crosshairVLine = new QGraphicsLineItem(m_chart);
+  m_crosshairVLine->setZValue(25);
+  m_crosshairVLine->setEnabled(false);
+  m_crosshairVLine->setAcceptedMouseButtons(Qt::NoButton);
+  m_crosshairVLine->hide();
+
+  m_crosshairHLine = new QGraphicsLineItem(m_chart);
+  m_crosshairHLine->setZValue(25);
+  m_crosshairHLine->setEnabled(false);
+  m_crosshairHLine->setAcceptedMouseButtons(Qt::NoButton);
+  m_crosshairHLine->hide();
+
+  m_crosshairDot = new QGraphicsEllipseItem(-3.0, -3.0, 6.0, 6.0, m_chart);
+  m_crosshairDot->setZValue(26);
+  m_crosshairDot->setEnabled(false);
+  m_crosshairDot->setAcceptedMouseButtons(Qt::NoButton);
+  m_crosshairDot->hide();
+
   // —— 顶部现代工具栏：左周期 | 中均线胶囊 | 右导出 ——
   m_toolbar = new QFrame(this);
   m_toolbar->setObjectName(QStringLiteral("chartToolbar"));
@@ -284,7 +325,7 @@ void ChartWindow::setupChart() {
       "QFrame#chartToolbar QComboBox{"
       "  background:#1c2433;color:#e8eaed;"
       "  border:1px solid #2f3a4f;border-radius:8px;"
-      "  padding:4px 8px;min-height:28px;max-width:96px;"
+      "  padding:4px 8px;min-height:28px;max-width:115px;"
       "  font-size:12px;"
       "}"
       "QFrame#chartToolbar QComboBox:hover{border-color:#5b8def;}"
@@ -351,10 +392,13 @@ void ChartWindow::setupChart() {
   auto *periodHint = new QLabel(tr("周期"), m_toolbar);
   periodHint->setObjectName(QStringLiteral("tbHint"));
   m_periodCombo = new QComboBox(m_toolbar);
-  m_periodCombo->setFixedWidth(92);
+  m_periodCombo->setFixedWidth(106);
   m_periodCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
   m_periodCombo->addItem(tr("今日分时"), 0);
+  m_periodCombo->addItem(tr("近3日分时"), 3);
+  m_periodCombo->addItem(tr("近5日分时"), 5);
   m_periodCombo->addItem(tr("按日期"), 1);
+  m_periodCombo->setCurrentIndex(0);
   connect(m_periodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ChartWindow::onPeriodChanged);
 
@@ -787,6 +831,8 @@ void ChartWindow::setupChart() {
       "  padding:4px 6px;"
       "}");
   m_sideCatalystLabel->setWordWrap(true);
+  m_sideCatalystLabel->setMaximumHeight(48);
+  m_sideCatalystLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   m_sideCatalystLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   m_sideCatalystLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
   cardLay->addWidget(m_sideCatalystLabel);
@@ -819,8 +865,9 @@ void ChartWindow::setupChart() {
   m_sideForecastList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   m_sideForecastList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
   m_sideForecastList->setSpacing(2);
-  m_sideForecastList->setMinimumHeight(110);
-  m_sideForecastList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  m_sideForecastList->setMinimumHeight(90);
+  m_sideForecastList->setMaximumHeight(160);
+  m_sideForecastList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   m_sideForecastList->setToolTip(
       tr("滚动查看今日极值推演与催化记录；最新在底部"));
   sideLay->addWidget(m_sideForecastList, 1);
@@ -1079,6 +1126,7 @@ bool ChartWindow::eventFilter(QObject *watched, QEvent *event) {
             const qint64 newMax = m_panStartMaxMs - dtMs;
             m_axisX->setRange(QDateTime::fromMSecsSinceEpoch(newMin),
                               QDateTime::fromMSecsSinceEpoch(newMax));
+            updateDaySeparators();
           }
           return true;
         }
@@ -1185,8 +1233,20 @@ void ChartWindow::applyIntradaySpanRange()
     if (!m_axisX || m_plotPoints.isEmpty())
         return;
 
-    const QDateTime tFirst = m_plotPoints.first().first;
-    const QDateTime lastPt = m_plotPoints.last().first;
+    QDateTime tFirst = m_plotPoints.first().first;
+    QDateTime lastPt = m_plotPoints.last().first;
+
+    if (!m_activeOverlayCurves.isEmpty()) {
+        for (const auto& curve : m_activeOverlayCurves) {
+            if (!curve.series || !curve.series->isVisible() || curve.mappedPoints.isEmpty())
+                continue;
+            if (curve.mappedPoints.first().first < tFirst)
+                tFirst = curve.mappedPoints.first().first;
+            if (curve.mappedPoints.last().first > lastPt)
+                lastPt = curve.mappedPoints.last().first;
+        }
+    }
+
     const QDateTime now = QDateTime::currentDateTime();
     const QDateTime latestTime = (now > lastPt && now.date() == lastPt.date()) ? now : lastPt;
 
@@ -1222,6 +1282,11 @@ void ChartWindow::resetZoomRange()
 
     m_userZoomedX = false;
     m_isCompactView = false;
+    if (isMultiDayIntradayMode() && m_defaultMinX.isValid() && m_defaultMaxX.isValid()) {
+        m_axisX->setRange(m_defaultMinX, m_defaultMaxX);
+        autoFitYForVisibleRange();
+        return;
+    }
     if (isIntradayMode() && !m_plotPoints.isEmpty()) {
         applyIntradaySpanRange();
         return;
@@ -1245,18 +1310,35 @@ void ChartWindow::autoFitYForVisibleRange()
 
     double vMin = 1e9, vMax = -1e9;
     int count = 0;
-    for (const auto& pt : m_plotPoints) {
-        const qint64 t = pt.first.toMSecsSinceEpoch();
-        if (t >= minX && t <= maxX && pt.second > 0.0) {
-            vMin = qMin(vMin, pt.second);
-            vMax = qMax(vMax, pt.second);
-            count++;
+
+    if (!m_activeOverlayCurves.isEmpty()) {
+        for (const auto& curve : m_activeOverlayCurves) {
+            if (!curve.series || !curve.series->isVisible())
+                continue;
+            for (const auto& pt : curve.mappedPoints) {
+                const qint64 t = pt.first.toMSecsSinceEpoch();
+                if (t >= minX && t <= maxX && pt.second > 0.0) {
+                    vMin = qMin(vMin, pt.second);
+                    vMax = qMax(vMax, pt.second);
+                    count++;
+                }
+            }
+        }
+    }
+    if (count == 0) {
+        for (const auto& pt : m_plotPoints) {
+            const qint64 t = pt.first.toMSecsSinceEpoch();
+            if (t >= minX && t <= maxX && pt.second > 0.0) {
+                vMin = qMin(vMin, pt.second);
+                vMax = qMax(vMax, pt.second);
+                count++;
+            }
         }
     }
 
     if (count > 0 && vMax >= vMin) {
         const double actualSpan = vMax - vMin;
-        if (m_hasPredict) {
+        if (m_hasPredict && isTodayIntradayMode()) {
             const double allowPad = qMax(actualSpan * 1.5, ((vMin + vMax) * 0.5) * 0.008);
             if (m_lastPredictLow > 0 && m_lastPredictLow < vMin && (vMin - m_lastPredictLow) <= allowPad)
                 vMin = m_lastPredictLow;
@@ -1274,9 +1356,10 @@ void ChartWindow::autoFitYForVisibleRange()
         }
 
         const double span = qMax(1.0, vMax - vMin);
-        const double margin = qMax(0.4, span * 0.20);
+        const double margin = qMax(0.4, span * 0.16);
         m_axisY->setRange(vMin - margin, vMax + margin);
     }
+    updateDaySeparators();
 }
 
 int ChartWindow::nearestPointIndex(qreal xMsecs) const {
@@ -1298,25 +1381,138 @@ int ChartWindow::nearestPointIndex(qreal xMsecs) const {
 }
 
 void ChartWindow::updateCrosshair(const QPoint &viewPos) {
-  if (m_plotPoints.isEmpty() || !m_chart)
+  if (!m_chart || (m_plotPoints.isEmpty() && m_activeOverlayCurves.isEmpty()))
     return;
 
   const QPointF scenePt = m_chartView->mapToScene(viewPos);
   const QPointF itemPt = m_chart->mapFromScene(scenePt);
-  if (!m_chart->plotArea().contains(itemPt)) {
+  const QRectF plotRect = m_chart->plotArea();
+  if (!plotRect.contains(itemPt)) {
     hideCrosshair();
     return;
   }
 
   const QPointF value = m_chart->mapToValue(itemPt, m_series);
-  const int idx = nearestPointIndex(value.x());
-  if (idx < 0) {
-    hideCrosshair();
-    return;
+  const qint64 mouseMs = static_cast<qint64>(value.x());
+  const bool inIntraday = isIntradayMode();
+
+  // 辅助 lambda：在已映射的分时点集中二分查找距离 targetMs 最近的点索引
+  auto findNearestInMapped = [](const QVector<QPair<QDateTime, double>>& pts, qint64 targetMs, qint64 maxDistMs) -> int {
+      if (pts.isEmpty()) return -1;
+      auto it = std::lower_bound(pts.begin(), pts.end(), targetMs,
+          [](const QPair<QDateTime, double>& pt, qint64 ms) {
+              return pt.first.toMSecsSinceEpoch() < ms;
+          });
+      int idx = 0;
+      if (it == pts.end()) {
+          idx = static_cast<int>(pts.size() - 1);
+      } else if (it == pts.begin()) {
+          idx = 0;
+      } else {
+          int prevIdx = static_cast<int>(std::distance(pts.begin(), it)) - 1;
+          int currIdx = prevIdx + 1;
+          qint64 d1 = qAbs(pts[prevIdx].first.toMSecsSinceEpoch() - targetMs);
+          qint64 d2 = qAbs(pts[currIdx].first.toMSecsSinceEpoch() - targetMs);
+          idx = (d1 <= d2) ? prevIdx : currIdx;
+      }
+      if (maxDistMs > 0 && qAbs(pts[idx].first.toMSecsSinceEpoch() - targetMs) > maxDistMs) {
+          return -1;
+      }
+      return idx;
+  };
+
+  QDateTime t;
+  double snappedPrice = 0.0;
+  QColor focusedColor;
+  bool isFutureTime = false;
+  double todayCurrentPrice = 0.0;
+  if (!m_plotPoints.isEmpty()) {
+      todayCurrentPrice = m_plotPoints.last().second;
   }
 
-  const QDateTime t = m_plotPoints.at(idx).first;
-  const double currentPointPrice = m_plotPoints.at(idx).second;
+  const qint64 todayLastMs = m_plotPoints.isEmpty() ? 0 : m_plotPoints.last().first.toMSecsSinceEpoch();
+  // 分时模式下，若鼠标时间明显超出今日已发生的最晚分时点（超出 45 秒），判定为查看今日后续/未来时段
+  if (inIntraday && todayLastMs > 0 && mouseMs > todayLastMs + 45000) {
+      isFutureTime = true;
+  }
+
+  int bestCurveIdx = -1;
+  qreal bestDistScore = 1e9;
+  QPointF bestChartPt;
+
+  // 1. 尝试从多日叠加曲线（今日、昨日、前日等）中寻找吸附点
+  if (inIntraday && !m_activeOverlayCurves.isEmpty()) {
+      for (int i = 0; i < m_activeOverlayCurves.size(); ++i) {
+          const auto& curve = m_activeOverlayCurves.at(i);
+          if (!curve.series || !curve.series->isVisible() || curve.mappedPoints.isEmpty())
+              continue;
+
+          // 若鼠标处于今日尚未到达的未来时段，今日分时线 (i == 0) 不存在该时刻，跳过今日线
+          if (isFutureTime && i == 0)
+              continue;
+
+          const int ptIdx = findNearestInMapped(curve.mappedPoints, mouseMs, 30 * 60 * 1000);
+          if (ptIdx < 0)
+              continue;
+
+          const auto& pt = curve.mappedPoints.at(ptIdx);
+          const QPointF ptPos = m_chart->mapToPosition(QPointF(pt.first.toMSecsSinceEpoch(), pt.second), m_series);
+          const qreal distX = qAbs(ptPos.x() - itemPt.x());
+          const qreal distY = qAbs(ptPos.y() - itemPt.y());
+          // 综合距离：X 距离占比适度，Y 距离用于多线重叠时准确吸附鼠标最靠近的那根曲线
+          const qreal score = distX * 0.4 + distY;
+          if (score < bestDistScore) {
+              bestDistScore = score;
+              bestCurveIdx = i;
+              t = pt.first;
+              snappedPrice = pt.second;
+              focusedColor = curve.color;
+              bestChartPt = ptPos;
+          }
+      }
+  }
+
+  // 2. 兜底回退：若未从叠加曲线吸附成功（如非分时单日或日线模式）
+  if (bestCurveIdx < 0) {
+      if (m_plotPoints.isEmpty()) {
+          hideCrosshair();
+          return;
+      }
+      const int idx = nearestPointIndex(mouseMs);
+      if (idx < 0) {
+          hideCrosshair();
+          return;
+      }
+      t = m_plotPoints.at(idx).first;
+      snappedPrice = m_plotPoints.at(idx).second;
+      bestChartPt = m_chart->mapToPosition(QPointF(t.toMSecsSinceEpoch(), snappedPrice), m_series);
+      const bool dark = AppSettings::instance().darkTheme();
+      focusedColor = dark ? QColor(110, 168, 254) : QColor(0, 82, 217);
+  }
+
+  // 3. 更新十字准星（垂直横轴竖线 + 垂直竖轴横线 + 曲线吸附圆点）
+  if (m_crosshairVLine && m_crosshairHLine) {
+    const qreal crossX = qBound(plotRect.left(), bestChartPt.x(), plotRect.right());
+    qreal crossY = itemPt.y();
+    if (qAbs(itemPt.y() - bestChartPt.y()) <= 45.0) {
+      crossY = bestChartPt.y();
+    }
+    crossY = qBound(plotRect.top(), crossY, plotRect.bottom());
+
+    m_crosshairVLine->setLine(crossX, plotRect.top(), crossX, plotRect.bottom());
+    m_crosshairHLine->setLine(plotRect.left(), crossY, plotRect.right(), crossY);
+    m_crosshairVLine->show();
+    m_crosshairHLine->show();
+
+    if (m_crosshairDot) {
+      const qreal dotY = qBound(plotRect.top(), bestChartPt.y(), plotRect.bottom());
+      m_crosshairDot->setPos(crossX, dotY);
+      if (focusedColor.isValid()) {
+        m_crosshairDot->setBrush(QBrush(focusedColor));
+      }
+      m_crosshairDot->show();
+    }
+  }
 
   // 区分主源是积存金还是伦敦金
   const QString code = currentTypeCode();
@@ -1336,7 +1532,7 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
 
   // 检索匹配时刻 t 的副源报价（二分查找最贴近时间点）
   double counterpartPrice = 0.0;
-  if (!m_secondaryPlotPoints.isEmpty()) {
+  if (!isFutureTime && !m_secondaryPlotPoints.isEmpty()) {
     const qint64 targetMs = t.toMSecsSinceEpoch();
     auto it = std::lower_bound(m_secondaryPlotPoints.begin(), m_secondaryPlotPoints.end(), targetMs,
         [](const QPair<QDateTime, double>& pt, qint64 ms) {
@@ -1344,7 +1540,7 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
         });
     int secIdx = 0;
     if (it == m_secondaryPlotPoints.end()) {
-      secIdx = m_secondaryPlotPoints.size() - 1;
+      secIdx = static_cast<int>(m_secondaryPlotPoints.size() - 1);
     } else if (it == m_secondaryPlotPoints.begin()) {
       secIdx = 0;
     } else {
@@ -1354,9 +1550,12 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
       qint64 d2 = qAbs(m_secondaryPlotPoints[currIdx].first.toMSecsSinceEpoch() - targetMs);
       secIdx = (d1 <= d2) ? prevIdx : currIdx;
     }
-    counterpartPrice = m_secondaryPlotPoints.at(secIdx).second;
+    const qint64 diffSec = qAbs(m_secondaryPlotPoints.at(secIdx).first.secsTo(t));
+    if (diffSec <= 1800) {
+      counterpartPrice = m_secondaryPlotPoints.at(secIdx).second;
+    }
   }
-  if (counterpartPrice <= 0.0) {
+  if (!isFutureTime && counterpartPrice <= 0.0) {
     counterpartPrice = m_lastCounterpartPrice;
   }
 
@@ -1365,18 +1564,18 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
   QString jicunjinName;
 
   if (primaryIsLondon) {
-    londonGoldPrice = currentPointPrice;
+    londonGoldPrice = isFutureTime ? 0.0 : snappedPrice;
     jicunjinPrice = counterpartPrice;
     jicunjinName = tr("浙商积存金");
   } else {
-    jicunjinPrice = currentPointPrice;
+    jicunjinPrice = isFutureTime ? 0.0 : snappedPrice;
     londonGoldPrice = counterpartPrice;
     const QString canName = PriceService::canonicalSourceName(code);
     jicunjinName = canName.contains(QStringLiteral("积存金")) ? canName : (canName + tr("·积存金"));
   }
 
   QString timeStr;
-  if (!isIntradayMode()) {
+  if (!inIntraday) {
     timeStr = t.toString(QStringLiteral("yyyy-MM-dd"));
   } else if (m_periodCombo && m_periodCombo->currentData().toInt() == 1) {
     timeStr = t.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
@@ -1385,30 +1584,108 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
   }
 
   QStringList lines;
-  lines << QStringLiteral("<span style='color:#a0aec0;'>🕒 %1</span>").arg(timeStr);
+  if (inIntraday) {
+    if (isFutureTime) {
+      lines << QStringLiteral("<span style='color:#a0aec0;'>🕒 %1 (形态对比·未来时段)</span>").arg(timeStr);
+    } else {
+      lines << QStringLiteral("<span style='color:#a0aec0;'>🕒 %1 (同时刻对比)</span>").arg(timeStr);
+    }
 
-  if (jicunjinPrice > 0.0) {
-    lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: %2 元/g</span>")
-                 .arg(jicunjinName)
-                 .arg(jicunjinPrice, 0, 'f', 2);
+    double day0Price = 0.0;
+    if (!m_activeOverlayCurves.isEmpty()) {
+      const qint64 targetMs = t.toMSecsSinceEpoch();
+      for (int i = 0; i < m_activeOverlayCurves.size(); ++i) {
+        const auto& curve = m_activeOverlayCurves.at(i);
+        if (!curve.series || !curve.series->isVisible() || curve.mappedPoints.isEmpty())
+          continue;
+
+        const int ptIdx = findNearestInMapped(curve.mappedPoints, targetMs, 30 * 60 * 1000);
+        const double ptPrice = (ptIdx >= 0) ? curve.mappedPoints[ptIdx].second : 0.0;
+        const QString colorHex = curve.color.name();
+        const bool isFocused = (i == bestCurveIdx);
+
+        if (i == 0) {
+          if (isFutureTime || ptIdx < 0) {
+            lines << QStringLiteral("<span style='color:%1;'>● %2: 尚未发生 (现价: %3 元/g)</span>")
+                         .arg(colorHex, curve.name)
+                         .arg(todayCurrentPrice > 0.0 ? QString::number(todayCurrentPrice, 'f', 2) : tr("--.--"));
+          } else {
+            day0Price = ptPrice;
+            const QString focusStyle = isFocused ? QStringLiteral("font-weight:bold;text-decoration:underline;") : QStringLiteral("font-weight:bold;");
+            lines << QStringLiteral("<span style='color:%1;%2'>● %3: %4 元/g</span>")
+                         .arg(colorHex)
+                         .arg(focusStyle)
+                         .arg(curve.name)
+                         .arg(ptPrice, 0, 'f', 2);
+          }
+        } else {
+          if (ptIdx >= 0 && ptPrice > 0.0) {
+            QString diffText;
+            if (day0Price > 0.0) {
+              const double diff = day0Price - ptPrice;
+              diffText = QStringLiteral(" (%1%2)")
+                             .arg(diff >= 0.0 ? QStringLiteral("+") : QStringLiteral(""))
+                             .arg(diff, 0, 'f', 2);
+            } else if (todayCurrentPrice > 0.0) {
+              const double diff = todayCurrentPrice - ptPrice;
+              diffText = QStringLiteral(" (较今日现价 %1%2)")
+                             .arg(diff >= 0.0 ? QStringLiteral("+") : QStringLiteral(""))
+                             .arg(diff, 0, 'f', 2);
+            }
+            const QString focusStyle = isFocused ? QStringLiteral("font-weight:bold;text-decoration:underline;") : QStringLiteral("font-weight:600;");
+            lines << QStringLiteral("<span style='color:%1;%2'>● %3: %4 元/g%5</span>")
+                         .arg(colorHex)
+                         .arg(focusStyle)
+                         .arg(curve.name)
+                         .arg(ptPrice, 0, 'f', 2)
+                         .arg(diffText);
+          } else {
+            lines << QStringLiteral("<span style='color:%1;'>● %2: --.--</span>")
+                         .arg(colorHex, curve.name);
+          }
+        }
+      }
+    } else {
+      if (jicunjinPrice > 0.0) {
+        lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: %2 元/g</span>")
+                     .arg(jicunjinName)
+                     .arg(jicunjinPrice, 0, 'f', 2);
+      } else {
+        lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: --.-- 元/g</span>")
+                     .arg(jicunjinName);
+      }
+    }
+
+    if (londonGoldPrice > 0.0 && !isFutureTime) {
+      lines << QStringLiteral("<span style='color:#70bfff;font-weight:bold;'>🌍 伦敦金(XAU): $%1/oz</span>")
+                   .arg(londonGoldPrice, 0, 'f', 2);
+    }
   } else {
-    lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: --.-- 元/g</span>")
-                 .arg(jicunjinName);
+    lines << QStringLiteral("<span style='color:#a0aec0;'>🕒 %1</span>").arg(timeStr);
+    if (jicunjinPrice > 0.0) {
+      lines << QStringLiteral("<span style='color:#ffd591;font-weight:bold;'>💰 %1: %2 元/g</span>")
+                   .arg(jicunjinName)
+                   .arg(jicunjinPrice, 0, 'f', 2);
+    }
+    if (londonGoldPrice > 0.0) {
+      lines << QStringLiteral("<span style='color:#70bfff;font-weight:bold;'>🌍 伦敦金(XAU): $%1/oz</span>")
+                   .arg(londonGoldPrice, 0, 'f', 2);
+    }
   }
 
-  if (londonGoldPrice > 0.0) {
-    lines << QStringLiteral("<span style='color:#70bfff;font-weight:bold;'>🌍 伦敦金(XAU): $%1/oz</span>")
-                 .arg(londonGoldPrice, 0, 'f', 2);
-  } else {
-    lines << QStringLiteral("<span style='color:#70bfff;font-weight:bold;'>🌍 伦敦金(XAU): --.--</span>");
-  }
-
-  // 若处于预测极值突破/跌破状态，提示标注
-  if (m_hasPredict && isIntradayMode()) {
-    if (m_lastPredictLow > 0.0 && currentPointPrice < m_lastPredictLow) {
-      lines << QStringLiteral("<span style='color:#5cdbd3;font-size:11px;'>⚠️ 已破推演低点</span>");
-    } else if (m_lastPredictHigh > 0.0 && currentPointPrice > m_lastPredictHigh) {
-      lines << QStringLiteral("<span style='color:#ff7875;font-size:11px;'>🚀 已破推演高点</span>");
+  // 若处于预测极值状态，提示标注
+  if (m_hasPredict && inIntraday) {
+    if (!isFutureTime) {
+      if (m_lastPredictLow > 0.0 && snappedPrice < m_lastPredictLow && bestCurveIdx == 0) {
+        lines << QStringLiteral("<span style='color:#5cdbd3;font-size:11px;'>⚠️ 今日已破推演低点</span>");
+      } else if (m_lastPredictHigh > 0.0 && snappedPrice > m_lastPredictHigh && bestCurveIdx == 0) {
+        lines << QStringLiteral("<span style='color:#ff7875;font-size:11px;'>🚀 今日已破推演高点</span>");
+      }
+    } else {
+      if (m_lastPredictLow > 0.0 && m_lastPredictHigh > 0.0) {
+        lines << QStringLiteral("<span style='color:#a0aec0;font-size:11px;'>🎯 今日推演区间: %1 ~ %2</span>")
+                     .arg(m_lastPredictLow, 0, 'f', 2).arg(m_lastPredictHigh, 0, 'f', 2);
+      }
     }
   }
 
@@ -1429,6 +1706,12 @@ void ChartWindow::updateCrosshair(const QPoint &viewPos) {
 void ChartWindow::hideCrosshair() {
   if (m_tipLabel)
     m_tipLabel->hide();
+  if (m_crosshairVLine)
+    m_crosshairVLine->hide();
+  if (m_crosshairHLine)
+    m_crosshairHLine->hide();
+  if (m_crosshairDot)
+    m_crosshairDot->hide();
 }
 
 /**
@@ -1539,9 +1822,17 @@ void ChartWindow::appendForecastHistoryItem(const QDateTime& when, const QString
                        .arg(normLTime.isEmpty() ? QStringLiteral("—") : normLTime);
 
     if (!catalyst.trimmed().isEmpty()) {
-        text += QStringLiteral("\n催化: %1").arg(catalyst.trimmed());
+        QString catShort = catalyst.trimmed();
+        if (catShort.length() > 50) {
+            catShort = catShort.left(47) + QStringLiteral("...");
+        }
+        text += QStringLiteral("\n催化: %1").arg(catShort);
     } else if (!brief.trimmed().isEmpty() && brief != mode) {
-        text += QStringLiteral("\n简评: %1").arg(brief.trimmed());
+        QString briefShort = brief.trimmed();
+        if (briefShort.length() > 50) {
+            briefShort = briefShort.left(47) + QStringLiteral("...");
+        }
+        text += QStringLiteral("\n简评: %1").arg(briefShort);
     }
 
     QString newsEval = tr("技术面基准");
@@ -1738,10 +2029,10 @@ void ChartWindow::updateSidePanelValues(double current, double predict,
                         .arg(net, 0, 'f', 2);
           } else if (pat.bias == "低位企稳") {
             const double breakEven = current / (1.0 - feeRate);
-            desc += QStringLiteral("\n\n【浙商·低吸策略排除0.4%手续费测算】\n"
-                                   "• 现价低吸成本: %1 元/g\n"
+            desc += QStringLiteral("\n\n【浙商·低位企稳策略排除0.4%手续费测算】\n"
+                                   "• 现价建仓成本: %1 元/g\n"
                                    "• 保本卖出价格: %2 元/g (抗费损 +%3 元/g)\n"
-                                   "• 建议: 触及极值低点支撑，杀跌衰竭，关注企稳逢低分批建仓！")
+                                   "• 建议: 触及低点支撑需等待右侧企稳确认，切勿逆势抢跑，抗费损空间达标后方可分步建仓！")
                         .arg(current, 0, 'f', 2)
                         .arg(breakEven, 0, 'f', 2)
                         .arg(breakEven - current, 0, 'f', 2);
@@ -2221,7 +2512,11 @@ void ChartWindow::onForecastServiceUpdated(const ForecastResult& res)
     }
     if (m_sideCatalystLabel) {
         const QString cat = res.keyCatalyst.isEmpty() ? res.scenario : res.keyCatalyst;
-        m_sideCatalystLabel->setText(cat);
+        QString displayCat = cat.trimmed();
+        if (displayCat.length() > 65) {
+            displayCat = displayCat.left(62) + QStringLiteral("...");
+        }
+        m_sideCatalystLabel->setText(displayCat.isEmpty() ? QStringLiteral("—") : displayCat);
         m_sideCatalystLabel->setToolTip(res.scenario.isEmpty() ? cat : (cat + QStringLiteral("\n演变: ") + res.scenario));
     }
     if (m_sideTrendLabel) {
@@ -2632,6 +2927,7 @@ void ChartWindow::updateSeries() {
 
 void ChartWindow::resizeEvent(QResizeEvent *event) {
   QWidget::resizeEvent(event);
+  updateDaySeparators();
   // 尺寸变化后仅刷新侧栏数值，避免依赖浮动坐标
   if (!m_plotPoints.isEmpty()) {
     double high = 0.0, low = 0.0;
@@ -2668,13 +2964,42 @@ bool ChartWindow::isIntradayMode() const
 {
     if (!m_periodCombo)
         return true;
-    // 今日，或按日期且起止为同一天 → 分时
-    if (m_periodCombo->currentData().toInt() == 0)
+    const int val = m_periodCombo->currentData().toInt();
+    if (val == 0 || val == 3 || val == 5)
         return true;
     if (m_dateFromEdit && m_dateToEdit
         && m_dateFromEdit->date() == m_dateToEdit->date())
         return true;
     return false;
+}
+
+bool ChartWindow::isTodayIntradayMode() const
+{
+    if (!m_periodCombo)
+        return true;
+    if (m_periodCombo->currentData().toInt() == 0)
+        return true;
+    if (m_dateFromEdit && m_dateToEdit
+        && m_dateFromEdit->date() == m_dateToEdit->date()
+        && m_dateFromEdit->date() == QDate::currentDate())
+        return true;
+    return false;
+}
+
+bool ChartWindow::isMultiDayIntradayMode() const
+{
+    if (!m_periodCombo)
+        return false;
+    const int val = m_periodCombo->currentData().toInt();
+    return (val == 3 || val == 5);
+}
+
+int ChartWindow::multiDayCount() const
+{
+    if (!m_periodCombo)
+        return 0;
+    const int val = m_periodCombo->currentData().toInt();
+    return (val == 3 || val == 5) ? val : 0;
 }
 
 void ChartWindow::setForecastVisible(bool on)
@@ -2691,9 +3016,21 @@ void ChartWindow::setForecastVisible(bool on)
         m_currentSeries->setVisible(on);
 }
 
+int ChartWindow::targetOverlayDays() const
+{
+    if (!m_periodCombo)
+        return 2;
+    const int val = m_periodCombo->currentData().toInt();
+    if (val == 3) return 3;
+    if (val == 5) return 5;
+    if (val == 0) return 2; // 默认只显示今/昨日两日的
+    return 1;
+}
+
 void ChartWindow::onPeriodChanged(int)
 {
-    const bool custom = m_periodCombo && m_periodCombo->currentData().toInt() == 1;
+    const int pVal = m_periodCombo ? m_periodCombo->currentData().toInt() : 0;
+    const bool custom = (pVal == 1);
     if (m_dateFromEdit)
         m_dateFromEdit->setEnabled(custom);
     if (m_dateToEdit)
@@ -2703,16 +3040,34 @@ void ChartWindow::onPeriodChanged(int)
     if (m_spanCombo)
         m_spanCombo->setEnabled(isIntradayMode());
 
-    if (!custom) {
+    if (pVal == 0) {
         if (m_dateFromEdit)
             m_dateFromEdit->setDate(QDate::currentDate());
         if (m_dateToEdit)
             m_dateToEdit->setDate(QDate::currentDate());
-        setWindowTitle(tr("今日分时曲线"));
+        setWindowTitle(tr("今日分时走势（含昨日形态同刻对比）"));
         setForecastVisible(true);
-        if (m_axisX)
+        if (m_axisX) {
             m_axisX->setFormat(QStringLiteral("HH:mm"));
+            m_axisX->setTickCount(7);
+        }
+        clearDaySeparators();
         fetchChartFromApi();
+    } else if (pVal == 3 || pVal == 5) {
+        if (m_dateFromEdit)
+            m_dateFromEdit->setDate(QDate::currentDate());
+        if (m_dateToEdit)
+            m_dateToEdit->setDate(QDate::currentDate());
+        setWindowTitle(tr("近 %1 日分时形态同刻对比").arg(pVal));
+        setForecastVisible(false);
+        if (m_axisX) {
+            m_axisX->setFormat(QStringLiteral("HH:mm"));
+            m_axisX->setTickCount(7);
+        }
+        clearDaySeparators();
+        updateIntradayOverlay();
+    } else {
+        clearDaySeparators();
     }
 }
 
@@ -2902,6 +3257,325 @@ void ChartWindow::loadIntradayForDate(const QDate& day)
                           tr("历史分时·本地采样"));
 }
 
+void ChartWindow::clearDaySeparators()
+{
+    for (auto* line : m_daySeparatorLines) {
+        if (line) {
+            line->hide();
+            delete line;
+        }
+    }
+    m_daySeparatorLines.clear();
+
+    for (auto* lbl : m_daySeparatorLabels) {
+        if (lbl) {
+            lbl->hide();
+            delete lbl;
+        }
+    }
+    m_daySeparatorLabels.clear();
+    m_dayBoundaryTimestamps.clear();
+}
+
+void ChartWindow::updateDaySeparators()
+{
+    if (!m_chart || !isMultiDayIntradayMode() || m_dayBoundaryTimestamps.isEmpty() || !m_series) {
+        for (auto* l : m_daySeparatorLines) if (l) l->hide();
+        for (auto* t : m_daySeparatorLabels) if (t) t->hide();
+        return;
+    }
+
+    const QRectF plotRect = m_chart->plotArea();
+    if (plotRect.width() <= 10.0 || plotRect.height() <= 10.0)
+        return;
+
+    while (m_daySeparatorLines.size() < m_dayBoundaryTimestamps.size()) {
+        auto* line = new QGraphicsLineItem(m_chart);
+        line->setZValue(20);
+        line->setEnabled(false);
+        line->setAcceptedMouseButtons(Qt::NoButton);
+        QPen p(QColor(120, 140, 170, 110));
+        p.setStyle(Qt::DashLine);
+        p.setWidth(1);
+        line->setPen(p);
+        m_daySeparatorLines.append(line);
+
+        auto* lbl = new QGraphicsSimpleTextItem(m_chart);
+        lbl->setZValue(21);
+        lbl->setEnabled(false);
+        lbl->setAcceptedMouseButtons(Qt::NoButton);
+        lbl->setBrush(QBrush(QColor(139, 155, 180, 200)));
+        QFont f = lbl->font();
+        f.setPixelSize(10);
+        lbl->setFont(f);
+        m_daySeparatorLabels.append(lbl);
+    }
+
+    for (int i = 0; i < m_dayBoundaryTimestamps.size(); ++i) {
+        const qint64 ts = m_dayBoundaryTimestamps.at(i);
+        const QPointF pt = m_chart->mapToPosition(QPointF(static_cast<qreal>(ts), 0.0), m_series);
+        auto* line = m_daySeparatorLines.at(i);
+        auto* lbl = m_daySeparatorLabels.at(i);
+
+        if (pt.x() >= plotRect.left() && pt.x() <= plotRect.right()) {
+            line->setLine(pt.x(), plotRect.top(), pt.x(), plotRect.bottom());
+            line->show();
+
+            const QString dtStr = QDateTime::fromMSecsSinceEpoch(ts).toString(QStringLiteral("MM-dd"));
+            lbl->setText(dtStr);
+            lbl->setPos(pt.x() + 4, plotRect.top() + 6);
+            lbl->show();
+        } else {
+            line->hide();
+            lbl->hide();
+        }
+    }
+
+    for (int i = m_dayBoundaryTimestamps.size(); i < m_daySeparatorLines.size(); ++i) {
+        if (m_daySeparatorLines.at(i)) m_daySeparatorLines.at(i)->hide();
+        if (m_daySeparatorLabels.at(i)) m_daySeparatorLabels.at(i)->hide();
+    }
+}
+
+void ChartWindow::loadMultiDayIntraday(int)
+{
+    updateIntradayOverlay();
+}
+
+void ChartWindow::updateIntradayOverlay()
+{
+    if (!isIntradayMode()) {
+        for (auto* s : {m_yesterdaySeries, m_day2Series, m_day3Series, m_day4Series}) {
+            if (s) { s->clear(); s->setVisible(false); }
+        }
+        m_activeOverlayCurves.clear();
+        return;
+    }
+
+    const int targetDays = targetOverlayDays();
+    const QString primCode = currentTypeCode();
+    const QDate today = QDate::currentDate();
+
+    struct RawDayInfo {
+        QDate date;
+        QVector<QPair<QDateTime, double>> points;
+    };
+    QVector<RawDayInfo> dayInfos;
+
+    // 1. 获取今日有效分时数据
+    auto todayPts = HistoryCache::instance().todayPoints();
+    if (todayPts.isEmpty()) {
+        todayPts = ExtremeDatabase::instance().loadIntradaySamples(today, primCode);
+        if (todayPts.isEmpty() && primCode != QStringLiteral("gj") && primCode != QStringLiteral("xau")) {
+            todayPts = ExtremeDatabase::instance().loadIntradaySamples(today, QStringLiteral("zs"));
+        }
+    }
+    if (!todayPts.isEmpty()) {
+        dayInfos.append({today, todayPts});
+    }
+
+    // 2. 依次向后查找历史交易日样本（最多回溯 20 天以跳过周末/节假日）
+    for (int offset = 1; offset <= 20 && dayInfos.size() < targetDays; ++offset) {
+        const QDate candDate = today.addDays(-offset);
+        auto pts = ExtremeDatabase::instance().loadIntradaySamples(candDate, primCode);
+        if (pts.isEmpty() && primCode != QStringLiteral("gj") && primCode != QStringLiteral("xau")) {
+            pts = ExtremeDatabase::instance().loadIntradaySamples(candDate, QStringLiteral("zs"));
+        }
+        if (!pts.isEmpty()) {
+            dayInfos.append({candDate, pts});
+        }
+    }
+
+    if (dayInfos.isEmpty()) {
+        m_activeOverlayCurves.clear();
+        for (auto* s : {m_yesterdaySeries, m_day2Series, m_day3Series, m_day4Series}) {
+            if (s) { s->clear(); s->setVisible(false); }
+        }
+        return;
+    }
+
+    // 确定时间轴对齐基准日期（通常为今日）
+    const QDate baseDate = dayInfos.first().date;
+
+    QList<QLineSeries*> seriesSlots = {
+        m_series, m_yesterdaySeries, m_day2Series, m_day3Series, m_day4Series
+    };
+
+    m_activeOverlayCurves.clear();
+    const bool dark = AppSettings::instance().darkTheme();
+
+    const QVector<QColor> darkColors = {
+        QColor(110, 168, 254), // 今日：亮蓝
+        QColor(82, 196, 170),  // 昨日：青碧
+        QColor(180, 140, 240), // 前日：暖紫
+        QColor(250, 173, 20),  // 4日前：琥珀金
+        QColor(245, 108, 108)  // 5日前：珊瑚红
+    };
+    const QVector<QColor> lightColors = {
+        QColor(0, 82, 217),    // 今日：深蓝
+        QColor(16, 142, 115),  // 昨日：青绿
+        QColor(122, 59, 180),  // 前日：典雅紫
+        QColor(217, 119, 6),   // 4日前：深橙
+        QColor(190, 40, 80)    // 5日前：深红莓
+    };
+    const auto& palette = dark ? darkColors : lightColors;
+
+    for (int i = 0; i < seriesSlots.size(); ++i) {
+        auto* s = seriesSlots.at(i);
+        if (!s) continue;
+
+        if (i >= dayInfos.size() || i >= targetDays) {
+            if (s != m_series) {
+                s->clear();
+                s->setVisible(false);
+            }
+            continue;
+        }
+
+        const auto& dInfo = dayInfos.at(i);
+        const auto& raw = dInfo.points;
+        if (raw.isEmpty()) {
+            if (s != m_series) {
+                s->clear();
+                s->setVisible(false);
+            }
+            continue;
+        }
+
+        // 计算该日高低点
+        int rawHi = 0, rawLo = 0;
+        for (int k = 1; k < raw.size(); ++k) {
+            if (raw.at(k).second > raw.at(rawHi).second) rawHi = k;
+            if (raw.at(k).second < raw.at(rawLo).second) rawLo = k;
+        }
+        const double dHigh = raw.at(rawHi).second;
+        const double dLow = raw.at(rawLo).second;
+        const double lastPx = raw.last().second;
+
+        // 抽稀至 ~300 点
+        QVector<QPair<QDateTime, double>> sampled;
+        sampled.reserve(qMin(raw.size(), 400));
+        QString lastMinute;
+        for (int k = 0; k < raw.size(); ++k) {
+            const auto& pt = raw.at(k);
+            const QString mk = pt.first.toString(QStringLiteral("HH:mm"));
+            const bool force = (k == 0 || k == raw.size() - 1 || k == rawHi || k == rawLo);
+            if (force || mk != lastMinute) {
+                sampled.append(pt);
+                lastMinute = mk;
+            } else {
+                sampled.last() = pt;
+            }
+        }
+
+        QVector<QPair<QDateTime, double>> filtered;
+        if (sampled.size() <= 300) {
+            filtered = sampled;
+        } else {
+            const int step = sampled.size() / 300 + 1;
+            for (int k = 0; k < sampled.size(); k += step)
+                filtered.append(sampled.at(k));
+            if (filtered.isEmpty() || filtered.last().first != sampled.last().first)
+                filtered.append(sampled.last());
+
+            auto hasNear = [&](const QDateTime& ts, double price) {
+                for (const auto& p : filtered) {
+                    if (p.first == ts || (qAbs(p.second - price) < 1e-6 && qAbs(p.first.secsTo(ts)) < 120))
+                        return true;
+                }
+                return false;
+            };
+            if (!hasNear(raw.at(rawHi).first, dHigh))
+                filtered.append(raw.at(rawHi));
+            if (!hasNear(raw.at(rawLo).first, dLow))
+                filtered.append(raw.at(rawLo));
+            std::sort(filtered.begin(), filtered.end(), [](const auto& a, const auto& b) {
+                return a.first < b.first;
+            });
+        }
+
+        // 将分时时刻映射到 baseDate 同一天上（同刻重叠对比形态）
+        QVector<QPair<QDateTime, double>> mappedPts;
+        mappedPts.reserve(filtered.size());
+        for (const auto& p : filtered) {
+            const QDateTime mapped(baseDate, p.first.time());
+            mappedPts.append({mapped, p.second});
+        }
+
+        if (s == m_series) {
+            m_plotPoints = mappedPts;
+            m_series->clear();
+            for (const auto& mp : mappedPts) {
+                m_series->append(mp.first.toMSecsSinceEpoch(), mp.second);
+            }
+            m_series->setVisible(true);
+        } else {
+            s->clear();
+            for (const auto& mp : mappedPts) {
+                s->append(mp.first.toMSecsSinceEpoch(), mp.second);
+            }
+            s->setVisible(true);
+        }
+
+        QString nameTag;
+        if (i == 0) {
+            nameTag = (dInfo.date == today) ? tr("今日") : tr("最新 (%1)").arg(dInfo.date.toString(QStringLiteral("MM-dd")));
+        } else if (i == 1) {
+            nameTag = tr("昨日 (%1)").arg(dInfo.date.toString(QStringLiteral("MM-dd")));
+        } else if (i == 2) {
+            nameTag = tr("前日 (%1)").arg(dInfo.date.toString(QStringLiteral("MM-dd")));
+        } else {
+            nameTag = tr("%1日前 (%2)").arg(i + 1).arg(dInfo.date.toString(QStringLiteral("MM-dd")));
+        }
+        s->setName(nameTag);
+
+        DayOverlayCurve curveData;
+        curveData.date = dInfo.date;
+        curveData.name = nameTag;
+        curveData.color = palette.value(i, Qt::white);
+        curveData.high = dHigh;
+        curveData.low = dLow;
+        curveData.lastPrice = lastPx;
+        curveData.mappedPoints = mappedPts;
+        curveData.series = s;
+        m_activeOverlayCurves.append(curveData);
+    }
+
+    applyChartTheme();
+
+    if (m_axisX && !m_activeOverlayCurves.isEmpty()) {
+        m_axisX->setFormat(QStringLiteral("HH:mm"));
+        if (!m_userZoomedX) {
+            applyIntradaySpanRange();
+        }
+    }
+
+    autoFitYForVisibleRange();
+
+    if (m_chart && !m_activeOverlayCurves.isEmpty()) {
+        const auto& c0 = m_activeOverlayCurves.first();
+        if (targetDays == 2) {
+            m_chart->setTitle(
+                tr("今日分时走势（含昨日形态同刻对比）  最高 %1  最低 %2  现价 %3")
+                    .arg(c0.high, 0, 'f', 2)
+                    .arg(c0.low, 0, 'f', 2)
+                    .arg(c0.lastPrice, 0, 'f', 2));
+            updateSidePanelValues(c0.lastPrice, m_lastPredictPrice, m_hasPredict,
+                                  c0.high, c0.low, tr("今/昨同刻对比"));
+        } else {
+            m_chart->setTitle(
+                tr("近 %1 日分时形态同刻对比（已对齐 %2 个交易日）  最高 %3  最低 %4  现价 %5")
+                    .arg(targetDays)
+                    .arg(m_activeOverlayCurves.size())
+                    .arg(c0.high, 0, 'f', 2)
+                    .arg(c0.low, 0, 'f', 2)
+                    .arg(c0.lastPrice, 0, 'f', 2));
+            updateSidePanelValues(c0.lastPrice, 0, false,
+                                  c0.high, c0.low, tr("近%1日形态对比").arg(targetDays));
+        }
+    }
+}
+
 void ChartWindow::loadDailyRange(const QDate& from, const QDate& to)
 {
     if (!m_series)
@@ -3005,9 +3679,11 @@ void ChartWindow::onExportCsv()
         QMessageBox::information(this, tr("导出"), tr("当前没有可导出的数据点。"));
         return;
     }
-    const QString suggest = isIntradayMode()
-        ? QStringLiteral("intraday-%1.csv").arg(QDate::currentDate().toString(QStringLiteral("yyyyMMdd")))
-        : QStringLiteral("month-%1.csv").arg(m_periodCombo ? m_periodCombo->currentData().toInt() : 0);
+    const QString suggest = isMultiDayIntradayMode()
+        ? QStringLiteral("intraday-recent%1d-%2.csv").arg(multiDayCount()).arg(QDate::currentDate().toString(QStringLiteral("yyyyMMdd")))
+        : (isIntradayMode()
+            ? QStringLiteral("intraday-%1.csv").arg(QDate::currentDate().toString(QStringLiteral("yyyyMMdd")))
+            : QStringLiteral("month-%1.csv").arg(m_periodCombo ? m_periodCombo->currentData().toInt() : 0));
     const QString path = QFileDialog::getSaveFileName(
         this, tr("导出 CSV"), suggest, tr("CSV 文件 (*.csv)"));
     if (path.isEmpty())
@@ -3082,7 +3758,10 @@ void ChartWindow::applyChartTheme()
         setSolid(m_ma5Series, QColor(61, 214, 140), 2);
         setSolid(m_ma10Series, QColor(255, 193, 7), 2);
         setSolid(m_ma20Series, QColor(167, 139, 250), 2);
-        setDot(m_yesterdaySeries, QColor(120, 144, 156), 1);    // 昨日：蓝灰点线（非白）
+        setDot(m_yesterdaySeries, QColor(82, 196, 170), 2);     // 昨日：青碧
+        setSolid(m_day2Series, QColor(180, 140, 240), 2);       // 前日：暖紫
+        setSolid(m_day3Series, QColor(250, 173, 20), 2);        // 4日前：琥珀金
+        setSolid(m_day4Series, QColor(245, 108, 108), 2);       // 5日前：珊瑚红
         setDash(m_forecastSeries, QColor(255, 82, 82), 2);      // 预测高：鲜红虚线
         setDash(m_forecastLowSeries, QColor(0, 230, 118), 2);   // 预测低：鲜绿虚线
         setDash(m_fib50Series, QColor(250, 173, 20), 2);        // Fib 50%: 暖金虚线
@@ -3113,7 +3792,10 @@ void ChartWindow::applyChartTheme()
         setSolid(m_ma5Series, QColor(230, 126, 34), 2);
         setSolid(m_ma10Series, QColor(241, 196, 15), 2);
         setSolid(m_ma20Series, QColor(155, 89, 182), 2);
-        setDot(m_yesterdaySeries, QColor(120, 120, 120), 1);
+        setDot(m_yesterdaySeries, QColor(16, 142, 115), 2);     // 昨日：青绿
+        setSolid(m_day2Series, QColor(122, 59, 180), 2);        // 前日：典雅紫
+        setSolid(m_day3Series, QColor(217, 119, 6), 2);         // 4日前：深橙
+        setSolid(m_day4Series, QColor(190, 40, 80), 2);         // 5日前：深红莓
         setDash(m_forecastSeries, QColor(231, 76, 60), 2);      // 预测高：红虚线
         setDash(m_forecastLowSeries, QColor(39, 174, 96), 2);   // 预测低：绿虚线
         setDash(m_fib50Series, QColor(212, 107, 8), 2);         // Fib 50%: 琥珀金虚线
@@ -3126,6 +3808,47 @@ void ChartWindow::applyChartTheme()
         }
         // 侧栏始终深色卡片风格，避免浅色主题把数字刷成深色导致看不清
         applySidePanelChrome();
+    }
+
+    const QVector<QColor> darkColors = {
+        QColor(110, 168, 254), QColor(82, 196, 170), QColor(180, 140, 240),
+        QColor(250, 173, 20), QColor(245, 108, 108)
+    };
+    const QVector<QColor> lightColors = {
+        QColor(0, 82, 217), QColor(16, 142, 115), QColor(122, 59, 180),
+        QColor(217, 119, 6), QColor(190, 40, 80)
+    };
+    const auto& curPal = dark ? darkColors : lightColors;
+    for (int i = 0; i < m_activeOverlayCurves.size(); ++i) {
+        if (i < curPal.size())
+            m_activeOverlayCurves[i].color = curPal[i];
+    }
+
+    for (auto* l : m_daySeparatorLines) {
+        if (l) {
+            QPen p(dark ? QColor(120, 140, 170, 110) : QColor(160, 175, 195, 140));
+            p.setStyle(Qt::DashLine);
+            p.setWidth(1);
+            l->setPen(p);
+        }
+    }
+    for (auto* lbl : m_daySeparatorLabels) {
+        if (lbl) {
+            lbl->setBrush(QBrush(dark ? QColor(139, 155, 180, 200) : QColor(100, 110, 125, 220)));
+        }
+    }
+
+    // 十字准星样式
+    const QColor crossColor = dark ? QColor(140, 175, 230, 160) : QColor(80, 110, 160, 160);
+    QPen crossPen(crossColor);
+    crossPen.setStyle(Qt::DashLine);
+    crossPen.setWidth(1);
+    if (m_crosshairVLine) m_crosshairVLine->setPen(crossPen);
+    if (m_crosshairHLine) m_crosshairHLine->setPen(crossPen);
+
+    if (m_crosshairDot) {
+        m_crosshairDot->setPen(QPen(QColor(255, 255, 255, 230), 1.5));
+        m_crosshairDot->setBrush(QBrush(dark ? QColor(110, 168, 254) : QColor(0, 82, 217)));
     }
 
     if (m_chart->legend()) {
@@ -3380,28 +4103,7 @@ void ChartWindow::updateMovingAverages()
 
 void ChartWindow::updateYesterdayOverlay()
 {
-    if (!m_yesterdaySeries)
-        return;
-    m_yesterdaySeries->clear();
-    if (!isIntradayMode()) {
-        m_yesterdaySeries->setVisible(false);
-        return;
-    }
-    m_yesterdaySeries->setVisible(true);
-
-    const QDate yday = QDate::currentDate().addDays(-1);
-    const auto pts = ExtremeDatabase::instance().loadIntradaySamples(
-        yday, currentTypeCode());
-    if (pts.isEmpty())
-        return;
-
-    // 将昨日点的「时刻」映射到今天的日期，便于与今日分时同轴对比
-    const QDate today = QDate::currentDate();
-    for (const auto& p : pts) {
-        const QTime tm = p.first.time();
-        const QDateTime mapped(today, tm);
-        m_yesterdaySeries->append(mapped.toMSecsSinceEpoch(), p.second);
-    }
+    updateIntradayOverlay();
 }
 
 

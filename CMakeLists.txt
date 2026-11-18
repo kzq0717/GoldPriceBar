@@ -50,6 +50,8 @@ set(PROJECT_SOURCES
     src/SentimentService.h src/SentimentService.cpp
     src/SentimentDialog.h src/SentimentDialog.cpp
     src/ForecastService.h src/ForecastService.cpp
+    src/AgentService.h src/AgentService.cpp
+    src/AgentAiService.h src/AgentAiService.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}

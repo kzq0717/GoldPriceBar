@@ -81,24 +81,35 @@ QString PriceService::currentTypeCode() const {
 
 QString PriceService::canonicalSourceName(const QString &type) {
     const QString t = type.trimmed().toLower();
-    if (t == QStringLiteral("zs")) return QStringLiteral("浙商银行·积存金");
-    if (t == QStringLiteral("ms")) return QStringLiteral("民生银行·积存金");
-    if (t == QStringLiteral("cib")) return QStringLiteral("兴业银行·积存金");
-    if (t == QStringLiteral("icbc")) return QStringLiteral("工商银行·积存金");
-    if (t == QStringLiteral("cmb")) return QStringLiteral("招商银行·Au99.99");
-    if (t == QStringLiteral("gj") || t == QStringLiteral("xau")) return QStringLiteral("伦敦金现·国际金");
-    if (t == QStringLiteral("cgb")) return QStringLiteral("广发银行·积存金");
-    if (t == QStringLiteral("abc")) return QStringLiteral("农业银行·存金通");
-    if (t == QStringLiteral("ccb")) return QStringLiteral("建设银行·积存金");
-    if (t == QStringLiteral("boc")) return QStringLiteral("中国银行·积存金");
-    if (t == QStringLiteral("jd")) return QStringLiteral("京东金融·黄金");
+    if (t == QStringLiteral("zs"))
+        return QStringLiteral("浙商银行·积存金");
+    if (t == QStringLiteral("ms"))
+        return QStringLiteral("民生银行·积存金");
+    if (t == QStringLiteral("cib"))
+        return QStringLiteral("兴业银行·积存金");
+    if (t == QStringLiteral("icbc"))
+        return QStringLiteral("工商银行·积存金");
+    if (t == QStringLiteral("cmb"))
+        return QStringLiteral("招商银行·Au99.99");
+    if (t == QStringLiteral("gj") || t == QStringLiteral("xau"))
+        return QStringLiteral("伦敦金现·国际金");
+    if (t == QStringLiteral("cgb"))
+        return QStringLiteral("广发银行·积存金");
+    if (t == QStringLiteral("abc"))
+        return QStringLiteral("农业银行·存金通");
+    if (t == QStringLiteral("ccb"))
+        return QStringLiteral("建设银行·积存金");
+    if (t == QStringLiteral("boc"))
+        return QStringLiteral("中国银行·积存金");
+    if (t == QStringLiteral("jd"))
+        return QStringLiteral("京东金融·黄金");
     return QStringLiteral("黄金现价");
 }
 
 void PriceService::start() {
-    Logger::info(QStringLiteral("PriceService::start enter"));
+    // Logger::info(QStringLiteral("PriceService::start enter"));
     ensureTimers();
-    Logger::info(QStringLiteral("PriceService::start after timers"));
+    // Logger::info(QStringLiteral("PriceService::start after timers"));
     if (!m_timer)
         return;
     if (m_timer->isActive())
@@ -186,8 +197,7 @@ void PriceService::onWatchdog() {
     const qint64 staleMs = qMax(static_cast<qint64>(m_intervalMs) * 5, 30000LL);
     if (m_lastSuccessMs > 0 && (now - m_lastSuccessMs) > staleMs) {
         const qint64 elapsed = now - m_lastSuccessMs;
-        Logger::warn(
-            QStringLiteral("PriceService watchdog: no success for %1 ms").arg(elapsed));
+        Logger::warn(QStringLiteral("PriceService watchdog: no success for %1 ms").arg(elapsed));
         abortPending();
         if (elapsed > 60000LL) {
             Logger::warn(QStringLiteral("PriceService watchdog: recreating network manager after 60s failure"));
@@ -292,16 +302,39 @@ void PriceService::onChartSeedFinished(QNetworkReply *reply) {
     QVector<QPair<qint64, double>> chartPoints;
     chartPoints.reserve(arr.size());
 
-    const qint64 nowSec = QDateTime::currentSecsSinceEpoch();
+    const QDate today = QDate::currentDate();
+    const QDateTime nowDt = QDateTime::currentDateTime().addSecs(60);
+    QDate apiLatestDate;
     for (const QJsonValue &v : arr) {
         if (!v.isObject())
             continue;
         const QJsonObject o = v.toObject();
         const qint64 t = static_cast<qint64>(o.value(QStringLiteral("t")).toDouble());
         const double p = o.value(QStringLiteral("p")).toDouble();
+        if (t <= 0 || p <= 0.0)
+            continue;
+        const QDateTime rawDt = QDateTime::fromSecsSinceEpoch(t);
+        if (rawDt.isValid() && (!apiLatestDate.isValid() || rawDt.date() > apiLatestDate))
+            apiLatestDate = rawDt.date();
+    }
+
+    for (const QJsonValue &v : arr) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject o = v.toObject();
+        const qint64 t = static_cast<qint64>(o.value(QStringLiteral("t")).toDouble());
+        const double p = o.value(QStringLiteral("p")).toDouble();
+        if (t <= 0 || p <= 0.0)
+            continue;
+        const QDateTime rawDt = QDateTime::fromSecsSinceEpoch(t);
+        if (!rawDt.isValid())
+            continue;
+        if (apiLatestDate.isValid() && rawDt.date() != apiLatestDate)
+            continue;
+        const QDateTime alignedDt(today, rawDt.time());
         // 只统计截至当前时刻的点（防止异常未来时间戳）
-        if (t > 0 && t <= nowSec + 60 && p > 0.0)
-            chartPoints.append({t, p});
+        if (alignedDt.isValid() && alignedDt <= nowDt)
+            chartPoints.append({alignedDt.toSecsSinceEpoch(), p});
     }
 
     if (chartPoints.isEmpty())
@@ -309,6 +342,7 @@ void PriceService::onChartSeedFinished(QNetworkReply *reply) {
 
     HistoryCache::instance().replaceFromChart(chartPoints);
     ExtremeDatabase::instance().refreshDailyBarFromPoints(QDate::currentDate(), currentTypeCode(), chartPoints);
+    ExtremeDatabase::instance().backfillIntradaySamplesFromChart(QDate::currentDate(), currentTypeCode(), chartPoints);
     HistoryCache::instance().persistExtremesToDb(currentTypeCode());
 
     // 若已有实时价，合并进缓存，保证最高不低于现价
@@ -403,7 +437,8 @@ void PriceService::requestPriceFromBackup(int backupIndex) {
     }
 
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"));
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+        QStringLiteral("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"));
     if (!refererHeader.isEmpty()) {
         request.setRawHeader("Referer", refererHeader.toUtf8());
     }
@@ -412,8 +447,10 @@ void PriceService::requestPriceFromBackup(int backupIndex) {
     request.setTransferTimeout(8000);
     request.setRawHeader("Accept", "*/*");
 
-    Logger::info(QStringLiteral("PriceService: request URL %1 idx=%2 (target: %3)")
-                     .arg(url.toString()).arg(backupIndex).arg(type));
+    // Logger::info(QStringLiteral("PriceService: request URL %1 idx=%2 (target: %3)")
+    //         .arg(url.toString())
+    //         .arg(backupIndex)
+    //         .arg(type));
     QNetworkReply *reply = m_network->get(request);
     m_pendingReply = reply;
     m_requestStartMs = QDateTime::currentMSecsSinceEpoch();
@@ -439,8 +476,8 @@ bool PriceService::applyPrice(double price, double change, const QString &name, 
     m_lastChange = change;
     // 关键：严格使用当前设置品种的标准中文名，绝不随返回数据中的不同字段产生变动或滚动
     m_lastSourceName = canonicalSourceName(type);
-    if (!currency.isEmpty() && currency != QStringLiteral("¥") && currency != QStringLiteral("￥")
-        && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
+    if (!currency.isEmpty() && currency != QStringLiteral("¥") && currency != QStringLiteral("￥") &&
+        (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
         if (!m_lastSourceName.contains(currency))
             m_lastSourceName += QStringLiteral("(%1)").arg(currency);
     }
@@ -452,8 +489,8 @@ bool PriceService::applyPrice(double price, double change, const QString &name, 
     if (m_timer && m_intervalMs > 0 && m_timer->interval() != m_intervalMs)
         m_timer->setInterval(m_intervalMs);
 
-    Logger::info(QStringLiteral("PriceService: applyPrice %1 (change %2) [%3]")
-                     .arg(price, 0, 'f', 2).arg(change, 0, 'f', 2).arg(m_lastSourceName));
+    // Logger::info(QStringLiteral("PriceService: applyPrice %1 (change %2) [%3]")
+    //                  .arg(price, 0, 'f', 2).arg(change, 0, 'f', 2).arg(m_lastSourceName));
 
     HistoryCache::instance().append(QDateTime::currentDateTime(), m_lastPrice);
     ExtremeDatabase::instance().upsertDailyBar(QDate::currentDate(), currentTypeCode(), m_lastPrice);
@@ -486,9 +523,7 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
         }
 
         if (tried < maxTry) {
-            QTimer::singleShot(200, this, [this, tried]() {
-                requestPriceFromBackup(tried + 1);
-            });
+            QTimer::singleShot(200, this, [this, tried]() { requestPriceFromBackup(tried + 1); });
             return;
         }
         ++m_consecutiveFail;
@@ -504,12 +539,11 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
             Logger::warn(QStringLiteral("Price fetch error (src %1): %2").arg(tried).arg(reply->errorString()));
             // 若发生网络错误且当前使用了代理，退为不使用代理直连并立即重试
             if (m_network && m_network->proxy().type() != QNetworkProxy::NoProxy) {
-                Logger::warn(QStringLiteral("PriceService: proxy connection failed (%1), falling back to NoProxy direct")
-                                 .arg(reply->errorString()));
+                Logger::warn(
+                    QStringLiteral("PriceService: proxy connection failed (%1), falling back to NoProxy direct")
+                        .arg(reply->errorString()));
                 m_network->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
-                QTimer::singleShot(200, this, [this]() {
-                    requestPrice();
-                });
+                QTimer::singleShot(200, this, [this]() { requestPrice(); });
                 reply->deleteLater();
                 return;
             }
@@ -521,8 +555,10 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
 
     const QByteArray data = reply->readAll();
     reply->deleteLater();
-    Logger::info(QStringLiteral("PriceService: onNetworkFinished idx=%1 err=%2 bytes=%3")
-                     .arg(tried).arg(reply->error()).arg(data.size()));
+    // Logger::info(QStringLiteral("PriceService: onNetworkFinished idx=%1 err=%2 bytes=%3")
+    //         .arg(tried)
+    //         .arg(reply->error())
+    //         .arg(data.size()));
 
     // 1. 新浪财经国际金返回格式 (纯文本: var hq_str_...="...";)
     if (data.contains("var hq_str_") && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
@@ -582,16 +618,16 @@ void PriceService::onNetworkFinished(QNetworkReply *reply) {
         }
 
         // 2.3 gold-api.com 格式 (国际金): {"price": 4336.5, ...}
-        if (root.contains(QStringLiteral("price")) && !root.contains(QStringLiteral("data"))
-            && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
+        if (root.contains(QStringLiteral("price")) && !root.contains(QStringLiteral("data")) &&
+            (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
             const double price = root.value(QStringLiteral("price")).toDouble();
             if (applyPrice(price, 0.0, canonicalSourceName(type), QStringLiteral("USD")))
                 return;
         }
 
         // 2.4 goldprice.dev 格式 (国际金): {"symbols":[{"price": ...}]}
-        if (root.contains(QStringLiteral("symbols"))
-            && (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
+        if (root.contains(QStringLiteral("symbols")) &&
+            (type == QStringLiteral("gj") || type == QStringLiteral("xau"))) {
             const QJsonArray arr = root.value(QStringLiteral("symbols")).toArray();
             if (!arr.isEmpty()) {
                 const double price = arr.at(0).toObject().value(QStringLiteral("price")).toString().toDouble();

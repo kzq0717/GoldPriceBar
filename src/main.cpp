@@ -122,6 +122,10 @@ int main(int argc, char *argv[]) {
     engine.load(QUrl(QStringLiteral("qrc:/qml/PriceBar.qml")));
     engine.load(QUrl(QStringLiteral("qrc:/qml/SentimentWindow.qml")));
     engine.load(QUrl(QStringLiteral("qrc:/qml/SettingsWindow.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/qml/AgentWindow.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/qml/AgentNotificationCard.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/qml/AgentAiChatWindow.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/qml/SimulatedTradesWindow.qml")));
 
     const auto rootObjs = engine.rootObjects();
     if (rootObjs.isEmpty()) {
@@ -144,6 +148,18 @@ int main(int argc, char *argv[]) {
         } else if (name == QLatin1String("settingsWindow") || (name.isEmpty() && title.contains(QStringLiteral("设置")))) {
             bridge.setSettingsWindow(win);
             Logger::info(QStringLiteral("Bound SettingsWindow QQuickWindow (title: %1)").arg(title));
+        } else if (name == QLatin1String("agentWindow") || (name.isEmpty() && title.contains(QStringLiteral("Agent")))) {
+            bridge.setAgentWindow(win);
+            Logger::info(QStringLiteral("Bound AgentWindow QQuickWindow (title: %1)").arg(title));
+        } else if (name == QLatin1String("agentCardWindow") || (name.isEmpty() && title.contains(QStringLiteral("AgentCard")))) {
+            bridge.setAgentCardWindow(win);
+            Logger::info(QStringLiteral("Bound AgentCard QQuickWindow (title: %1)").arg(title));
+        } else if (name == QLatin1String("simulatedTradesWindow") || (name.isEmpty() && title.contains(QStringLiteral("模拟交易")))) {
+            bridge.setSimulatedTradesWindow(win);
+            Logger::info(QStringLiteral("Bound SimulatedTradesWindow QQuickWindow (title: %1)").arg(title));
+        } else if (name == QLatin1String("agentChatWindow") || (name.isEmpty() && title.contains(QStringLiteral("问答")))) {
+            bridge.setAgentChatWindow(win);
+            Logger::info(QStringLiteral("Bound AgentChatWindow QQuickWindow (title: %1)").arg(title));
         }
     }
 

@@ -1,0 +1,483 @@
+{
+  "course_id": "cpp_core_30days",
+  "course_name": "C++ 核心知识点 30 天阶梯通关路线",
+  "total_days": 30,
+  "description": "从 C++ 底层内存模型、面向对象本质、现代 C++ (C++11/14/17/20) 核心机制到并发与性能调优，30天系统掌握 C++ 核心内功。",
+  "stages": [
+    {
+      "stage": 1,
+      "name": "底层内存与指针引用基石",
+      "days": "Day 1 - Day 7"
+    },
+    {
+      "stage": 2,
+      "name": "面向对象本质与资源管理 (RAII)",
+      "days": "Day 8 - Day 14"
+    },
+    {
+      "stage": 3,
+      "name": "现代 C++ 核心：移动语义与智能指针",
+      "days": "Day 15 - Day 21"
+    },
+    {
+      "stage": 4,
+      "name": "泛型编程、模板与 STL 底层机制",
+      "days": "Day 22 - Day 26"
+    },
+    {
+      "stage": 5,
+      "name": "并发编程、C++20 新特性与极致性能调优",
+      "days": "Day 27 - Day 30"
+    }
+  ],
+  "topics": [
+    {
+      "day": 1,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "C++ 内存分区模型与变量生命周期",
+      "difficulty": 1,
+      "summary": "理解 C++ 进程的虚拟内存空间划分：栈区、堆区、全局/静态存储区、常量存储区与代码段。",
+      "key_points": [
+        "栈区 (Stack)：由编译器自动分配和释放，存放局部变量、函数参数，访问速度极快，空间有限（一般几MB）。",
+        "堆区 (Heap)：由程序员动态分配 (new/malloc) 和释放 (delete/free)，空间大但可能产生内存碎片与泄漏。",
+        "全局/静态区 (Data/BSS)：已初始化的全局/静态变量放入 .data，未初始化的放入 .bss，程序结束时由系统回收。",
+        "代码段与只读数据区 (Text/RoData)：存放机器指令与字符串字面量，内存写保护。"
+      ],
+      "code_example": "int g_val = 10;          // .data 段\nstatic int s_val;        // .bss 段 (自动零初始化)\n\nvoid func() {\n    int stack_var = 5;   // 栈内存 (离开作用域自动销毁)\n    int* heap_var = new int(20); // 堆内存 (必须手动 delete 或使用智能指针)\n    delete heap_var;\n}",
+      "pitfall_or_interview": "经典面试题：栈和堆的区别是什么？注意从分配方式、生长方向（栈向下/堆向上）、空间大小、分配效率及碎片化五个维度回答。"
+    },
+    {
+      "day": 2,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "指针 (Pointer) 与引用 (Reference) 的本质对比",
+      "difficulty": 1,
+      "summary": "掌握指针与引用在语法表现与汇编底层实现的异同，以及空指针野指针的防范。",
+      "key_points": [
+        "本质区别：指针是一个独立变量，存储目标地址；引用是已有对象的别名，底层通常由编译器实现为只读指针 (const pointer)。",
+        "初始化与重定向：引用定义时必须初始化且一旦绑定不能改变绑定目标；指针可以为空且可随时重新指向新地址。",
+        "sizeof 差异：sizeof(引用) 得到的是目标对象的大小，sizeof(指针) 得到的是指针本身占用字节数 (64位下为8字节)。",
+        "野指针与悬挂引用：指针指向已释放内存，或引用了局部变量的返回值，是造成未定义行为 (UB) 的根源。"
+      ],
+      "code_example": "int a = 10;\nint* ptr = &a;  // 指针：拥有独立地址\nint& ref = a;   // 引用：别名，汇编层面等价于 int* const\nref = 20;       // a 的值变为 20\n// 悬挂引用陷阱：绝不能返回局部变量的引用！\n// int& bad_func() { int x = 1; return x; } // 危险！未定义行为",
+      "pitfall_or_interview": "高频考察：引用在汇编层面到底占不占内存？回答：在编译器语义层面它不占独立内存，但在底层实现上通常由编译器生成指针指令占用栈空间。"
+    },
+    {
+      "day": 3,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "const 语义深度解析与 constexpr 编译期常量",
+      "difficulty": 2,
+      "summary": "区分顶层 const 与底层 const，掌握 const 成员函数与现代 C++ constexpr/consteval 编译期计算。",
+      "key_points": [
+        "顶层 const：修饰指针本身不可变 (int* const p)；底层 const：修饰指针所指对象不可变 (const int* p)。",
+        "const 成员函数：在类成员函数后加 const，本质是将 this 指针变为 const Class* const this，保证不修改成员变量 (mutable 变量除外)。",
+        "constexpr (C++11)：表明值或函数可以在编译期求值，提升运行期性能并可在模板参数中使用。",
+        "consteval (C++20)：强保证函数必须在编译期计算，若不能在编译期完成则报错。"
+      ],
+      "code_example": "int x = 10;\nconst int* p1 = &x; // 底层 const：不能通过 *p1 = 20 修改内容\nint* const p2 = &x; // 顶层 const：p2 不能指向其他变量\n\nconstexpr int square(int n) {\n    return n * n; // 编译期可直接计算出结果\n}\nconstexpr int val = square(10); // 编译期常量",
+      "pitfall_or_interview": "避坑：const 成员函数中修改成员变量需使用 mutable 修饰符（常用于缓存值、互斥锁 std::mutex 等状态）。"
+    },
+    {
+      "day": 4,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "内存对齐 (Memory Alignment) 与结构体填充原理",
+      "difficulty": 2,
+      "summary": "掌握 CPU 访问内存的对齐原则、结构体大小计算法则与 alignof/alignas 关键字。",
+      "key_points": [
+        "对齐目的：硬件架构要求 CPU 按块（如 4/8 字节）读取内存，对齐后可单次总线周期读完，未对齐会导致性能暴跌甚至硬件异常。",
+        "对齐规则 1：结构体各成员相对于起始地址的偏移量必须是该成员自身对齐模数的整数倍。",
+        "对齐规则 2：结构体总大小必须是内部最大成员对齐模数的整数倍（不足则在尾部填充 padding）。",
+        "pragma pack：通过 #pragma pack(n) 或 alignas(n) 可自定义对齐粒度，常用于网络包协议解析。"
+      ],
+      "code_example": "struct BadLayout {\n    char a;   // 1 byte + 3 bytes padding\n    int b;    // 4 bytes\n    char c;   // 1 byte + 3 bytes padding\n}; // sizeof = 12\n\nstruct GoodLayout {\n    int b;    // 4 bytes\n    char a;   // 1 byte\n    char c;   // 1 byte + 2 bytes padding\n}; // sizeof = 8 (合理重排节省 33% 内存)",
+      "pitfall_or_interview": "手算 sizeof：面试必考结构体重排计算。记住把相同或小尺寸变量紧凑排列可以大幅压缩结构体体积与 Cache 占用。"
+    },
+    {
+      "day": 5,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "RAII 原则与资源生命周期绑定 (核心思想)",
+      "difficulty": 2,
+      "summary": "RAII (Resource Acquisition Is Initialization) 是 C++ 最强大的核心哲学，将资源管理与对象生命周期紧密绑定。",
+      "key_points": [
+        "核心逻辑：在构造函数中申请资源（内存、文件句柄、互斥锁、Socket），在析构函数中自动释放资源。",
+        "栈展开 (Stack Unwinding)：即使发生异常，栈上已构造的局部对象也会严格按逆序自动调用析构函数，绝无资源泄漏。",
+        "替代传统的 try-finally：避免手动 free/close/unlock 带来的漏写或分支跳过问题。",
+        "标准库基石：std::string, std::vector, std::unique_ptr, std::lock_guard 都是 RAII 的典型实现。"
+      ],
+      "code_example": "class FileCloser {\n    FILE* fp;\npublic:\n    explicit FileCloser(const char* path) { fp = fopen(path, \"r\"); }\n    ~FileCloser() { if (fp) fclose(fp); } // 离开作用域或发生异常时必定自动关闭！\n    FILE* get() const { return fp; }\n};",
+      "pitfall_or_interview": "核心考察：为什么说析构函数绝不能抛出异常？因为若在异常栈展开过程中析构函数再次抛出异常，会导致 std::terminate 被调用直接终止程序！"
+    },
+    {
+      "day": 6,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "C++ 四种类型转换 (Cast) 底层机制与安全准则",
+      "difficulty": 3,
+      "summary": "彻底摒弃 C 风格强转 (Type)val，精通 static_cast, dynamic_cast, const_cast, reinterpret_cast。",
+      "key_points": [
+        "static_cast：编译期安全类型转换，用于基本类型互转、具有明确继承关系向上转换 (Up-cast)，不做运行期安全检查。",
+        "dynamic_cast：运行期类型安全转换，专门用于多态类型的向下转换 (Down-cast)，依赖 RTTI；指针失败返回 nullptr，引用失败抛 std::bad_cast。",
+        "const_cast：仅用于移除或添加 const/volatile 属性，若修改原本定义为 const 的对象属于未定义行为。",
+        "reinterpret_cast：底层二进制位重新解释（如指针转整型、无关指针互转），极度危险，依赖平台底层实现。"
+      ],
+      "code_example": "Base* b = new Derived();\n// 安全向下转型：\nDerived* d = dynamic_cast<Derived*>(b);\nif (d) { d->specific_work(); }\n\n// 移除 const 限定：\nvoid legacy_api(char* s);\nvoid call_legacy(const char* s) {\n    legacy_api(const_cast<char*>(s)); // 仅当 legacy_api 不修改 s 时安全\n}",
+      "pitfall_or_interview": "高频面试：dynamic_cast 为什么耗性能？因为它必须遍历继承树的 RTTI 类型信息，在深层继承体系或循环中需谨慎使用。"
+    },
+    {
+      "day": 7,
+      "stage": "第一阶段：底层内存与指针引用基石",
+      "title": "inline 内联函数与 ODR (单一定义规则) 阶段小结",
+      "difficulty": 2,
+      "summary": "理解 inline 的真谛（建议编译器展开而非宏替换）及头文件中函数与变量多重定义的解决方式。",
+      "key_points": [
+        "inline 的双重含义：在代码生成上建议内联展开消除函数调用开销；在链接上允许在多个编译单元中存在同名定义而不报重复定义错误。",
+        "ODR (One Definition Rule)：变量和非内联函数在整个程序中只能定义一次，但 inline 函数/变量 (C++17) 可以在多个 TU 中定义（内容必须完全一致）。",
+        "inline vs 宏：宏是纯文本预处理替换无类型检查容易引发副作用，inline 是真正具有作用域与类型检查的函数。",
+        "inline 变量 (C++17)：解决头文件中全局静态常量导致的重复定义问题。"
+      ],
+      "code_example": "// my_header.h (C++17 最佳实践)\ninline int g_config_timeout = 3000; // 多个 cpp 引入不会链接冲突！\n\ninline int add(int a, int b) {\n    return a + b; // 编译器可能直接替换为相加汇编指令\n}",
+      "pitfall_or_interview": "避坑：函数体过大或包含递归、循环的函数，编译器会忽略 inline 建议降级为普通函数调用。"
+    },
+    {
+      "day": 8,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "深拷贝 vs 浅拷贝与 Big-Three 法则",
+      "difficulty": 2,
+      "summary": "掌握默认生成的拷贝构造与赋值运算符的浅拷贝陷阱，熟记三法则 (Rule of Three)。",
+      "key_points": [
+        "浅拷贝 (Shallow Copy)：编译器默认逐位复制，若类中持有指针，两个对象会指向同一块堆内存，导致重复释放 (Double Free)。",
+        "深拷贝 (Deep Copy)：重新分配一块独立的内存空间，并将原始内容复制过去，各对象互不影响。",
+        "Rule of Three (三法则)：如果你显式定义了析构函数、拷贝构造函数、拷贝赋值运算符三者之一，通常必须同时定义其余两个。",
+        "Copy-and-Swap 惯用法：实现异常安全赋值运算符的标准模式。"
+      ],
+      "code_example": "class DynamicArray {\n    int* data;\n    size_t size;\npublic:\n    DynamicArray(size_t n) : size(n), data(new int[n]) {}\n    ~DynamicArray() { delete[] data; }\n    // 深拷贝构造函数：\n    DynamicArray(const DynamicArray& other) : size(other.size), data(new int[other.size]) {\n        std::copy(other.data, other.data + size, data);\n    }\n};",
+      "pitfall_or_interview": "面试经典：为什么拷贝赋值运算符入参一般为引用，返回值通常为当前对象的引用 (T&)？为了支持连续赋值 (a = b = c)。"
+    },
+    {
+      "day": 9,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "虚函数 (Virtual Function) 与虚函数表 (vtable) 底层模型",
+      "difficulty": 3,
+      "summary": "深入对象内存模型，彻底剖析 C++ 多态的核心机制：vptr 虚指针与 vtable 虚函数表。",
+      "key_points": [
+        "动态绑定 (Dynamic Dispatch)：在运行期根据对象真实的动态类型查找并执行对应的重写函数。",
+        "虚函数表 (vtable)：由编译器在编译期构建的只读函数指针数组，每个包含虚函数的类共享一张表。",
+        "虚表指针 (vptr)：包含虚函数的类的对象首部（通常位于 offset 0）注入一个隐式指针成员，指向所属类的虚函数表。",
+        "调用开销：通过基类指针调用虚函数时，需进行一次指针解引用找到 vptr，再根据偏移寻址函数，无法直接内联。"
+      ],
+      "code_example": "class Base {\npublic:\n    virtual void func() { std::cout << \"Base\"; }\n};\nclass Derived : public Base {\npublic:\n    void func() override { std::cout << \"Derived\"; }\n};\nBase* p = new Derived();\np->func(); // 运行期：p->vptr[0]() -> 输出 Derived",
+      "pitfall_or_interview": "硬核考点：空类 sizeof 是 1，但加了一个 virtual 虚函数后 sizeof 是多少？在 64 位系统下会变成 8（因为注入了一个 8 字节的 vptr 指针）。"
+    },
+    {
+      "day": 10,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "虚析构函数的必经之路与纯虚函数/抽象接口",
+      "difficulty": 2,
+      "summary": "为什么作为基类必须声明虚析构函数？掌握纯虚函数与 C++ 纯抽象接口 (Pure Abstract Class) 的定义。",
+      "key_points": [
+        "基类虚析构函数：当通过基类指针 delete 派生类对象时，若析构函数非 virtual，只会调用基类析构，派生类独有资源泄漏。",
+        "纯虚函数 (virtual void f() = 0)：没有具体实现的接口契约，强制所有非抽象派生类必须重写该函数。",
+        "抽象类 (Abstract Class)：包含至少一个纯虚函数的类无法实例化，只能作为基类指针或引用存在。",
+        "接口设计原则：单一职责原则与面向接口编程，避免多余的状态成员。"
+      ],
+      "code_example": "class ILogger { // 纯抽象接口\npublic:\n    virtual ~ILogger() = default; // 虚析构绝不可少！\n    virtual void log(const std::string& msg) = 0; // 纯虚函数\n};\n\nclass FileLogger : public ILogger {\npublic:\n    void log(const std::string& msg) override { /* 写入文件 */ }\n};",
+      "pitfall_or_interview": "避坑：构造函数能声明为虚函数吗？绝对不能！因为调用构造函数时对象尚未生成，内存中的 vptr 还没有完成初始化。"
+    },
+    {
+      "day": 11,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "多重继承与菱形继承 (Diamond Problem) 的虚基类解决机制",
+      "difficulty": 3,
+      "summary": "剖析多继承下的二义性问题，理解 virtual 虚继承 (Virtual Inheritance) 的内存偏移与虚基类表机制。",
+      "key_points": [
+        "菱形继承灾难：类 B 和 C 继承类 A，类 D 同时继承 B 和 C，导致 D 内部存在两份 A 的副本，带来二义性与内存冗余。",
+        "虚继承 (virtual public A)：保证公共顶层基类在派生类对象中只存在一份共享实例。",
+        "底层实现：虚继承使得派生类需要额外保存虚基类指针 (vbtbl/vbptr)，通过偏移量定位共享的基类子对象。",
+        "构造顺序：在虚继承体系中，最底层的派生类 (D) 负责直接调用虚基类 (A) 的构造函数。"
+      ],
+      "code_example": "class Animal { public: int age; };\nclass Mammal : virtual public Animal {}; // 虚继承\nclass WingedAnimal : virtual public Animal {}; // 虚继承\nclass Bat : public Mammal, public WingedAnimal {\n    // Bat 内部只有一份 Animal::age 实例，没有二义性！\n};",
+      "pitfall_or_interview": "架构建议：现代 C++ 强烈建议遵循接口多继承（只继承纯虚接口），避免包含数据成员的具体类多重继承。"
+    },
+    {
+      "day": 12,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "运算符重载精要与友元机制 (Friend)",
+      "difficulty": 2,
+      "summary": "掌握算术运算符、赋值运算符与流运算符 (<< / >>) 的正确重载模式与友元函数设计。",
+      "key_points": [
+        "重载原则：不能改变运算符优先级、结合性与操作数个数；不可重载的运算符包括：.  .*  ::  ?:  sizeof。",
+        "成员函数 vs 非成员函数：对称运算符 (如 a + b) 推荐声明为非成员/友元函数，以支持左操作数的隐式类型转换。",
+        "流输入输出运算符 (<< / >>)：必须实现为全局非成员函数，通常作为类的 friend 访问私有成员。",
+        "前置自增 vs 后置自增：前置 ++i 返回引用 (T&)，后置 i++ 带 int 哑元参数返回旧值副本 (T)，前置性能更高。"
+      ],
+      "code_example": "class Point {\n    int x, y;\npublic:\n    Point(int x, int y) : x(x), y(y) {}\n    // 友元重载流输出运算符：\n    friend std::ostream& operator<<(std::ostream& os, const Point& p) {\n        return os << \"(\" << p.x << \", \" << p.y << \")\";\n    }\n};",
+      "pitfall_or_interview": "面试题：为什么前置 ++ 比后置 ++ 效率高？后置自增需要创建一个临时对象保存自增前的状态并按值返回，产生额外的拷贝开销。"
+    },
+    {
+      "day": 13,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "异常安全性三保证与 noexcept 说明符",
+      "difficulty": 3,
+      "summary": "掌握异常安全级别的严格标准，理解 noexcept 如何助力移动语义极大提升标准库容器性能。",
+      "key_points": [
+        "基本保证 (Basic Guarantee)：抛出异常时无内存或资源泄漏，对象保持在有效但不确定的状态。",
+        "强保证 (Strong Guarantee)：操作如果失败则发生状态回滚，如同事务从未发生 (Commit or Rollback)。",
+        "不抛异常保证 (Nothrow Guarantee)：承诺绝对不会抛出异常，所有析构函数与移动操作必须达到此标准。",
+        "noexcept 关键字：声明函数不抛异常；std::vector 扩容时只在移动构造函数标记为 noexcept 时才使用高效移动，否则退化为低效深拷贝！"
+      ],
+      "code_example": "class Widget {\npublic:\n    // 移动构造函数务必标记 noexcept\n    Widget(Widget&& other) noexcept {\n        // 窃取资源\n    }\n};",
+      "pitfall_or_interview": "避坑：若一个标记了 noexcept 的函数在运行期抛出了未捕获异常，系统将立即调用 std::terminate() 强行崩溃，不会进行栈展开！"
+    },
+    {
+      "day": 14,
+      "stage": "第二阶段：面向对象本质与资源管理 (RAII)",
+      "title": "智能指针入门：std::unique_ptr 独占语义与自定义删除器",
+      "difficulty": 2,
+      "summary": "掌握现代 C++ 最推荐使用的独占所有权智能指针，理解零运行时开销 (Zero-overhead abstraction)。",
+      "key_points": [
+        "所有权独占：不能被复制 (Copy disabled)，只能被移动 (Move only)，离开作用域自动 delete 托管对象。",
+        "std::make_unique (C++14)：优先使用 make_unique 创建，避免异常发生时的微小内存泄漏隐患，代码更简洁。",
+        "零运行时开销：在默认删除器下，unique_ptr 的大小与原生原始裸指针完全一致（64 位下为 8 字节），运行期无额外损耗。",
+        "自定义删除器 (Custom Deleter)：支持接管各种系统句柄（如 fopen 的 FILE*、Socket、Windows HANDLE）。"
+      ],
+      "code_example": "// 现代 C++ 规范：\nauto ptr = std::make_unique<int>(100);\n// std::unique_ptr<int> p2 = ptr; // 编译错误！禁止拷贝\nauto p2 = std::move(ptr); // 正确：所有权转移，ptr 变为空\n\n// 自定义删除器管理 C 风格文件句柄：\nauto file_deleter = [](FILE* fp) { if (fp) fclose(fp); };\nstd::unique_ptr<FILE, decltype(file_deleter)> safe_file(fopen(\"test.txt\", \"w\"), file_deleter);",
+      "pitfall_or_interview": "面试考点：unique_ptr 是否支持数组？支持，使用 std::unique_ptr<int[]> 即可，它会自动调用 delete[] 而非 delete。"
+    },
+    {
+      "day": 15,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与智能指针",
+      "title": "值类别体系详解 (Value Categories: lvalue, prvalue, xvalue)",
+      "difficulty": 3,
+      "summary": "深入 C++11 核心基石：左值、纯右值、将亡值的严密分类与判断法则。",
+      "key_points": [
+        "判断黄金法则：有名称、能取地址 (&) 的是左值 (lvalue)；临时对象、字面量是右值 (rvalue)。",
+        "纯右值 (prvalue)：字面量 (如 42)、非引用返回的临时对象 (如 a + b)、lambda 表达式等。",
+        "将亡值 (xvalue)：代表其生命周期即将终结、资源可被安全窃取的对象（如 std::move(obj) 的返回值）。",
+        "右值引用 (T&&)：用于绑定到右值，使我们能够为临时对象编写重载函数实现资源转移。"
+      ],
+      "code_example": "int a = 10;          // a 是左值\nint& r1 = a;         // 左值引用绑定左值\n// int&& r2 = a;     // 编译错误！右值引用不能直接绑定左值\nint&& r3 = a + 1;    // 正确：a + 1 是纯右值 (prvalue)\nint&& r4 = std::move(a); // 正确：std::move 将左值转为将亡值 (xvalue)",
+      "pitfall_or_interview": "经典大坑：右值引用变量本身是左值还是右值？回答：它是一个具有名字的变量，因此它本身是左值！需要再次使用 std::move 才能继续传递。"
+    },
+    {
+      "day": 16,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与 std::move 原理",
+      "title": "移动语义 (Move Semantics) 与 std::move 的底层真面目",
+      "difficulty": 3,
+      "summary": "掌握资源窃取式转移，彻底理解 std::move 实际上不移动任何东西（它只是强转）。",
+      "key_points": [
+        "解决的历史痛点：C++98 中大对象（容器、动态数组、字符串）在函数返回或传参时发生昂贵的深拷贝，性能低下。",
+        "移动构造函数：直接将源对象的指针赋给新对象，并将源对象的指针置空（掠夺资源所有权），开销近乎为零。",
+        "std::move 的本质：标准库中的静态类型转换函数，底层等价于 static_cast<std::remove_reference_t<T>&&>(t)，不产生任何运行时机器指令！",
+        "移后状态 (Moved-from state)：被移动后的对象处于“有效但未指定 (valid but unspecified)”的状态，除赋值或析构外不应再访问其内容。"
+      ],
+      "code_example": "class Buffer {\n    char* data;\n    size_t len;\npublic:\n    // 移动构造函数：毫秒级完成百万字节转移\n    Buffer(Buffer&& other) noexcept : data(other.data), len(other.len) {\n        other.data = nullptr; // 关键：剥离原对象指针，防止重复释放\n        other.len = 0;\n    }\n};",
+      "pitfall_or_interview": "面试题：对 const 对象调用 std::move(const_obj) 会发生什么？会静默退化为调用拷贝构造！因为 const 对象不允许被修改置空。"
+    },
+    {
+      "day": 17,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与智能指针",
+      "title": "万能引用 (Universal Reference) 与完美转发 (std::forward)",
+      "difficulty": 4,
+      "summary": "掌握模板参数推导下的引用折叠 (Reference Collapsing) 原则与参数属性完美转发。",
+      "key_points": [
+        "万能引用 (Universal/Forwarding Reference)：形式为 T&& 且 T 处于类型推导状态时（如模板函数 template<typename T> void f(T&& arg)）。",
+        "引用折叠规则：只要有左值引用参与折叠，结果一律为左值引用 (& + & -> &, & + && -> &, && + & -> &)；唯有 && + && -> &&。",
+        "完美转发的目的：在泛型包装函数中，保持传入参数的原有值类别（左值仍按左值传递，右值仍按右值传递）。",
+        "std::forward<T>(arg)：条件转换函数，当 T 为左值引用时转为左值，当 T 为非引用/右值时转为右值。"
+      ],
+      "code_example": "void process(int& lval)  { std::cout << \"Lvalue\\n\"; }\nvoid process(int&& rval) { std::cout << \"Rvalue\\n\"; }\n\ntemplate <typename T>\nvoid relay(T&& arg) {\n    // 必须使用 std::forward 保持原始参数的值类别属性\n    process(std::forward<T>(arg));\n}",
+      "pitfall_or_interview": "避坑：const T&& 不是万能引用！只有形如 T&& 且未被 const 限定的模板类型推导才是万能引用。"
+    },
+    {
+      "day": 18,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与智能指针",
+      "title": "引用计数智能指针：std::shared_ptr 与控制块剖析",
+      "difficulty": 3,
+      "summary": "剖析共享所有权机制、控制块 (Control Block) 的双计数器与 std::make_shared 内存优化。",
+      "key_points": [
+        "共享所有权：多个 shared_ptr 共享同一对象，内部控制块维护两个原子计数器：strong_count (强引用) 与 weak_count (弱引用)。",
+        "线程安全性：引用计数的增减是原子操作 (Atomic) 保证线程安全，但被托管的对象本身不是线程安全的！",
+        "std::make_shared 优势：单次内存分配同时申请对象内存和控制块内存（减少碎片，提高 Cache 命中率）；缺点是托管对象析构后只要还有 weak_ptr，整块内存就不会释放。",
+        "循环引用死锁：若两个对象互相持有对方的 shared_ptr，强引用计数永远无法降为 0，导致严重内存泄漏。"
+      ],
+      "code_example": "// 优先使用 make_shared：\nauto sp1 = std::make_shared<std::string>(\"hello\");\nauto sp2 = sp1; // strong_count 增加到 2\nstd::cout << \"Use count: \" << sp1.use_count(); // 2",
+      "pitfall_or_interview": "大厂常考：禁止从原始裸指针构造多个独立的 shared_ptr，这会导致生成两个毫无关系的控制块，最终引发 Double Free！"
+    },
+    {
+      "day": 19,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与智能指针",
+      "title": "打破循环引用：std::weak_ptr 观察者模式与使用技巧",
+      "difficulty": 3,
+      "summary": "掌握非拥有性弱引用指针，理解 lock() 提升方法与观察者、缓存设计模式。",
+      "key_points": [
+        "弱引用特性：不增加强引用计数 (strong_count)，不控制对象的生命周期，只观察对象存活状态。",
+        "lock() 安全访问：weak_ptr 不能直接解引用 (* 或 ->)，必须调用 .lock() 升级为 shared_ptr，若对象已析构则返回 nullptr。",
+        "expired() 探测：快速检测观察的对象是否已被销毁。",
+        "应用场景：树状结构的父子节点关系（父指向子用 shared_ptr，子指向父用 weak_ptr）、观察者列表、对象缓存池。"
+      ],
+      "code_example": "struct Node {\n    std::shared_ptr<Node> child;\n    std::weak_ptr<Node> parent; // 使用 weak_ptr 打破循环引用！\n};\n\nstd::weak_ptr<int> wp;\nif (auto sp = wp.lock()) { // 安全提升\n    std::cout << *sp << std::endl;\n} else {\n    std::cout << \"Object already destroyed!\\n\";\n}",
+      "pitfall_or_interview": "面试题：enable_shared_from_this 的作用？在类成员函数中安全获得指向自身的 shared_ptr，避免在成员函数内部用 this 构造 shared_ptr 造成重复控制块。"
+    },
+    {
+      "day": 20,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与智能指针",
+      "title": "Lambda 表达式底层闭包实现与类型擦除 (std::function)",
+      "difficulty": 3,
+      "summary": "透析 Lambda 表达式被编译器转换为匿名仿函数类的原理，掌握值捕获/引用捕获与 std::function 开销。",
+      "key_points": [
+        "编译期真相：每个 Lambda 表达式在底层都会被编译器翻译为一个唯一的匿名类，重载了 operator()。",
+        "捕获机制：值捕获 [=] 将外部变量作为类的成员变量深/浅拷贝存储；引用捕获 [&] 将外部变量的引用作为指针成员存储。",
+        "mutable 说明符：允许在值捕获的 Lambda 内部修改被拷贝进来的副本值。",
+        "std::function 与类型擦除：能够包装任何可调用实体（函数指针、仿函数、Lambda），提供统一接口，但有虚表跳转及堆分配开销。"
+      ],
+      "code_example": "int multiplier = 3;\n// 泛型 Lambda (C++14)\nauto calc = [multiplier](auto val) mutable {\n    multiplier *= 2; // 必须有 mutable 才能修改拷贝的副本\n    return val * multiplier;\n};\nstd::function<int(int)> func = calc; // 类型擦除包装器",
+      "pitfall_or_interview": "避坑：在多线程或异步回调中绝对要警惕 [&] 引用捕获局部变量，函数执行完毕后局部变量出栈将引发悬挂指针！"
+    },
+    {
+      "day": 21,
+      "stage": "第三阶段：现代 C++ 核心：移动语义与智能指针",
+      "title": "C++17 实用工具类：std::optional, std::variant 与 std::any",
+      "difficulty": 2,
+      "summary": "掌握现代 C++ 告别魔法错误值与裸 union 的安全工具三剑客。",
+      "key_points": [
+        "std::optional<T>：表达“可能存在也可能为空”的语义，彻底替代使用 -1 或 nullptr 作为错误标记的旧做法。",
+        "std::variant<Ts...>：类型安全的联合体 (Type-safe union)，编译期确定备选类型列表，通过 std::holds_alternative 或 std::visit 模式匹配访问。",
+        "std::any：可以存储任意单值类型的类型擦除容器，使用 std::any_cast 提取，存在动态堆分配开销。",
+        "性能优势：optional 和 variant 无需动态堆分配，直接内联存储在栈内存中。"
+      ],
+      "code_example": "std::optional<int> find_id(const std::string& name) {\n    if (name == \"admin\") return 1;\n    return std::nullopt; // 显式表达无结果\n}\n\nstd::variant<int, std::string> data = 42;\nstd::visit([](auto&& arg) { std::cout << arg << \"\\n\"; }, data);",
+      "pitfall_or_interview": "代码质量：在现代 C++ 接口设计中，优先使用 std::optional 返回查询结果，大幅提高代码自解释性与异常安全性。"
+    },
+    {
+      "day": 22,
+      "stage": "第四阶段：泛型编程、模板与 STL 底层机制",
+      "title": "模板机制深入：函数/类模板、特化与偏特化",
+      "difficulty": 3,
+      "summary": "掌握模板两阶段编译 (Two-phase lookup)、模板全特化与偏特化 (Partial Specialization) 规则。",
+      "key_points": [
+        "编译期多态：模板在编译期展开生成具体特化代码，零运行时开销，但会造成代码膨胀 (Code Bloat)。",
+        "全特化 (Explicit/Full Specialization)：对所有模板参数提供具体特定类型实现。",
+        "偏特化 (Partial Specialization)：仅对部分参数特化，或特化参数的形态（如特化指针 T*、引用 T&、const T）。",
+        "限制：类模板支持全特化和偏特化，但函数模板不支持偏特化（只能通过函数重载来达到类似效果）。"
+      ],
+      "code_example": "template <typename T>\nstruct TypeTrait { static void print() { std::cout << \"Normal\"; } };\n\n// 偏特化指针版本：\ntemplate <typename T>\nstruct TypeTrait<T*> { static void print() { std::cout << \"Pointer\"; } };\n\n// 全特化 int 版本：\ntemplate <>\nstruct TypeTrait<int> { static void print() { std::cout << \"Integer\"; } };",
+      "pitfall_or_interview": "为什么模板定义通常必须写在头文件中？因为模板实例化发生在调用方的编译单元，若只有声明而无定义，链接期会报无法解析的外部符号 (LNK2019)。"
+    },
+    {
+      "day": 23,
+      "stage": "第四阶段：泛型编程、模板与 STL 底层机制",
+      "title": "SFINAE 原则与 std::enable_if (编译期重载决议分支)",
+      "difficulty": 4,
+      "summary": "掌握“替换失败并非错误 (Substitution Failure Is Not An Error)”的元编程核心原则。",
+      "key_points": [
+        "SFINAE 机制：在函数模板重载决议中，当类型替换产生语法无效代码时，编译器不报错，而是将其默默从备选候选集中剔除。",
+        "std::enable_if (C++11)：根据编译期布尔条件决定是否定义嵌套类型 type，实现条件化启用某个模板重载。",
+        "type_traits 配合：与 std::is_integral, std::is_floating_point, std::is_pointer 等配合使用。",
+        "现代演进：C++20 的 Concepts (概念) 已经全面替代了繁琐晦涩的 SFINAE，但在维护现有工业级代码中依然是必修课。"
+      ],
+      "code_example": "// 仅当 T 为整型时才启用该重载函数：\ntemplate <typename T>\ntypename std::enable_if<std::is_integral<T>::value, void>::type\nprint_num(T val) {\n    std::cout << \"Integral: \" << val << \"\\n\";\n}\n\n// C++14 别名简化写法：std::enable_if_t<std::is_floating_point_v<T>>",
+      "pitfall_or_interview": "面试题：SFINAE 生效的范围？仅在模板参数替换阶段（即函数签名、模板参数默认值中）生效，函数体内部语法错误依然会直接导致编译报错！"
+    },
+    {
+      "day": 24,
+      "stage": "第四阶段：泛型编程、模板与 STL 底层机制",
+      "title": "STL std::vector 内存扩容原理与迭代器失效 (Iterator Invalidation)",
+      "difficulty": 3,
+      "summary": "拆解 vector 的三指针内部布局、几何级数倍增扩容策略与常见崩溃根源迭代器失效。",
+      "key_points": [
+        "内部三指针：T* start (首元素), T* finish (当前元素尾), T* end_of_storage (容量上限)。",
+        "几何扩容倍数：MSVC 通常为 1.5 倍，GCC/Clang 通常为 2 倍；为什么不是每次加固定值？因为固定增长单次插入均摊复杂度为 O(N)，几何倍增均摊复杂度为 O(1)。",
+        "迭代器失效：扩容会导致整块内存重新分配并搬迁，原有的所有迭代器、指针、引用全部失效！",
+        "reserve() vs resize()：reserve 仅预留 capacity 避免重复扩容重分配，resize 实际构造元素改变 size。"
+      ],
+      "code_example": "std::vector<int> vec = {1, 2, 3, 4, 5};\nfor (auto it = vec.begin(); it != vec.end(); /* 留空 */) {\n    if (*it == 3) {\n        it = vec.erase(it); // 关键：erase 会返回下一个有效迭代器！\n    } else {\n        ++it;\n    }\n}",
+      "pitfall_or_interview": "高频面试：在遍历 vector 时删除元素如何避免迭代器失效？牢记使用 it = vec.erase(it) 接收返回值，或在现代 C++ 中直接使用 std::erase-if 算法。"
+    },
+    {
+      "day": 25,
+      "stage": "第四阶段：泛型编程、模板与 STL 底层机制",
+      "title": "哈希表 vs 红黑树：std::unordered_map 与 std::map 全方位对决",
+      "difficulty": 3,
+      "summary": "从底层数据结构、查找效率、内存占用与缓存友好性彻底厘清两类关联容器的选择标准。",
+      "key_points": [
+        "std::map：底层基于红黑树 (自平衡二叉查找树)，元素严格有序，插入/删除/查找时间复杂度稳定为 O(log N)。",
+        "std::unordered_map：底层基于哈希表 (桶数组 + 开链法解决冲突)，平均查找为 O(1)，极端碰撞退化为 O(N)。",
+        "重哈希 (Rehash)：当负载因子 (load_factor) 超过阈值时触发 bucket 数组翻倍重哈希，会有偶发性能毛刺。",
+        "选型指南：需要顺序遍历、范围查找或稳定最坏时间保证时选 map；高频纯 key-value 读写查找且在意吞吐量时选 unordered_map。"
+      ],
+      "code_example": "// 自定义结构体放入 unordered_map 必须提供 Hash 函数与 operator==\nstruct Point { int x, y; bool operator==(const Point& o) const { return x==o.x && y==o.y; } };\nstruct PointHash {\n    std::size_t operator()(const Point& p) const {\n        return std::hash<int>()(p.x) ^ (std::hash<int>()(p.y) << 1);\n    }\n};\nstd::unordered_map<Point, std::string, PointHash> map;",
+      "pitfall_or_interview": "面试深挖：为什么在元素较少（几百个以内）时，有序 vector (配合 std::lower_bound) 往往比 map 甚至 unordered_map 跑得更快？因为连续内存对 CPU Cache 极其友好！"
+    },
+    {
+      "day": 26,
+      "stage": "第四阶段：泛型编程、模板与 STL 底层机制",
+      "title": "std::string 的短字符串优化 (SSO) 与 COW 历史演进",
+      "difficulty": 3,
+      "summary": "探究现代 C++ 字符串标准库如何通过 Small String Optimization (SSO) 规避小对象的堆分配。",
+      "key_points": [
+        "SSO 原理：若字符串长度较短（通常在 15 或 22 字节以内，视 64 位平台架构而定），直接复用内部缓冲区存放字符，完全不在堆上申请内存。",
+        "COW (写时复制) 的落幕：C++98 曾采用 COW，但因多线程环境下维护引用计数及保证线程安全的开销过大，C++11 标准强制要求 string 下标操作时间复杂度为 O(1)，彻底终结了 COW 实现。",
+        "std::string_view (C++17)：轻量级非拥有性字符串切片视图（只存指针和长度），彻底避免子串传参时的任何内存拷贝与分配。"
+      ],
+      "code_example": "// 极速子串传参，零拷贝：\nvoid parse(std::string_view sv) {\n    if (sv.starts_with(\"GET\")) {\n        // 高性能解析，无需生成新的 std::string\n    }\n}",
+      "pitfall_or_interview": "避坑：string_view 绝不拥有数据，绝不能返回指向局部临时 string 生成的 string_view，否则将引用失效内存造成灾难！"
+    },
+    {
+      "day": 27,
+      "stage": "第五阶段：并发编程、C++20 新特性与极致性能调优",
+      "title": "多线程基础：std::thread, std::mutex, 死锁规避与 RAII 锁",
+      "difficulty": 3,
+      "summary": "掌握 C++11 标准线程库、互斥锁机制与死锁发生的必要条件及现代 RAII 锁封装。",
+      "key_points": [
+        "线程管理：std::thread 在析构时若既未 join() 也未 detach()，会直接触发 std::terminate() 崩溃！C++20 引入 std::jthread 会在析构时自动 join。",
+        "RAII 锁工具：std::lock_guard (轻量不可手动解锁)、std::unique_lock (灵活支持条件变量与延时上锁)、std::scoped_lock (C++17 同时锁定多个互斥量防止死锁)。",
+        "死锁四要素：互斥、占有且等待、不可抢占、循环等待。",
+        "条件变量 (std::condition_variable)：用于线程间事件通知与等待，必须配合 std::unique_lock 使用，并在 wait 谓词中循环检查防止虚假唤醒 (Spurious Wakeup)。"
+      ],
+      "code_example": "std::mutex mtx1, mtx2;\nvoid safe_transfer() {\n    // C++17 scoped_lock 使用死锁避免算法同时获取两把锁：\n    std::scoped_lock lock(mtx1, mtx2);\n    // 临界区安全执行\n}",
+      "pitfall_or_interview": "面试题：为什么条件变量 wait 必须使用 while 循环检查条件而不是 if？因为操作系统底层存在虚假唤醒机制，醒来时不代表条件必定满足。"
+    },
+    {
+      "day": 28,
+      "stage": "第五阶段：并发编程、C++20 新特性与极致性能调优",
+      "title": "无锁并发与 C++ 内存模型 (Memory Order: Relaxed, Acquire-Release, SeqCst)",
+      "difficulty": 5,
+      "summary": "深入多核架构与指令重排，掌握 std::atomic 原子操作与六种内存序保证。",
+      "key_points": [
+        "指令重排：编译器优化与 CPU 乱序执行可能打乱指令执行顺序，单线程语义不变，多线程下会导致读取过期数据。",
+        "memory_order_relaxed：仅保证该变量本身的读写操作具备原子性，对周围其他内存访问没有任何同步与顺序约束（最快）。",
+        "Acquire-Release 语义：Release 保证本线程此前所有的写操作不会重排到该 Release 之后；Acquire 保证本线程此后所有的读操作不会重排到该 Acquire 之前，构成跨线程同步屏障。",
+        "memory_order_seq_cst：全局顺序一致性（默认也是开销最大的内存序），保证所有线程观察到的写操作顺序完全一致。"
+      ],
+      "code_example": "std::atomic<bool> ready{false};\nint data = 0;\n\n// 生产者线程：\nvoid producer() {\n    data = 42;\n    ready.store(true, std::memory_order_release); // 屏障：保证 data=42 先于 ready 写入\n}\n// 消费者线程：\nvoid consumer() {\n    while (!ready.load(std::memory_order_acquire)) {} // 屏障：保证读取 data 在后\n    assert(data == 42); // 绝不会失败！\n}",
+      "pitfall_or_interview": "终极面试题：无锁队列为什么比加锁快？利用硬件级的 CAS (Compare-And-Swap) 原子指令避免了内核态上下文切换 (Context Switch) 与线程挂起开销。"
+    },
+    {
+      "day": 29,
+      "stage": "第五阶段：并发编程、C++20 新特性与极致性能调优",
+      "title": "C++20 革命性飞跃：Concepts (概念约束) 与 Ranges (管道视图)",
+      "difficulty": 4,
+      "summary": "体验现代 C++ 最新工业级语法：摆脱晦涩 SFINAE 的类型约束与函数式管道操作。",
+      "key_points": [
+        "Concepts (概念)：在编译期对模板参数施加显式类型约束，编译器报错信息极其清晰友好，彻底终结数千行的模板报错噩梦。",
+        "requires 表达式：精确检查类型是否支持特定成员函数、操作符、嵌套类型声明。",
+        "Ranges (范围库)：支持流式管道运算符 (|)，惰性求值 (Lazy Evaluation)，组合 filter、transform、take 等操作，不产生中间临时容器。"
+      ],
+      "code_example": "// C++20 概念定义：\ntemplate <typename T>\nconcept Numeric = std::is_arithmetic_v<T>;\n\nNumeric auto add(Numeric auto a, Numeric auto b) {\n    return a + b; // 传入非数值类型时直接给出清晰可读的错误\n}\n\n// Ranges 管道化流式处理：\nstd::vector<int> numbers = {1, 2, 3, 4, 5, 6};\nauto result = numbers | std::views::filter([](int n) { return n % 2 == 0; })\n                      | std::views::transform([](int n) { return n * n; });",
+      "pitfall_or_interview": "前沿亮点：在现代 C++ 架构设计中，Concepts 使得泛型接口拥有了如同 Java/Rust Interface/Trait 一样严谨可读的契约式约束。"
+    },
+    {
+      "day": 30,
+      "stage": "第五阶段：并发编程、C++20 新特性与极致性能调优",
+      "title": "C++ 终极性能调优：Cache 局部性、伪共享 (False Sharing) 与现代化工具链",
+      "difficulty": 5,
+      "summary": "从硬件微架构角度理解高性能 C++：L1/L2/L3 缓存行亲和性、多核伪共享消减与 Sanitizer 检测体系。",
+      "key_points": [
+        "CPU 缓存行 (Cache Line)：典型尺寸为 64 字节，数据总是按 Cache Line 批量载入。空间局部性高的代码（如连续数组）性能远胜跳跃指针节点（如链表）。",
+        "伪共享 (False Sharing)：多线程并发修改位于同一 Cache Line 内的不同独立变量，导致多核 CPU 频繁触发 MESI 缓存一致性失效，性能骤降百倍！",
+        "对齐消减：使用 alignas(hardware_destructive_interference_size) 强制隔离多线程独立变量。",
+        "现代工具链：AddressSanitizer (ASan 内存越界泄漏)、ThreadSanitizer (TSan 数据竞争)、Perf / VTune (硬件级瓶颈分析)。"
+      ],
+      "code_example": "// 消减伪共享的现代写法：\n#include <new>\nstruct alignas(std::hardware_destructive_interference_size) ThreadCounter {\n    std::atomic<uint64_t> count{0};\n}; // 确保每个线程的计数器独占一个 64 字节 Cache Line，彻底避免伪共享！",
+      "pitfall_or_interview": "结业总结：C++ 的核心威力在于零抽象开销 (Zero-overhead principle) 与对底层硬件资源的绝对控制权。30天从内存分区走入无锁并发与微架构调优，已全面建立 C++ 现代工程认知体系！"
+    }
+  ]
+}

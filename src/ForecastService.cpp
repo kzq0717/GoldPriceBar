@@ -48,8 +48,11 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
     const QString src = source.trimmed().isEmpty() ? AppSettings::instance().dataSource() : source.trimmed();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
 
-    // 节流：同品种 8 秒内不重复请求，除非显式强制
-    if (!forceOnline && m_lastRequestMs > 0 && (nowMs - m_lastRequestMs < 8000) && (src == m_currentSource)) {
+    // 节流：同品种有大模型配置时，节流间隔根据用户配置的 forecastIntervalSec（最低 30 秒），避免消耗额度过频
+    const int minThrottleMs = (AppSettings::instance().forecastOnline() && !AppSettings::instance().xaiApiKey().trimmed().isEmpty())
+                                  ? qMax(30000, AppSettings::instance().forecastIntervalSec() * 1000)
+                                  : 8000;
+    if (!forceOnline && m_lastRequestMs > 0 && (nowMs - m_lastRequestMs < minThrottleMs) && (src == m_currentSource)) {
         return;
     }
     m_lastRequestMs = nowMs;
@@ -69,9 +72,13 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
     m_provider = AppSettings::instance().llmProvider();
     m_modelName = AppSettings::instance().xaiModel().trimmed();
     if (m_modelName.isEmpty()) {
-        m_modelName = (m_provider == QStringLiteral("gemini"))
-                          ? QStringLiteral("gemini-3.6-flash")
-                          : QStringLiteral("grok-2-latest");
+        if (m_provider == QStringLiteral("gemini")) m_modelName = QStringLiteral("gemini-flash-latest");
+        else if (m_provider == QStringLiteral("deepseek")) m_modelName = QStringLiteral("deepseek-chat");
+        else if (m_provider == QStringLiteral("glm") || m_provider == QStringLiteral("zhipu")) m_modelName = QStringLiteral("glm-4-flash");
+        else if (m_provider == QStringLiteral("qwen")) m_modelName = QStringLiteral("qwen-plus");
+        else if (m_provider == QStringLiteral("moonshot")) m_modelName = QStringLiteral("moonshot-v1-8k");
+        else if (m_provider == QStringLiteral("openai")) m_modelName = QStringLiteral("gpt-4o-mini");
+        else m_modelName = QStringLiteral("grok-2-latest");
     }
 
     // 收集多维度上下文数据
@@ -109,16 +116,19 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
     const QString pendingAlert = EventCalendar::pendingAlertText();
 
     QString sentimentSummary;
+    const auto impact = SentimentService::instance().recentMarketImpact(12);
+    sentimentSummary = QStringLiteral("【核心消息面研判】%1 (多空净分: %2)\n")
+                           .arg(impact.summary, QString::number(impact.netScore));
     const auto sItems = SentimentService::instance().items();
-    const int sTake = qMin(3, sItems.size());
+    const int sTake = qMin(5, sItems.size());
     for (int i = 0; i < sTake; ++i) {
         sentimentSummary += QStringLiteral("• [%1] %2 (%3)\n")
                                 .arg(sItems.at(i).published.toString(QStringLiteral("HH:mm")),
                                      sItems.at(i).title,
                                      sItems.at(i).bias);
     }
-    if (sentimentSummary.isEmpty()) {
-        sentimentSummary = QStringLiteral("暂无异动");
+    if (sItems.isEmpty()) {
+        sentimentSummary += QStringLiteral("暂无异动\n");
     }
 
     const QString nowStr = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
@@ -129,7 +139,11 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         "1. 资金防守与防追高：若日内早盘已冲高回落、长时间未能破高且已形成阻力，必须果断评估高点是否已确立，严禁盲目向外推高预测价误导用户追高！\n"
         "2. 尊重国内积存金(zs/ms)特征：国内早盘 09:00-10:30 集中释放隔夜外盘情绪，极易形成全日脉冲最高点或最低点；国际美盘(20:30-22:30)为外盘主要博弈时段。不可忽视国内早盘极值！\n"
         "3. 严禁无脑平摊 ATR：震荡或收敛行情下全日总振幅可能显著低于 ATR，禁止机械式为了凑够 ATR 振幅而两头虚报不切实际的极端价格。\n"
-        "4. 本地引擎事实为基准硬约束：本地引擎已基于微观形态、衰减速度及概率桶计算好基准，LLM 仅在宏观/突发事件明确时适度校准，禁止盲目偏离。\n\n"
+        "4. 本地引擎事实为基准硬约束：本地引擎已基于微观形态、衰减速度及概率桶计算好基准，LLM 仅在宏观/突发事件明确时适度校准，禁止盲目偏离。\n"
+        "5. 【消息面与宏观深度融合】：\n"
+        "   - 若消息面为【利空消息驱动】或重大宏观压力（如金价重挫破位、美元暴涨、地缘缓和、非农/CPI超预期压制）：严禁虚报反弹高点！必须将全日最高价严密压制在阻力位附近，提示高点大概率已现、防范回落风险；\n"
+        "   - 若消息面为【利多消息驱动】（如地缘突发升级、避险飙升、央行大举购金）：可适度扩展上方阻力目标，提示关注主升突破，但仍须注意高位兑现节奏；\n"
+        "   - 保持极值预测在全日区间的权威稳定性，严禁在几分钟内因价格微小噪点大幅反复跳变修改全日极值。\n\n"
         "任务目标：推测全日实际最高价与最低价、极值最可能出现的【精准时间节点/窗口】、核心驱动催化剂及操作演变路径。\n\n"
         "输出规范：\n"
         "必须且仅输出单行合法 JSON 对象，严禁 Markdown 代码块、严禁包含思考过程与列表。字段定义：\n"
@@ -138,8 +152,8 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         "  \"pred_low\": number,  // 预期全日最低价。必须 <= 已出现今低；若判断低点已确立，则略低于或等于今低\n"
         "  \"pred_high_time_window\": string, // 预期高点时段(格式\"HH:mm-HH:mm\"或\"已于HH:mm确立\")\n"
         "  \"pred_low_time_window\": string,  // 预期低点时段(格式\"HH:mm-HH:mm\"或\"已于HH:mm确立\")\n"
-        "  \"daily_path_scenario\": string,   // 25-40字全日实战演变与盈利防守指引\n"
-        "  \"key_catalyst\": string,          // 核心驱动催化剂\n"
+        "  \"daily_path_scenario\": string,   // 20-30字简短全日演变指引\n"
+        "  \"key_catalyst\": string,          // 15字以内核心催化剂关键词(严禁长句或段落)\n"
         "  \"bias\": string,                  // \"偏多\" | \"偏空\" | \"震荡\"\n"
         "  \"brief\": string,                 // 35字内实战要点(强调盈利与防守)\n"
         "  \"confidence\": number             // 0.0 到 1.0 置信度\n"
@@ -187,14 +201,17 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         }
         if (fr.valid) {
             QString alertNote;
-            if (fr.highAlreadyInProb >= 0.65) {
+            const bool lateTradingSession = (nowT.hour() >= 21 || dayFrac >= 0.80);
+            if (fr.highAlreadyInProb >= 0.75 && lateTradingSession) {
                 alertNote = QStringLiteral("\n【重点警示】：本地引擎检测到高点大概率已在盘中确立（已现概率约 %1%，时段: %2），剩余上行空间极小，切勿大幅虚高预测误导追高！")
                                 .arg(fr.highAlreadyInProb * 100.0, 0, 'f', 0)
                                 .arg(QString::fromStdString(fr.predHighTimeWindow));
-            } else if (fr.lowAlreadyInProb >= 0.65) {
+            } else if (fr.lowAlreadyInProb >= 0.75 && lateTradingSession) {
                 alertNote = QStringLiteral("\n【重点警示】：本地引擎检测到低点大概率已探明企稳（已现概率约 %1%，时段: %2），支撑有效。")
                                 .arg(fr.lowAlreadyInProb * 100.0, 0, 'f', 0)
                                 .arg(QString::fromStdString(fr.predLowTimeWindow));
+            } else if (fr.highAlreadyInProb <= 0.35) {
+                alertNote = QStringLiteral("\n【盘面特征】：短线处于活跃交易与多头推进阶段，日内高点尚未确立，重点预测欧美盘主浪高点时间窗口与上行阻力目标。");
             }
 
             localEngineBlock = QStringLiteral(
@@ -271,6 +288,7 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         body.insert(QStringLiteral("contents"), contents);
 
         QJsonObject genCfg;
+        genCfg.insert(QStringLiteral("temperature"), 0.2);
         genCfg.insert(QStringLiteral("maxOutputTokens"), 4096);
         genCfg.insert(QStringLiteral("responseMimeType"), QStringLiteral("application/json"));
 
@@ -295,16 +313,33 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         schema.insert(QStringLiteral("required"), req);
         genCfg.insert(QStringLiteral("responseSchema"), schema);
 
-        QJsonObject thinking;
-        thinking.insert(QStringLiteral("thinkingLevel"), QStringLiteral("MINIMAL"));
-        genCfg.insert(QStringLiteral("thinkingConfig"), thinking);
+        // 仅对支持 thinkingBudget=0 的 Gemini 2.5 Flash 系列禁用思考消耗，避免 2.5-pro 或 3.x 模型返回 400 INVALID_ARGUMENT
+        if (model.contains(QStringLiteral("2.5-flash"), Qt::CaseInsensitive)) {
+            QJsonObject thinking;
+            thinking.insert(QStringLiteral("thinkingBudget"), 0);
+            genCfg.insert(QStringLiteral("thinkingConfig"), thinking);
+        }
 
         body.insert(QStringLiteral("generationConfig"), genCfg);
 
         Logger::info(QStringLiteral("ForecastService: sending Gemini request model=%1").arg(model));
         m_pendingReply = m_nam->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     } else {
-        request.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/chat/completions")));
+        QUrl url;
+        if (m_provider == QStringLiteral("deepseek")) {
+            url = QUrl(QStringLiteral("https://api.deepseek.com/chat/completions"));
+        } else if (m_provider == QStringLiteral("glm") || m_provider == QStringLiteral("zhipu")) {
+            url = QUrl(QStringLiteral("https://open.bigmodel.cn/api/paas/v4/chat/completions"));
+        } else if (m_provider == QStringLiteral("qwen")) {
+            url = QUrl(QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"));
+        } else if (m_provider == QStringLiteral("moonshot")) {
+            url = QUrl(QStringLiteral("https://api.moonshot.cn/v1/chat/completions"));
+        } else if (m_provider == QStringLiteral("openai")) {
+            url = QUrl(QStringLiteral("https://api.openai.com/v1/chat/completions"));
+        } else {
+            url = QUrl(QStringLiteral("https://api.x.ai/v1/chat/completions"));
+        }
+        request.setUrl(url);
         request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
         request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
 
@@ -317,7 +352,7 @@ void ForecastService::requestForecast(const QString& source, bool forceOnline) {
         messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")}, {QStringLiteral("content"), userPrompt}});
         body.insert(QStringLiteral("messages"), messages);
 
-        Logger::info(QStringLiteral("ForecastService: sending Grok request model=%1").arg(m_modelName));
+        Logger::info(QStringLiteral("ForecastService: sending %1 request model=%2 url=%3").arg(m_provider, m_modelName, url.toString()));
         m_pendingReply = m_nam->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     }
 
@@ -424,9 +459,23 @@ void ForecastService::onReplyFinished() {
     }
 
     if (err != QNetworkReply::NoError) {
-        Logger::warn(QStringLiteral("ForecastService HTTP error: %1 body=%2")
-                         .arg(reply->errorString(), QString::fromUtf8(raw.left(400))));
-        fallbackLocal(m_currentSource, tr("在线失败·本地算法"));
+        QString friendlyError;
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (statusCode == 429) {
+            friendlyError = tr("API 配额超限或请求频次过高 (HTTP 429: Quota exceeded)");
+        } else if (statusCode == 404) {
+            friendlyError = tr("模型不存在或已弃用 (HTTP 404)");
+        } else if (statusCode == 401) {
+            friendlyError = tr("API Key 鉴权失败 (HTTP 401)");
+        } else if (err == QNetworkReply::ProxyConnectionRefusedError || reply->errorString().contains(QStringLiteral("Proxy"), Qt::CaseInsensitive)) {
+            friendlyError = tr("无法连接本地代理服务 (%1:%2)").arg(AppSettings::instance().proxyHost(), QString::number(AppSettings::instance().proxyPort()));
+        } else {
+            friendlyError = reply->errorString();
+        }
+
+        Logger::warn(QStringLiteral("ForecastService HTTP error: %1 (status %2) body=%3")
+                         .arg(friendlyError, QString::number(statusCode), QString::fromUtf8(raw.left(400))));
+        fallbackLocal(m_currentSource, tr("大模型连接异常（%1）·本地算法兜底").arg(friendlyError));
         return;
     }
 
@@ -452,7 +501,12 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
             const QJsonObject contentObj = c0.value(QStringLiteral("content")).toObject();
             const QJsonArray parts = contentObj.value(QStringLiteral("parts")).toArray();
             for (const QJsonValue& pv : parts) {
-                const QString tx = pv.toObject().value(QStringLiteral("text")).toString();
+                const QJsonObject pObj = pv.toObject();
+                // 关键修复：坚决过滤 Gemini 思考模型 thought 推理分块，杜绝与最终 JSON 内容混杂导致解析失败
+                if (pObj.value(QStringLiteral("thought")).toBool()) {
+                    continue;
+                }
+                const QString tx = pObj.value(QStringLiteral("text")).toString();
                 if (!tx.isEmpty()) {
                     if (!content.isEmpty()) content += QLatin1Char('\n');
                     content += tx;
@@ -472,51 +526,104 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
         if (content.endsWith(QStringLiteral("```"))) content.chop(3);
         content = content.trimmed();
     }
-    {
-        const int a = content.indexOf(QLatin1Char('{'));
-        const int b = content.lastIndexOf(QLatin1Char('}'));
-        if (a >= 0 && b > a) {
-            content = content.mid(a, b - a + 1).trimmed();
+    const QString rawContent = content;
+    const int a = content.indexOf(QLatin1Char('{'));
+    const int b = content.lastIndexOf(QLatin1Char('}'));
+    if (a >= 0 && b > a) {
+        content = content.mid(a, b - a + 1).trimmed();
+    } else if (a >= 0 && b < a) {
+        // 若末尾因 Token 截断缺失引号或花括号，尝试平滑自愈
+        content = content.mid(a).trimmed();
+        if (!content.endsWith(QLatin1Char('"')) && content.count(QLatin1Char('"')) % 2 != 0) {
+            content += QLatin1Char('"');
         }
+        content += QLatin1Char('}');
     }
 
     QJsonParseError pe2{};
-    const QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
+    QJsonDocument jdoc = QJsonDocument::fromJson(content.toUtf8(), &pe2);
     if (pe2.error != QJsonParseError::NoError || !jdoc.isObject()) {
-        Logger::warn(QStringLiteral("ForecastService: LLM text not valid JSON: %1").arg(content.left(300)));
-        fallbackLocal(m_currentSource, tr("JSON无效·本地算法"));
-        return;
-    }
-
-    const QJsonObject jo = jdoc.object();
-    auto num = [&](std::initializer_list<const char*> keys) -> double {
-        for (const char* k : keys) {
-            if (jo.contains(QLatin1String(k))) {
-                const QJsonValue v = jo.value(QLatin1String(k));
-                if (v.isDouble() || v.isString()) {
-                    bool ok = false;
-                    const double d = v.toVariant().toDouble(&ok);
-                    if (ok && d > 0.0) return d;
+        // 若模型输出了多个 JSON 对象或前后夹杂废文本，从后往前定位最后一个完整包含 pred_high 的 JSON 对象
+        int scanEnd = rawContent.length();
+        while (scanEnd > 0) {
+            const int endBrace = rawContent.lastIndexOf(QLatin1Char('}'), scanEnd - 1);
+            if (endBrace < 0) break;
+            const int startBrace = rawContent.lastIndexOf(QRegularExpression(QStringLiteral("\\{\\s*\"pred_")), endBrace);
+            if (startBrace >= 0 && endBrace > startBrace) {
+                const QString cand = rawContent.mid(startBrace, endBrace - startBrace + 1);
+                QJsonParseError peTry{};
+                QJsonDocument docTry = QJsonDocument::fromJson(cand.toUtf8(), &peTry);
+                if (peTry.error == QJsonParseError::NoError && docTry.isObject()) {
+                    jdoc = docTry;
+                    pe2 = peTry;
+                    break;
                 }
             }
+            scanEnd = endBrace;
         }
-        return 0.0;
-    };
+    }
 
-    double predHigh = num({"pred_high", "predHigh", "high", "max"});
-    double predLow  = num({"pred_low", "predLow", "low", "min"});
-    QString highTime = normalizeTo24HourTime(jo.value(QStringLiteral("pred_high_time_window")).toString());
-    if (highTime.isEmpty()) highTime = normalizeTo24HourTime(jo.value(QStringLiteral("high_time")).toString());
-    QString lowTime = normalizeTo24HourTime(jo.value(QStringLiteral("pred_low_time_window")).toString());
-    if (lowTime.isEmpty()) lowTime = normalizeTo24HourTime(jo.value(QStringLiteral("low_time")).toString());
-    QString scenario = jo.value(QStringLiteral("daily_path_scenario")).toString();
-    if (scenario.isEmpty()) scenario = jo.value(QStringLiteral("scenario")).toString();
-    QString catalyst = jo.value(QStringLiteral("key_catalyst")).toString();
-    if (catalyst.isEmpty()) catalyst = jo.value(QStringLiteral("catalyst")).toString();
-    QString bias = jo.value(QStringLiteral("bias")).toString();
-    QString brief = jo.value(QStringLiteral("brief")).toString();
-    if (brief.isEmpty()) brief = jo.value(QStringLiteral("reason")).toString();
-    double conf = jo.value(QStringLiteral("confidence")).toDouble(0.8);
+    double predHigh = 0.0;
+    double predLow  = 0.0;
+    QString highTime, lowTime, scenario, catalyst, bias, brief;
+    double conf = 0.8;
+
+    if (pe2.error == QJsonParseError::NoError && jdoc.isObject()) {
+        const QJsonObject jo = jdoc.object();
+        auto num = [&](std::initializer_list<const char*> keys) -> double {
+            for (const char* k : keys) {
+                if (jo.contains(QLatin1String(k))) {
+                    const QJsonValue v = jo.value(QLatin1String(k));
+                    if (v.isDouble() || v.isString()) {
+                        bool ok = false;
+                        const double d = v.toVariant().toDouble(&ok);
+                        if (ok && d > 0.0) return d;
+                    }
+                }
+            }
+            return 0.0;
+        };
+
+        predHigh = num({"pred_high", "predHigh", "high", "max"});
+        predLow  = num({"pred_low", "predLow", "low", "min"});
+        highTime = normalizeTo24HourTime(jo.value(QStringLiteral("pred_high_time_window")).toString());
+        if (highTime.isEmpty()) highTime = normalizeTo24HourTime(jo.value(QStringLiteral("high_time")).toString());
+        lowTime = normalizeTo24HourTime(jo.value(QStringLiteral("pred_low_time_window")).toString());
+        if (lowTime.isEmpty()) lowTime = normalizeTo24HourTime(jo.value(QStringLiteral("low_time")).toString());
+        scenario = jo.value(QStringLiteral("daily_path_scenario")).toString();
+        if (scenario.isEmpty()) scenario = jo.value(QStringLiteral("scenario")).toString();
+        catalyst = jo.value(QStringLiteral("key_catalyst")).toString();
+        if (catalyst.isEmpty()) catalyst = jo.value(QStringLiteral("catalyst")).toString();
+        bias = jo.value(QStringLiteral("bias")).toString();
+        brief = jo.value(QStringLiteral("brief")).toString();
+        if (brief.isEmpty()) brief = jo.value(QStringLiteral("reason")).toString();
+        conf = jo.value(QStringLiteral("confidence")).toDouble(0.8);
+    } else {
+        // 关键增强：大模型正则保底容错提取，杜绝截断时直接丢弃极值预测
+        Logger::warn(QStringLiteral("ForecastService: JSON parse warning (%1), attempting regex recovery from text").arg(pe2.errorString()));
+        static const QRegularExpression reH(QStringLiteral("\"pred_high\"\\s*:\\s*([0-9.]+)"));
+        static const QRegularExpression reL(QStringLiteral("\"pred_low\"\\s*:\\s*([0-9.]+)"));
+        static const QRegularExpression reHT(QStringLiteral("\"pred_high_time_window\"\\s*:\\s*\"([^\"]+)\""));
+        static const QRegularExpression reLT(QStringLiteral("\"pred_low_time_window\"\\s*:\\s*\"([^\"]+)\""));
+        static const QRegularExpression reSc(QStringLiteral("\"daily_path_scenario\"\\s*:\\s*\"([^\"]+)\""));
+        static const QRegularExpression reCat(QStringLiteral("\"key_catalyst\"\\s*:\\s*\"([^\"]+)\""));
+
+        auto mH = reH.match(content);
+        auto mL = reL.match(content);
+        if (mH.hasMatch() && mL.hasMatch()) {
+            predHigh = mH.captured(1).toDouble();
+            predLow = mL.captured(1).toDouble();
+            auto mHT = reHT.match(content); if (mHT.hasMatch()) highTime = normalizeTo24HourTime(mHT.captured(1));
+            auto mLT = reLT.match(content); if (mLT.hasMatch()) lowTime = normalizeTo24HourTime(mLT.captured(1));
+            auto mSc = reSc.match(content); if (mSc.hasMatch()) scenario = mSc.captured(1);
+            auto mCat = reCat.match(content); if (mCat.hasMatch()) catalyst = mCat.captured(1);
+            Logger::info(QStringLiteral("ForecastService: Regex extraction succeeded! high=%1 low=%2").arg(predHigh).arg(predLow));
+        } else {
+            Logger::warn(QStringLiteral("ForecastService: LLM text not valid JSON: %1").arg(content.left(300)));
+            fallbackLocal(m_currentSource, tr("JSON无效·本地算法"));
+            return;
+        }
+    }
 
     if (predHigh <= 0.0 || predLow <= 0.0 || predHigh < predLow) {
         Logger::warn(QStringLiteral("ForecastService: invalid high/low values high=%1 low=%2").arg(predHigh).arg(predLow));
@@ -532,6 +639,36 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
     if (predHigh < predLow) {
         qSwap(predHigh, predLow);
     }
+
+    auto cleanField = [](QString s, int maxLen) -> QString {
+        static const QRegularExpression reHtml(QStringLiteral("<[^>]*>?"));
+        const int htmlIdx = s.indexOf(QLatin1Char('<'));
+        if (htmlIdx >= 0) s = s.left(htmlIdx);
+        const int jsonIdx = s.indexOf(QStringLiteral("{\""));
+        if (jsonIdx >= 0) s = s.left(jsonIdx);
+        s.remove(reHtml);
+        s = s.simplified();
+        if (s.length() > maxLen) s = s.left(maxLen - 1) + QStringLiteral("…");
+        return s;
+    };
+    scenario = cleanField(scenario, 60);
+    catalyst = cleanField(catalyst, 32);
+    brief    = cleanField(brief, 60);
+
+    // 稳定性阻尼平滑：若当日已存在历史有效预测且未被突破，对大模型反复请求进行平滑融合，杜绝几分钟内数字大幅跳跃
+    if (m_lastResult.valid && m_lastResult.predHigh > 0.0 && m_lastResult.predLow > 0.0
+        && m_lastResult.timestamp.date() == QDate::currentDate()) {
+        const double oldH = m_lastResult.predHigh;
+        const double oldL = m_lastResult.predLow;
+        if (predHigh >= actH) {
+            predHigh = qRound((oldH * 0.65 + predHigh * 0.35) * 100.0) / 100.0;
+        }
+        if (actL <= 0.0 || predLow <= actL) {
+            predLow = qRound((oldL * 0.65 + predLow * 0.35) * 100.0) / 100.0;
+        }
+    }
+    if (actH > 0.0) predHigh = qMax(predHigh, actH);
+    if (actL > 0.0) predLow = qMin(predLow, actL);
 
     m_lastResult.valid = true;
     m_lastResult.predHigh = predHigh;
@@ -588,18 +725,20 @@ void ForecastService::parseLlmResponse(const QByteArray& raw) {
                 m_lastResult.remainingUpside = fr.remainingUpside;
                 m_lastResult.peakWindowProb = fr.peakWindowProb;
 
-                // 实战硬约束：若本地检测到高点大概率已在盘明确立，而 LLM 仍严重虚高，平滑校准至本地硬约束
-                if (fr.highAlreadyInProb >= 0.65 && predHigh > fr.predHigh + 0.5) {
-                    Logger::info(QStringLiteral("ForecastService: highAlreadyInProb=%1, clamping LLM predHigh %2 to %3")
+                // 实战校准：仅在尾盘或极高确立概率（>=0.75）且价格明显滞涨回撤时，才对虚高的推演高点进行理性平滑约束
+                const bool lateTradingSession = (nowT.hour() >= 21 || dayFrac >= 0.80);
+                if (fr.highAlreadyInProb >= 0.75 && lateTradingSession && predHigh > fr.predHigh + 0.5) {
+                    Logger::info(QStringLiteral("ForecastService: highAlreadyInProb=%1 in late session, calibrating LLM predHigh %2 to %3")
                                      .arg(fr.highAlreadyInProb, 0, 'f', 2)
                                      .arg(predHigh, 0, 'f', 2)
                                      .arg(fr.predHigh, 0, 'f', 2));
                     predHigh = fr.predHigh;
                     m_lastResult.predHigh = predHigh;
-                    if (m_lastResult.predHighTimeWindow.contains(QStringLiteral("20:30")) ||
-                        m_lastResult.predHighTimeWindow.contains(QStringLiteral("22:30"))) {
-                        m_lastResult.predHighTimeWindow = QString::fromStdString(fr.predHighTimeWindow);
-                    }
+                    m_lastResult.predHighTimeWindow = QString::fromStdString(fr.predHighTimeWindow);
+                } else if (predHigh < actH) {
+                    // 若 LLM 预测高点低于当前日内真实最高价，顺势抬升至真实最高价之上，杜绝违背客观事实
+                    predHigh = actH + qMax(0.15, atr * 0.1);
+                    m_lastResult.predHigh = predHigh;
                 }
             }
         }

@@ -317,8 +317,14 @@ void SettingsDialog::setupUi()
         m_providerLabel = new QLabel(tr("大模型提供方："), this);
         m_providerCombo = new QComboBox(this);
         m_providerCombo->setMinimumWidth(200);
+        m_providerCombo->addItem(tr("DeepSeek (深度求索)"), QStringLiteral("deepseek"));
+        m_providerCombo->addItem(tr("智谱 GLM (BigModel)"), QStringLiteral("glm"));
+        m_providerCombo->addItem(tr("通义千问 (Qwen/百炼)"), QStringLiteral("qwen"));
+        m_providerCombo->addItem(tr("月之暗面 (Moonshot Kimi)"), QStringLiteral("moonshot"));
         m_providerCombo->addItem(tr("xAI (Grok)"), QStringLiteral("xai"));
         m_providerCombo->addItem(tr("Google Gemini"), QStringLiteral("gemini"));
+        m_providerCombo->addItem(tr("OpenAI (ChatGPT)"), QStringLiteral("openai"));
+        m_providerCombo->addItem(tr("自定义 (OpenAI 兼容)"), QStringLiteral("custom"));
         form->addRow(m_providerLabel, m_providerCombo);
         connect(m_providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::onProviderChanged);
@@ -715,17 +721,41 @@ void SettingsDialog::fillDefaultModels()
     const QString cur = m_modelCombo->currentText();
     m_modelCombo->clear();
     const QString prov = m_providerCombo->currentData().toString();
-    if (prov == QStringLiteral("gemini")) {
-        m_modelCombo->addItem(QStringLiteral("gemini-3.6-flash"));
-        m_modelCombo->addItem(QStringLiteral("gemini-3.5-flash"));
-        m_modelCombo->addItem(QStringLiteral("gemini-3.5-flash-lite"));
-        m_modelCombo->addItem(QStringLiteral("gemini-3.8-flash"));
+    if (prov == QStringLiteral("deepseek")) {
+        m_modelCombo->addItem(QStringLiteral("deepseek-chat"));
+        m_modelCombo->addItem(QStringLiteral("deepseek-reasoner"));
+    } else if (prov == QStringLiteral("glm") || prov == QStringLiteral("zhipu")) {
+        m_modelCombo->addItem(QStringLiteral("glm-4-plus"));
+        m_modelCombo->addItem(QStringLiteral("glm-4-flash"));
+        m_modelCombo->addItem(QStringLiteral("glm-4-long"));
+        m_modelCombo->addItem(QStringLiteral("glm-4v-plus"));
+        m_modelCombo->addItem(QStringLiteral("glm-3-turbo"));
+    } else if (prov == QStringLiteral("qwen")) {
+        m_modelCombo->addItem(QStringLiteral("qwen-max"));
+        m_modelCombo->addItem(QStringLiteral("qwen-plus"));
+        m_modelCombo->addItem(QStringLiteral("qwen-turbo"));
+        m_modelCombo->addItem(QStringLiteral("qwen-long"));
+    } else if (prov == QStringLiteral("moonshot")) {
+        m_modelCombo->addItem(QStringLiteral("moonshot-v1-8k"));
+        m_modelCombo->addItem(QStringLiteral("moonshot-v1-32k"));
+        m_modelCombo->addItem(QStringLiteral("moonshot-v1-128k"));
+    } else if (prov == QStringLiteral("gemini")) {
         m_modelCombo->addItem(QStringLiteral("gemini-2.5-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-2.0-flash"));
+        m_modelCombo->addItem(QStringLiteral("gemini-2.0-flash-lite"));
+        m_modelCombo->addItem(QStringLiteral("gemini-1.5-pro"));
+        m_modelCombo->addItem(QStringLiteral("gemini-1.5-flash"));
+    } else if (prov == QStringLiteral("openai")) {
+        m_modelCombo->addItem(QStringLiteral("gpt-4o"));
+        m_modelCombo->addItem(QStringLiteral("gpt-4o-mini"));
+        m_modelCombo->addItem(QStringLiteral("o1"));
+        m_modelCombo->addItem(QStringLiteral("o1-mini"));
+        m_modelCombo->addItem(QStringLiteral("gpt-4-turbo"));
     } else {
-        m_modelCombo->addItem(QStringLiteral("grok-4.6"));
-        m_modelCombo->addItem(QStringLiteral("grok-4.5"));
-        m_modelCombo->addItem(QStringLiteral("grok-3-mini"));
-        m_modelCombo->addItem(QStringLiteral("grok-3"));
+        m_modelCombo->addItem(QStringLiteral("grok-2-latest"));
+        m_modelCombo->addItem(QStringLiteral("grok-2"));
+        m_modelCombo->addItem(QStringLiteral("grok-beta"));
+        m_modelCombo->addItem(QStringLiteral("grok-vision-beta"));
     }
     if (!cur.isEmpty()) {
         int i = m_modelCombo->findText(cur);
@@ -740,8 +770,19 @@ void SettingsDialog::updateApiKeyPlaceholder()
 {
     if (!m_apiKeyEdit || !m_providerCombo)
         return;
-    if (m_providerCombo->currentData().toString() == QStringLiteral("gemini"))
+    const QString prov = m_providerCombo->currentData().toString();
+    if (prov == QStringLiteral("deepseek"))
+        m_apiKeyEdit->setPlaceholderText(tr("DeepSeek API Key（platform.deepseek.com）"));
+    else if (prov == QStringLiteral("glm"))
+        m_apiKeyEdit->setPlaceholderText(tr("智谱 BigModel API Key（open.bigmodel.cn）"));
+    else if (prov == QStringLiteral("qwen"))
+        m_apiKeyEdit->setPlaceholderText(tr("阿里云百炼 API Key（dashscope.console.aliyun.com）"));
+    else if (prov == QStringLiteral("moonshot"))
+        m_apiKeyEdit->setPlaceholderText(tr("Moonshot Kimi API Key（platform.moonshot.cn）"));
+    else if (prov == QStringLiteral("gemini"))
         m_apiKeyEdit->setPlaceholderText(tr("Gemini API Key（aistudio.google.com）"));
+    else if (prov == QStringLiteral("openai"))
+        m_apiKeyEdit->setPlaceholderText(tr("OpenAI API Key（platform.openai.com）"));
     else
         m_apiKeyEdit->setPlaceholderText(tr("xAI API Key（console.x.ai）"));
 }
@@ -783,14 +824,32 @@ void SettingsDialog::onRefreshModels()
             "https://generativelanguage.googleapis.com/v1beta/models?key=%1&pageSize=100")
                            .arg(QString::fromUtf8(QUrl::toPercentEncoding(key))));
         req.setUrl(url);
-        m_modelsReply = m_modelsNam->get(req);
+    } else if (prov == QStringLiteral("deepseek")) {
+        req.setUrl(QUrl(QStringLiteral("https://api.deepseek.com/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (prov == QStringLiteral("glm") || prov == QStringLiteral("zhipu")) {
+        req.setUrl(QUrl(QStringLiteral("https://open.bigmodel.cn/api/paas/v4/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (prov == QStringLiteral("qwen")) {
+        req.setUrl(QUrl(QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (prov == QStringLiteral("moonshot")) {
+        req.setUrl(QUrl(QStringLiteral("https://api.moonshot.cn/v1/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
+    } else if (prov == QStringLiteral("openai")) {
+        req.setUrl(QUrl(QStringLiteral("https://api.openai.com/v1/models")));
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Accept", "application/json");
     } else {
         req.setUrl(QUrl(QStringLiteral("https://api.x.ai/v1/models")));
-        req.setRawHeader("Authorization",
-                         QByteArray("Bearer ") + key.toUtf8());
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + key.toUtf8());
         req.setRawHeader("Accept", "application/json");
-        m_modelsReply = m_modelsNam->get(req);
     }
+    m_modelsReply = m_modelsNam->get(req);
     if (m_refreshModelsBtn)
         m_refreshModelsBtn->setEnabled(false);
     connect(m_modelsReply, &QNetworkReply::finished, this,

@@ -81,6 +81,12 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString multiDayBiasText READ multiDayBiasText NOTIFY decisionChanged)
     Q_PROPERTY(QString forecastConfidenceText READ forecastConfidenceText NOTIFY decisionChanged)
     Q_PROPERTY(QString decisionTimeWindowText READ decisionTimeWindowText NOTIFY decisionChanged)
+    Q_PROPERTY(bool autoSimulateTrading READ autoSimulateTrading WRITE setAutoSimulateTrading NOTIFY autoSimulateTradingChanged)
+    Q_PROPERTY(double simulateTradeBatchGrams READ simulateTradeBatchGrams WRITE setSimulateTradeBatchGrams NOTIFY simulateTradeBatchGramsChanged)
+    Q_PROPERTY(double totalRealizedPnl READ totalRealizedPnl NOTIFY simulatedTradesUpdated)
+    Q_PROPERTY(double positionGrams READ positionGrams NOTIFY positionChanged)
+    Q_PROPERTY(double positionCost READ positionCost NOTIFY positionChanged)
+    Q_PROPERTY(QString positionSummaryText READ positionSummaryText NOTIFY positionChanged)
 
 public:
     explicit QmlBridge(PriceService *priceService, QObject *parent = nullptr);
@@ -90,6 +96,10 @@ public:
     void setPriceBarWindow(QQuickWindow *w) { m_priceBarWindow = w; }
     void setSentimentWindow(QQuickWindow *w) { m_sentimentWindow = w; }
     void setSettingsWindow(QQuickWindow *w) { m_settingsWindow = w; }
+    void setAgentWindow(QQuickWindow *w) { m_agentWindow = w; }
+    void setAgentCardWindow(QQuickWindow *w) { m_agentCardWindow = w; }
+    void setAgentChatWindow(QQuickWindow *w) { m_agentChatWindow = w; }
+    void setSimulatedTradesWindow(QQuickWindow *w) { m_simulatedTradesWindow = w; }
 
     // Getters
     double price() const { return m_price; }
@@ -167,8 +177,14 @@ public slots:
     void refreshPrice();
     void refreshSentiment();
     void openSentimentWindow();
+    void closeSentimentWindow();
+    void toggleSentimentWindow();
     void openSettingsWindow();
+    void closeSettingsWindow();
+    void toggleSettingsWindow();
     void openChartWindow();
+    void closeChartWindow();
+    void toggleChartWindow();
     void openUrl(const QString &url);
     void quitApp();
     void saveSettings(const QString &dataSource, int refreshIntervalSec, double opacity,
@@ -183,8 +199,69 @@ public slots:
     Q_INVOKABLE void openLogDir();
     Q_INVOKABLE void checkUpdate();
     Q_INVOKABLE void fetchModelList(const QString &provider, const QString &apiKey);
+    Q_INVOKABLE void testAiConnection(const QString &provider, const QString &apiKey, const QString &model, const QString &customEndpoint = QString());
     Q_INVOKABLE void showDailyReportDialog();
     Q_INVOKABLE void markDcaExecutedToday();
+
+    // 自动化 Agent 相关接口
+    Q_INVOKABLE void openAgentWindow();
+    Q_INVOKABLE void closeAgentWindow();
+    Q_INVOKABLE void toggleAgentWindow();
+    Q_INVOKABLE void openAgentCardWindow();
+    Q_INVOKABLE void closeAgentCardWindow();
+    Q_INVOKABLE QVariantList getAgentTasks() const;
+    Q_INVOKABLE bool addOrUpdateAgentTask(const QVariantMap &taskData);
+    Q_INVOKABLE bool deleteAgentTask(const QString &taskId);
+    Q_INVOKABLE bool toggleAgentTask(const QString &taskId, bool enabled);
+    Q_INVOKABLE void runAgentTaskNow(const QString &taskId);
+    Q_INVOKABLE void advanceCurriculumDay(const QString &taskId);
+    Q_INVOKABLE void setCurriculumDay(const QString &taskId, int day);
+    Q_INVOKABLE QVariantMap getCurriculumTopic(int day) const;
+    Q_INVOKABLE QVariantMap getCurriculumTopicForAgent(const QString &agentId, int day) const;
+    Q_INVOKABLE int getCurriculumTotalDaysForAgent(const QString &agentId) const;
+    Q_INVOKABLE QString getCurriculumWechatSummaryMarkdown() const;
+    Q_INVOKABLE QString getCurriculumWechatSummaryMarkdownForAgent(const QString &agentId) const;
+    Q_INVOKABLE QString getCurriculumDayWechatMarkdown(int day) const;
+    Q_INVOKABLE QString getCurriculumDayWechatMarkdownForAgent(const QString &agentId, int day) const;
+    Q_INVOKABLE void copyToClipboard(const QString &text);
+    Q_INVOKABLE QString getAgentDatabasePath() const;
+    Q_INVOKABLE void openLearningNotesDir();
+    Q_INVOKABLE QStringList getNoteFiles() const;
+    Q_INVOKABLE QString getNoteContent(const QString &fileName) const;
+    // 内部笔记跳转与 AI 问答接口
+    Q_INVOKABLE void openAgentWindowWithNote(const QString &fileName);
+    Q_INVOKABLE void openAgentChatWindow(const QString &initialPrompt = QString(), const QString &contextTopic = QString());
+    Q_INVOKABLE void closeAgentChatWindow();
+    Q_INVOKABLE void askAiQuestion(const QString &question,
+                                   const QString &contextTopic = QString(),
+                                   const QString &provider = QString(),
+                                   const QString &model = QString(),
+                                   const QString &apiKey = QString(),
+                                   const QString &customEndpoint = QString());
+    Q_INVOKABLE void cancelAiQuestion();
+    Q_INVOKABLE bool isAiBusy() const;
+    Q_INVOKABLE QString defaultAiProvider() const;
+    Q_INVOKABLE QString defaultAiApiKey() const;
+    Q_INVOKABLE QString defaultAiModel() const;
+    Q_INVOKABLE void saveAiSettings(const QString &provider, const QString &apiKey, const QString &model);
+
+    bool autoSimulateTrading() const;
+    void setAutoSimulateTrading(bool on);
+    double simulateTradeBatchGrams() const;
+    void setSimulateTradeBatchGrams(double g);
+    double totalRealizedPnl() const;
+    double positionGrams() const;
+    double positionCost() const;
+    QString positionSummaryText() const;
+
+    Q_INVOKABLE bool executeSimulatedTrade(const QString &action, double grams = 0.0, const QString &customNote = QString());
+    Q_INVOKABLE QVariantList getSimulatedTrades(int limit = 100) const;
+    Q_INVOKABLE double getTotalRealizedPnl() const;
+    Q_INVOKABLE void clearSimulatedTrades();
+    Q_INVOKABLE void openSimulatedTradesWindow();
+    Q_INVOKABLE void closeSimulatedTradesWindow();
+    Q_INVOKABLE void toggleSimulatedTradesWindow();
+
 
 signals:
     void priceChanged();
@@ -195,11 +272,31 @@ signals:
     void pnlChanged();
     void decisionChanged();
     void requestShowSentiment();
+    void requestCloseSentiment();
     void requestShowSettings();
+    void requestCloseSettings();
     void requestShowPriceBar();
     void requestTogglePriceBar();
+    void requestShowAgentWindow();
+    void requestCloseAgentWindow();
+    void requestCloseSimulatedTrades();
+    void agentNotificationTriggered(const QVariantMap &notificationData);
+    void agentTasksUpdated();
     void modelsLoaded(const QVariantList &models);
     void modelsLoadFailed(const QString &error);
+    void aiConnectionTested(bool success, const QString &message, int latencyMs);
+    void requestOpenNoteInAgentWindow(const QString &fileName);
+    void requestOpenAgentChatWindow(const QString &initialPrompt, const QString &contextTopic);
+    void aiAnswerStarted(const QString &question);
+    void aiAnswerReceived(const QString &question, const QString &answer, const QString &provider, const QString &model);
+    void aiAnswerFailed(const QString &question, const QString &error);
+    void autoSimulateTradingChanged();
+    void simulateTradeBatchGramsChanged();
+    void simulatedTradesUpdated();
+    void simulatedTradeExecuted(const QString &action, double price, double grams, double pnl, const QString &decisionTag);
+    void positionChanged();
+    void requestShowSimulatedTrades();
+
 
 private slots:
     void onPriceUpdated(double price, double change, const QString &sourceName);
@@ -222,6 +319,7 @@ private:
     void evaluatePremium(double primaryPrice);
     void evaluateDecision(double price);
     void updatePnL(double price);
+    void checkAutoSimulateTrading(double price, int level, const QString &tag);
     void checkDcaReminder();
     void showDailyReport(bool force = false);
     void checkDailyReport(bool force = false);
@@ -238,6 +336,16 @@ private:
     QQuickWindow *m_priceBarWindow = nullptr;
     QQuickWindow *m_sentimentWindow = nullptr;
     QQuickWindow *m_settingsWindow = nullptr;
+    QQuickWindow *m_agentWindow = nullptr;
+    QQuickWindow *m_agentCardWindow = nullptr;
+    QQuickWindow *m_agentChatWindow = nullptr;
+    QQuickWindow *m_simulatedTradesWindow = nullptr;
+    qint64 m_lastAutoTradeMs = 0;
+    double m_lastAutoTradePrice = 0.0;
+    QString m_lastAutoTradeDecisionTag;
+    QString m_lastAutoTradeAction;
+    qint64 m_lastSellAdviceMs = 0;
+    int m_consecutiveBuyTicks = 0;
     QNetworkAccessManager *m_modelsNam = nullptr;
     QPointer<QNetworkReply> m_modelsReply;
 
@@ -265,6 +373,7 @@ private:
     QTimer *m_secondaryTimer = nullptr;
     QNetworkAccessManager *m_secondaryNam = nullptr;
     QPointer<QNetworkReply> m_secondaryReply;
+    qint64 m_secondaryRequestStartMs = 0;
     double m_secondaryPrice = 0.0;
     QString m_secondaryPriceText;
 
@@ -307,6 +416,8 @@ private:
     QString m_multiDayBiasText;
     QString m_forecastConfidenceText;
     QString m_decisionTimeWindowText;
+    double m_predHigh = 0.0;
+    double m_predLow = 0.0;
 };
 
 #endif // QMLBRIDGE_H

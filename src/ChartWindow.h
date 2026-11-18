@@ -26,6 +26,9 @@ class QToolButton;
 class QPushButton;
 class QMenu;
 class QAction;
+class QGraphicsLineItem;
+class QGraphicsSimpleTextItem;
+class QGraphicsEllipseItem;
 QT_END_NAMESPACE
 
 /**
@@ -71,6 +74,14 @@ private:
     void loadDailyRange(const QDate& from, const QDate& to);
 
     bool isIntradayMode() const;
+    bool isTodayIntradayMode() const;
+    bool isMultiDayIntradayMode() const;
+    int multiDayCount() const;
+    int targetOverlayDays() const;
+    void updateIntradayOverlay();
+    void loadMultiDayIntraday(int days);
+    void updateDaySeparators();
+    void clearDaySeparators();
     QString currentTypeCode() const;
     void updateCrosshair(const QPoint& viewPos);
     void hideCrosshair();
@@ -148,6 +159,21 @@ private:
     QLineSeries* m_ma10Series = nullptr;
     QLineSeries* m_ma20Series = nullptr;
     QLineSeries* m_yesterdaySeries = nullptr;
+    QLineSeries* m_day2Series = nullptr;         // 前日 (T-2)
+    QLineSeries* m_day3Series = nullptr;         // 大前日 (T-3)
+    QLineSeries* m_day4Series = nullptr;         // 5日前 (T-4)
+
+    struct DayOverlayCurve {
+        QDate date;
+        QString name;
+        QColor color;
+        double high = 0.0;
+        double low = 0.0;
+        double lastPrice = 0.0;
+        QVector<QPair<QDateTime, double>> mappedPoints;
+        QLineSeries* series = nullptr;
+    };
+    QVector<DayOverlayCurve> m_activeOverlayCurves;
     QLineSeries* m_forecastSeries = nullptr;      // 预测最高（水平虚线）
     QLineSeries* m_forecastLowSeries = nullptr;   // 预测最低（水平虚线）
     QLineSeries* m_fib50Series = nullptr;         // 斐波那契 0.500 回调线
@@ -157,9 +183,15 @@ private:
     QScatterSeries* m_lowSeries = nullptr;
     QDateTimeAxis* m_axisX = nullptr;
     QValueAxis* m_axisY = nullptr;
+    QVector<qint64> m_dayBoundaryTimestamps;
+    QList<QGraphicsLineItem*> m_daySeparatorLines;
+    QList<QGraphicsSimpleTextItem*> m_daySeparatorLabels;
     QElapsedTimer m_lastRedraw;
 
     QLabel* m_tipLabel = nullptr;
+    QGraphicsLineItem* m_crosshairVLine = nullptr;
+    QGraphicsLineItem* m_crosshairHLine = nullptr;
+    QGraphicsEllipseItem* m_crosshairDot = nullptr;
 
     QFrame* m_sidePanel = nullptr;
     QFrame* m_sideForecastCard = nullptr;

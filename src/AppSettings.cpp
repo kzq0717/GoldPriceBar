@@ -152,8 +152,17 @@ QString AppSettings::llmProvider() const {
 
 void AppSettings::setLlmProvider(const QString &provider) {
     QString p = provider.trimmed().toLower();
-    if (p != QStringLiteral("gemini"))
-        p = QStringLiteral("xai");
+    if (p == QStringLiteral("zhipu")) p = QStringLiteral("glm");
+    if (p != QStringLiteral("gemini") &&
+        p != QStringLiteral("deepseek") &&
+        p != QStringLiteral("glm") &&
+        p != QStringLiteral("qwen") &&
+        p != QStringLiteral("moonshot") &&
+        p != QStringLiteral("openai") &&
+        p != QStringLiteral("custom") &&
+        p != QStringLiteral("xai")) {
+        p = QStringLiteral("deepseek");
+    }
     if (m_llmProvider != p) {
         m_llmProvider = p;
         emit settingsChanged();
@@ -557,6 +566,29 @@ void AppSettings::setPositionCost(double c) {
     }
 }
 
+
+bool AppSettings::autoSimulateTrading() const {
+    return m_autoSimulateTrading;
+}
+
+void AppSettings::setAutoSimulateTrading(bool on) {
+    if (m_autoSimulateTrading != on) {
+        m_autoSimulateTrading = on;
+        emit settingsChanged();
+    }
+}
+
+double AppSettings::simulateTradeBatchGrams() const {
+    return m_simulateTradeBatchGrams;
+}
+
+void AppSettings::setSimulateTradeBatchGrams(double g) {
+    if (!qFuzzyCompare(m_simulateTradeBatchGrams, g)) {
+        m_simulateTradeBatchGrams = g > 0.0 ? g : 10.0;
+        emit settingsChanged();
+    }
+}
+
 double AppSettings::feeRate() const {
     return m_feeRate;
 }
@@ -663,9 +695,18 @@ void AppSettings::load() {
     m_xaiApiKey = s.value("xaiApiKey", "").toString();
     m_xaiModel = s.value("xaiModel", "grok-4.6").toString();
 
-    m_llmProvider = s.value("llmProvider", "xai").toString();
-    if (m_llmProvider != QStringLiteral("gemini"))
-        m_llmProvider = QStringLiteral("xai");
+    m_llmProvider = s.value("llmProvider", "deepseek").toString().trimmed().toLower();
+    if (m_llmProvider == QStringLiteral("zhipu")) m_llmProvider = QStringLiteral("glm");
+    if (m_llmProvider != QStringLiteral("gemini") &&
+        m_llmProvider != QStringLiteral("deepseek") &&
+        m_llmProvider != QStringLiteral("glm") &&
+        m_llmProvider != QStringLiteral("qwen") &&
+        m_llmProvider != QStringLiteral("moonshot") &&
+        m_llmProvider != QStringLiteral("openai") &&
+        m_llmProvider != QStringLiteral("custom") &&
+        m_llmProvider != QStringLiteral("xai")) {
+        m_llmProvider = QStringLiteral("deepseek");
+    }
 
     m_databaseDir = s.value("databaseDir", "").toString().trimmed();
     m_planEnabled = s.value("planEnabled", false).toBool();
@@ -715,6 +756,9 @@ void AppSettings::load() {
     m_percentileHigh = s.value("percentileHigh", 80).toInt();
     m_positionGrams = s.value("positionGrams", 0.0).toDouble();
     m_positionCost = s.value("positionCost", 0.0).toDouble();
+    m_autoSimulateTrading = s.value("autoSimulateTrading", false).toBool();
+    m_simulateTradeBatchGrams = s.value("simulateTradeBatchGrams", 10.0).toDouble();
+    if (m_simulateTradeBatchGrams <= 0.0) m_simulateTradeBatchGrams = 10.0;
     m_feeRate = s.value("feeRate", 0.004).toDouble();
     m_premiumAlertEnabled = s.value("premiumAlertEnabled", true).toBool();
     m_premiumThresholdPct = s.value("premiumThresholdPct", 2.0).toDouble();
@@ -779,6 +823,8 @@ void AppSettings::save() {
     s.setValue("percentileHigh", m_percentileHigh);
     s.setValue("positionGrams", m_positionGrams);
     s.setValue("positionCost", m_positionCost);
+    s.setValue("autoSimulateTrading", m_autoSimulateTrading);
+    s.setValue("simulateTradeBatchGrams", m_simulateTradeBatchGrams);
     s.setValue("feeRate", m_feeRate);
     s.setValue("premiumAlertEnabled", m_premiumAlertEnabled);
     s.setValue("premiumThresholdPct", m_premiumThresholdPct);

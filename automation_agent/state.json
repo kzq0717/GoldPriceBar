@@ -1,0 +1,47 @@
+{
+  "cpp_daily_master": {
+    "last_run": "2026-10-28 10:40:05",
+    "next_run": "2026-10-29 10:00:00",
+    "config": {
+      "curriculum_file": "data/cpp_30days_curriculum.json",
+      "current_day": 1,
+      "repeat_when_finished": false,
+      "channels": [
+        "toast",
+        "markdown",
+        "log"
+      ],
+      "webhook_url": ""
+    }
+  },
+  "drink_water": {
+    "last_run": null,
+    "next_run": "2026-10-28 11:40:44",
+    "config": {
+      "task_mode": "reminder",
+      "message": "工作忙碌之余，记得喝一杯温水，活动活动肩颈！",
+      "channels": [
+        "toast",
+        "log"
+      ],
+      "command": "",
+      "api_url": "",
+      "webhook_url": ""
+    }
+  },
+  "git_status_check": {
+    "last_run": "2026-10-28 10:45:12",
+    "next_run": "2026-10-28 18:00:00",
+    "config": {
+      "task_mode": "command",
+      "command": "git status",
+      "channels": [
+        "toast",
+        "log"
+      ],
+      "message": "提醒：自动化任务执行完毕",
+      "api_url": "",
+      "webhook_url": ""
+    }
+  }
+}
